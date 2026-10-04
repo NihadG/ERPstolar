@@ -1,191 +1,154 @@
 // ════════════════════════════════════════════════════════════════════
-// ČISTA LOGIKA ANALITIKE (bez Firebase, pokrivena testovima).
+// ANALITIKA — čista agregacija (bez Firebase), pokrivena testovima.
 //
-// MODEL = STVARNO (kao kartica projekta): agregacija PO PROIZVODU (Product_ID),
-//   profit = prodaja − ŽIVI materijal − STVARNI rad − transport − usluge.
-//   • živi materijal = Σ product_materials × KOLIČINA (trenutno stanje, uklj. naknadno dodano / poskupljenja)
-//   • stvarni rad    = Σ WorkLog.Daily_Rate po Product_ID (kroz sve naloge)
-// Uz to čuvamo PLANIRANO (iz ponude) za poređenje "koliko sam potrefio":
-//   • planirani materijal = OfferProduct.Material_Cost × količina
-//   • planirani rad        = Σ Planned_Labor_Cost × količina
+// Finansije dolaze ISKLJUČIVO iz lib/projectFinance.ts (isti proračun kao kartica
+// projekta, pregled projekta i nalog) — ovdje se samo filtrira po periodu/opsegu,
+// grupiše i sabira. Nijedna formula profita ne živi u ovoj datoteci.
 //
-// Servis (analyticsService) radi spajanje (Firestore) i puni ProductInput[];
-// ovdje je samo aritmetika + grupisanje (lako testirati).
+//   • Ostvareni profit u periodu = proizvodi ZAVRŠENI u periodu (datum završetka
+//     proizvodnje). Proizvod gotov bez naloga nema datum → ulazi samo u „Sve".
+//   • U izradi = stanje SADA (period se na njega ne odnosi).
+//   • Radnici / trend rada = dnevnice po DATUMU u periodu, bez obzira na projekat.
+//     Zarada radnika = Σ živih dnevnica — isto što i obračun plata (lib/payroll.ts).
+//   • Razni poslovi (bez projekta) ostaju odvojeno, po staroj formuli.
 // ════════════════════════════════════════════════════════════════════
 
+import {
+    buildFinanceBasis, buildLaborIndex, computeProjectsFinance, liveLogs, sumStage, emptyStageTotals, hasFlag,
+    itemFinance, EMPTY_FINANCE_BASIS,
+    type FinProduct, type FinOffer, type FinWorkOrder, type FinLog,
+    type ProductFinanceRow, type StageTotals, type ProjectFinance,
+} from './projectFinance';
+
 export interface DateRange { from?: string; to?: string }   // YYYY-MM-DD, inkluzivno
-
-/** Normalizovani ulaz PO PROIZVODU (svi iznosi su UKUPNI — količina uračunata). */
-export interface ProductInput {
-    itemId: string;             // reprezentativna WorkOrderItem.ID (za drill u timeline)
-    productId: string; productName: string;
-    projectId: string; projectName: string;
-    woId: string; woNumber: string; woType: string; status: string;
-    selling: number;            // prodajna (override ?? Product_Value ?? ponuda)
-    liveMaterial: number;       // STVARNI materijal (Σ product_materials × količina)
-    plannedMaterial: number;    // PLANIRANI materijal (iz ponude)
-    actualLabor: number;        // STVARNI rad (Σ logova po Product_ID)
-    plannedLabor: number;       // PLANIRANI rad (Σ Planned_Labor_Cost × kol.)
-    transport: number; services: number;
-}
-
-export interface ALog {
-    Date: string; Worker_ID: string; Worker_Name: string;
-    Daily_Rate: number; Day_Fraction?: number;
-    Work_Order_Item_ID?: string; Product_ID?: string;
-}
-
-import { profitFromTotals } from './profit';
+export type AnalyticsScope = 'active' | 'all';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const inRange = (date: string, range?: DateRange) =>
-    (!range?.from || date >= range.from) && (!range?.to || date <= range.to);
+const dOnly = (iso?: string | null) => (iso ? iso.split('T')[0] : '');
+export const inRange = (date: string | undefined, range?: DateRange): boolean => {
+    if (!range?.from && !range?.to) return true;
+    if (!date) return false;
+    return (!range.from || date >= range.from) && (!range.to || date <= range.to);
+};
+const hasRange = (range?: DateRange) => !!(range?.from || range?.to);
 
-export interface ProductRow {
-    itemId: string;
-    productId: string; productName: string;
-    projectId: string; projectName: string;
-    woId: string; woNumber: string; woType: string; status: string;
-    selling: number; material: number; labor: number; services: number; transport: number;
-    profit: number; margin: number;                       // STVARNO
-    plannedMaterial: number; plannedLabor: number;
-    plannedProfit: number; plannedMargin: number;         // PLANIRANO (iz ponude)
-    nonRevenue: boolean;                                  // montaža/teren (bez prihoda) → samo trošak rada
+// ── Ulazi ───────────────────────────────────────────────────────────
+export interface AProject {
+    Project_ID: string;
+    Name?: string;
+    Client_Name?: string;
+    Status?: string;
+    products?: FinProduct[];
+}
+export interface AAttendance { Worker_ID: string; Worker_Name?: string; Date: string; Status: string }
+export interface AWorker { Worker_ID: string; Name?: string; Status?: string }
+
+export interface AnalyticsInput {
+    projects: AProject[];
+    offers: FinOffer[];
+    workOrders: FinWorkOrder[];
+    logs: FinLog[];
+    attendance?: AAttendance[];
+    workers?: AWorker[];
 }
 
-/**
- * Po proizvodu: stvarni profit (živi materijal + stvarni rad) + planirani profit (ponuda).
- * Formula = lib/profit.ts (jedinstvena); ulazi su UKUPNI iznosi (količina uračunata),
- * pa se koristi profitFromTotals (bez množenja količinom ovdje).
- */
-export function aggregateProductRows(inputs: ProductInput[]): ProductRow[] {
-    return inputs.map(i => {
-        const actual = profitFromTotals({
-            revenue: i.selling, material: i.liveMaterial, labor: i.actualLabor,
-            services: i.services, transport: i.transport,
-        });
-        const planned = profitFromTotals({
-            revenue: i.selling, material: i.plannedMaterial, labor: i.plannedLabor,
-            services: i.services, transport: i.transport,
-        });
-        return {
-            itemId: i.itemId,
-            productId: i.productId, productName: i.productName,
-            projectId: i.projectId, projectName: i.projectName,
-            woId: i.woId, woNumber: i.woNumber, woType: i.woType, status: i.status,
-            selling: actual.revenue, material: actual.material, labor: actual.labor,
-            services: actual.services, transport: actual.transport,
-            profit: actual.profit, margin: actual.margin,
-            plannedMaterial: planned.material, plannedLabor: planned.labor,
-            plannedProfit: planned.profit, plannedMargin: planned.margin,
-            // Montaža/teren nalozi nemaju prihod (prihod je na proizvodnom nalogu) → samo trošak rada.
-            nonRevenue: i.woType === 'Montaža' || (i.selling === 0 && i.liveMaterial === 0 && i.actualLabor > 0),
-        };
-    });
-}
-
-export interface ProjectRow {
-    projectId: string; projectName: string;
-    revenue: number; material: number; labor: number; services: number; transport: number;
-    profit: number; margin: number;
-    plannedMaterial: number; plannedLabor: number; plannedProfit: number;
+// ── Izlazi ──────────────────────────────────────────────────────────
+export interface AnalyticsProject {
+    projectId: string;
+    client: string;
+    name: string;
+    status: string;
+    contracted: number;
     productCount: number;
+    finishedCount: number;          // ukupno završeno (do danas)
+    realized: StageTotals;          // završeno U PERIODU
+    razniProfit: number;            // razni nalozi vezani za projekat (samo „Sve")
+    profit: number;                 // realized.profit + razniProfit
+    margin: number;
+    inProgress: StageTotals;        // stanje sada
+    notStartedCount: number;
+    flagged: number;
 }
 
-export function aggregateProjects(rows: ProductRow[]): ProjectRow[] {
-    const m = new Map<string, ProjectRow>();
-    for (const p of rows) {
-        const key = p.projectId || p.projectName || '—';
-        let row = m.get(key);
-        if (!row) {
-            row = {
-                projectId: p.projectId, projectName: p.projectName || '—',
-                revenue: 0, material: 0, labor: 0, services: 0, transport: 0, profit: 0, margin: 0,
-                plannedMaterial: 0, plannedLabor: 0, plannedProfit: 0, productCount: 0,
-            };
-            m.set(key, row);
-        }
-        row.revenue += p.selling; row.material += p.material; row.labor += p.labor;
-        row.services += p.services; row.transport += p.transport; row.profit += p.profit;
-        row.plannedMaterial += p.plannedMaterial; row.plannedLabor += p.plannedLabor; row.plannedProfit += p.plannedProfit;
-        row.productCount++;
-    }
-    return Array.from(m.values())
-        .map(r => ({
-            ...r,
-            revenue: r2(r.revenue), material: r2(r.material), labor: r2(r.labor), services: r2(r.services),
-            transport: r2(r.transport), profit: r2(r.profit), margin: r.revenue > 0 ? r2((r.profit / r.revenue) * 100) : 0,
-            plannedMaterial: r2(r.plannedMaterial), plannedLabor: r2(r.plannedLabor), plannedProfit: r2(r.plannedProfit),
-        }))
-        .sort((a, b) => b.profit - a.profit);
+export interface AnalyticsProduct extends ProductFinanceRow {
+    projectName: string;
+    client: string;
+    inPeriod: boolean;              // za završene: završen u periodu
+}
+
+export interface WorkerRow {
+    workerId: string;
+    name: string;
+    presentDays: number;            // šihtarica: Prisutan + Teren
+    bookedDays: number;             // Σ Day_Fraction dnevnica (radnik-dani)
+    unbookedDays: number;           // prisutan, a bez ijedne dnevnice taj dan
+    earnings: number;               // Σ Daily_Rate (= obračun plata)
+    avgRate: number;                // zarada / radnik-dani (efektivna dnevnica)
+    productsKM: number;             // dio zarade na proizvodima (projekti)
+    razniKM: number;                // dio zarade na raznim poslovima
+    products: number;               // broj različitih proizvoda
 }
 
 export interface PvAMetric {
-    planned: number;            // Σ plana — SAMO proizvodi koji plan imaju (planned > 0)
-    actual: number;             // Σ stvarnog za TE ISTE (planirane) proizvode
-    variance: number; variancePct: number; accuracyPct: number;
-    unplannedActual: number;    // stvarni trošak proizvoda BEZ plana (ne ulazi u poređenje — nema s čim)
+    planned: number;                // Σ plana — SAMO proizvodi koji plan imaju
+    actual: number;                 // Σ stvarnog za te iste proizvode
+    variance: number;               // plan − stvarno (> 0 = ušteda)
+    variancePct: number;
+    accuracyPct: number;            // 100 − |odstupanje %|
+    unplannedActual: number;        // stvarno na proizvodima bez plana (nije u poređenju)
 }
-export interface PvARow { projectId: string; projectName: string; material: PvAMetric; labor: PvAMetric }
+export interface PvARow { projectId: string; projectName: string; count: number; material: PvAMetric; labor: PvAMetric }
 
-/** variance = plan − stvarno (>0 = ušteda / ispod plana). accuracy = 100 − |odstupanje%|. */
-function metric(planned: number, actual: number, unplannedActual: number): PvAMetric {
-    const variance = r2(planned - actual);
-    const variancePct = planned > 0 ? r2(((planned - actual) / planned) * 100) : 0;
-    const accuracyPct = planned > 0 ? r2(Math.max(0, 100 - Math.abs((actual - planned) / planned) * 100)) : (actual === 0 ? 100 : 0);
-    return { planned: r2(planned), actual: r2(actual), variance, variancePct, accuracyPct, unplannedActual: r2(unplannedActual) };
-}
+export interface WeekBucket { weekStart: string; labor: number }
 
-/**
- * Plan (ponuda) vs Stvarno za MATERIJAL i RAD — ukupno i po projektu.
- * Poređenje "koliko sam potrefio" je fer SAMO nad proizvodima koji plan IMAJU:
- * proizvod bez plana (nema prihvaćene ponude / plan = 0) ne može "prekoračiti plan" —
- * njegov stvarni trošak ide odvojeno u `unplannedActual` (prikaz "van plana"),
- * umjesto da napuhava prekoračenje (npr. plan 520 vs stvarno 12.957 → "2392%").
- */
-export function planVsActual(rows: ProductRow[]): { total: PvARow; byProject: PvARow[] } {
-    interface Acc { projectId: string; projectName: string; pm: number; am: number; um: number; pl: number; al: number; ul: number }
-    const m = new Map<string, Acc>();
-    const tot: Acc = { projectId: '', projectName: 'Ukupno', pm: 0, am: 0, um: 0, pl: 0, al: 0, ul: 0 };
-    const add = (a: Acc, p: ProductRow) => {
-        if (p.plannedMaterial > 0) { a.pm += p.plannedMaterial; a.am += p.material; } else { a.um += p.material; }
-        if (p.plannedLabor > 0) { a.pl += p.plannedLabor; a.al += p.labor; } else { a.ul += p.labor; }
-    };
-    for (const p of rows) {
-        add(tot, p);
-        const key = p.projectId || p.projectName || '—';
-        let row = m.get(key);
-        if (!row) { row = { projectId: p.projectId, projectName: p.projectName || '—', pm: 0, am: 0, um: 0, pl: 0, al: 0, ul: 0 }; m.set(key, row); }
-        add(row, p);
-    }
-    const mk = (r: Acc): PvARow =>
-        ({ projectId: r.projectId, projectName: r.projectName, material: metric(r.pm, r.am, r.um), labor: metric(r.pl, r.al, r.ul) });
-    const byProject = Array.from(m.values())
-        .map(mk)
-        .sort((a, b) => (Math.abs(b.material.variance) + Math.abs(b.labor.variance)) - (Math.abs(a.material.variance) + Math.abs(a.labor.variance)));
-    return { total: mk(tot), byProject };
+export type IssueKind = 'noOffer' | 'noPrice' | 'noMaterial' | 'noLabor' | 'qtyMismatch';
+export interface AnalyticsIssue {
+    kind: IssueKind;
+    projectId: string;
+    projectName: string;
+    productId: string;
+    productName: string;
+    detail: string;
 }
 
-export interface WorkerRow { workerId: string; name: string; days: number; earnings: number; avgRate: number; products: number }
-
-/** Statistika radnika za period: dani = UNIQUE datumi. */
-export function aggregateWorkers(logs: ALog[], range?: DateRange): WorkerRow[] {
-    const m = new Map<string, { name: string; dates: Set<string>; earnings: number; items: Set<string> }>();
-    for (const l of logs) {
-        if (!inRange(l.Date, range)) continue;
-        let row = m.get(l.Worker_ID);
-        if (!row) { row = { name: l.Worker_Name, dates: new Set(), earnings: 0, items: new Set() }; m.set(l.Worker_ID, row); }
-        row.dates.add(l.Date);
-        row.earnings += l.Daily_Rate || 0;
-        if (l.Work_Order_Item_ID) row.items.add(l.Work_Order_Item_ID);
-    }
-    return Array.from(m.entries())
-        .map(([workerId, r]) => ({
-            workerId, name: r.name, days: r.dates.size, earnings: r2(r.earnings),
-            avgRate: r.dates.size > 0 ? r2(r.earnings / r.dates.size) : 0, products: r.items.size,
-        }))
-        .sort((a, b) => b.earnings - a.earnings);
+export interface RazniSummary {
+    tasks: number;                  // broj raznih poslova s aktivnošću u periodu
+    revenue: number;
+    material: number;
+    other: number;
+    labor: number;
+    profit: number;
+    workerDays: number;
 }
+
+export interface AnalyticsKpis {
+    contracted: number;             // Σ prihvaćenih ponuda projekata u opsegu
+    realized: StageTotals;          // završeno u periodu (svi projekti u opsegu)
+    profit: number;                 // realized.profit + razni projekata (samo „Sve")
+    margin: number;
+    inProgress: StageTotals;
+    notStartedCount: number;
+    notStartedContracted: number;
+    razni: RazniSummary;            // razni poslovi BEZ projekta (period)
+    laborInPeriod: number;          // svi živi rad u periodu (projekti + razni)
+    workerDaysInPeriod: number;
+    unbookedDays: number;           // prisutni dani bez dnevnice (period)
+    flaggedProducts: number;
+}
+
+export interface AnalyticsData {
+    range: DateRange;
+    scope: AnalyticsScope;
+    kpis: AnalyticsKpis;
+    projects: AnalyticsProject[];
+    products: AnalyticsProduct[];
+    workers: WorkerRow[];
+    pva: { total: PvARow; byProject: PvARow[]; inProgressLabor: { planned: number; actual: number } };
+    weeklyTrend: WeekBucket[];
+    issues: AnalyticsIssue[];
+}
+
+// ════════════════════════════════════════════════════════════════════
 
 const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 export function mondayOf(iso: string): string {
@@ -195,33 +158,284 @@ export function mondayOf(iso: string): string {
     return toISO(d);
 }
 
-export interface WeekBucket { weekStart: string; labor: number }
-export function weeklyLaborTrend(logs: ALog[], range?: DateRange): WeekBucket[] {
+const fmtKM = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} KM`;
+
+function issuesOf(p: ProductFinanceRow, projectName: string): AnalyticsIssue[] {
+    const base = { projectId: p.projectId, projectName, productId: p.productId, productName: p.name };
+    const out: AnalyticsIssue[] = [];
+    if (p.flags.noOffer) {
+        out.push({ ...base, kind: 'noOffer', detail: p.revenue > 0 ? `Nije u prihvaćenoj ponudi — prihod ${fmtKM(p.revenue)} uzet s naloga` : 'Nije u prihvaćenoj ponudi i nema cijenu' });
+    } else if (p.flags.noPrice) {
+        out.push({ ...base, kind: 'noPrice', detail: 'Cijena u ponudi je 0' });
+    }
+    if (p.flags.noMaterial) out.push({ ...base, kind: 'noMaterial', detail: 'Sastavnica prazna i nema dodataka — materijal 0' });
+    if (p.flags.noLabor) out.push({ ...base, kind: 'noLabor', detail: 'Završen, a nema nijedne dnevnice' });
+    if (p.flags.qtyMismatch) out.push({ ...base, kind: 'qtyMismatch', detail: `Količina: proizvod ${p.quantity}, proizvedeno ${p.producedQty}, ponuda ${p.offerQty}` });
+    return out;
+}
+
+function metric(planned: number, actual: number, unplannedActual: number): PvAMetric {
+    const variance = r2(planned - actual);
+    const variancePct = planned > 0 ? r2(((planned - actual) / planned) * 100) : 0;
+    const accuracyPct = planned > 0 ? r2(Math.max(0, 100 - Math.abs((actual - planned) / planned) * 100)) : (actual === 0 ? 100 : 0);
+    return { planned: r2(planned), actual: r2(actual), variance, variancePct, accuracyPct, unplannedActual: r2(unplannedActual) };
+}
+
+/**
+ * Plan (ponuda) vs stvarno za ZAVRŠENE proizvode. Poređenje je fer samo nad proizvodima
+ * koji plan imaju; stvarni trošak proizvoda bez plana ide u `unplannedActual`.
+ */
+export function planVsActual(products: AnalyticsProduct[]): { total: PvARow; byProject: PvARow[]; inProgressLabor: { planned: number; actual: number } } {
+    interface Acc { projectId: string; projectName: string; count: number; pm: number; am: number; um: number; pl: number; al: number; ul: number }
+    const mk = (projectId: string, projectName: string): Acc => ({ projectId, projectName, count: 0, pm: 0, am: 0, um: 0, pl: 0, al: 0, ul: 0 });
+    const tot = mk('', 'Ukupno');
+    const byProject = new Map<string, Acc>();
+    const add = (a: Acc, p: AnalyticsProduct) => {
+        a.count++;
+        if (p.plannedMaterial > 0) { a.pm += p.plannedMaterial; a.am += p.material; } else { a.um += p.material; }
+        if (p.plannedLabor > 0) { a.pl += p.plannedLabor; a.al += p.labor; } else { a.ul += p.labor; }
+    };
+    let ipPlanned = 0, ipActual = 0;
+    for (const p of products) {
+        if (p.stage === 'u_izradi' && p.plannedLabor > 0) { ipPlanned += p.plannedLabor; ipActual += p.labor; }
+        if (p.stage !== 'zavrseno' || !p.inPeriod) continue;
+        add(tot, p);
+        let a = byProject.get(p.projectId);
+        if (!a) { a = mk(p.projectId, p.projectName); byProject.set(p.projectId, a); }
+        add(a, p);
+    }
+    const row = (a: Acc): PvARow => ({ projectId: a.projectId, projectName: a.projectName, count: a.count, material: metric(a.pm, a.am, a.um), labor: metric(a.pl, a.al, a.ul) });
+    return {
+        total: row(tot),
+        byProject: Array.from(byProject.values()).map(row)
+            .sort((x, y) => (Math.abs(y.material.variance) + Math.abs(y.labor.variance)) - (Math.abs(x.material.variance) + Math.abs(x.labor.variance))),
+        inProgressLabor: { planned: r2(ipPlanned), actual: r2(ipActual) },
+    };
+}
+
+/**
+ * Radnici za period. Zarada = Σ živih dnevnica (kao obračun plata); prosječna dnevnica =
+ * zarada / radnik-dani (Σ Day_Fraction), pa pola dana ne „kvari" prosjek.
+ */
+export function aggregateWorkers(args: {
+    logs: FinLog[];
+    attendance?: AAttendance[];
+    workers?: AWorker[];
+    workOrders: FinWorkOrder[];
+    range?: DateRange;
+}): WorkerRow[] {
+    const { range } = args;
+    const customItems = new Set<string>();
+    for (const wo of args.workOrders || []) for (const it of wo.items || []) if (it.Item_Type === 'custom') customItems.add(it.ID);
+    const nameOf = new Map((args.workers || []).map(w => [w.Worker_ID, w.Name || '']));
+
+    interface Acc { name: string; present: Set<string>; logDates: Set<string>; booked: number; earnings: number; productsKM: number; razniKM: number; products: Set<string> }
+    const m = new Map<string, Acc>();
+    const get = (id: string, name?: string): Acc => {
+        let a = m.get(id);
+        if (!a) { a = { name: nameOf.get(id) || name || 'Radnik', present: new Set(), logDates: new Set(), booked: 0, earnings: 0, productsKM: 0, razniKM: 0, products: new Set() }; m.set(id, a); }
+        return a;
+    };
+
+    for (const l of liveLogs(args.logs)) {
+        const date = dOnly(l.Date);
+        if (!l.Worker_ID || !inRange(date, range)) continue;
+        const a = get(l.Worker_ID, l.Worker_Name);
+        const rate = l.Daily_Rate || 0;
+        a.logDates.add(date);
+        a.booked += l.Day_Fraction ?? 1;
+        a.earnings += rate;
+        if (l.Work_Order_Item_ID && customItems.has(l.Work_Order_Item_ID)) a.razniKM += rate;
+        else { a.productsKM += rate; if (l.Product_ID) a.products.add(l.Product_ID); }
+    }
+    for (const at of args.attendance || []) {
+        if (at.Status !== 'Prisutan' && at.Status !== 'Teren') continue;
+        if (!inRange(at.Date, range)) continue;
+        get(at.Worker_ID, at.Worker_Name).present.add(at.Date);
+    }
+
+    return Array.from(m.entries())
+        .map(([workerId, a]) => {
+            const unbooked = Array.from(a.present).filter(d => !a.logDates.has(d)).length;
+            const booked = r2(a.booked);
+            return {
+                workerId, name: a.name,
+                presentDays: a.present.size,
+                bookedDays: booked,
+                unbookedDays: unbooked,
+                earnings: r2(a.earnings),
+                avgRate: booked > 0 ? r2(a.earnings / booked) : 0,
+                productsKM: r2(a.productsKM),
+                razniKM: r2(a.razniKM),
+                products: a.products.size,
+            };
+        })
+        .filter(w => w.earnings > 0 || w.presentDays > 0)
+        .sort((x, y) => y.earnings - x.earnings || y.presentDays - x.presentDays);
+}
+
+export function weeklyLaborTrend(logs: FinLog[], range?: DateRange): WeekBucket[] {
     const m = new Map<string, number>();
-    for (const l of logs) {
-        if (!inRange(l.Date, range)) continue;
-        const ws = mondayOf(l.Date);
+    for (const l of liveLogs(logs)) {
+        const date = dOnly(l.Date);
+        if (!date || !inRange(date, range)) continue;
+        const ws = mondayOf(date);
         m.set(ws, (m.get(ws) || 0) + (l.Daily_Rate || 0));
     }
     return Array.from(m.entries()).map(([weekStart, labor]) => ({ weekStart, labor: r2(labor) })).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
 }
 
-export interface Kpis {
-    revenue: number; material: number; labor: number; services: number; transport: number;
-    profit: number; margin: number; productCount: number;
-    plannedMaterial: number; plannedLabor: number; plannedProfit: number;
-    montazaLabor: number;        // od ukupnog rada: koliko je montaža/teren (bez prihoda) — za info
+/**
+ * Razni poslovi BEZ projekta (i bez veze na proizvod) — stara formula, kao i do sada.
+ * Rad po datumu dnevnice; vrijednost / materijal / ostali troškovi posla ulaze u period
+ * u kojem je posao završen (nezavršen posao: datum naloga).
+ */
+export function razniSummary(workOrders: FinWorkOrder[], logs: FinLog[], range?: DateRange): RazniSummary {
+    const items = new Map<string, { item: NonNullable<FinWorkOrder['items']>[number]; date: string }>();
+    for (const wo of workOrders || []) {
+        if (wo.Status === 'Otkazano') continue;
+        for (const it of wo.items || []) {
+            if (it.Item_Type !== 'custom' || it.Project_ID || it.Linked_Item_ID) continue;
+            items.set(it.ID, { item: it, date: dOnly(it.Completed_At) || dOnly(wo.Completed_At) || dOnly(wo.Started_At) || '' });
+        }
+    }
+    let labor = 0, workerDays = 0;
+    const active = new Set<string>();
+    for (const l of liveLogs(logs)) {
+        if (!l.Work_Order_Item_ID || !items.has(l.Work_Order_Item_ID)) continue;
+        if (!inRange(dOnly(l.Date), range)) continue;
+        labor += l.Daily_Rate || 0;
+        workerDays += l.Day_Fraction ?? 1;
+        active.add(l.Work_Order_Item_ID);
+    }
+    let revenue = 0, material = 0, other = 0;
+    items.forEach(({ item, date }, id) => {
+        if (!hasRange(range) || inRange(date, range)) {
+            const f = itemFinance(item, undefined, EMPTY_FINANCE_BASIS, 0);
+            revenue += f.revenue; material += f.material; other += f.other;
+            if (f.revenue || f.material || f.other) active.add(id);
+        }
+    });
+    return {
+        tasks: active.size,
+        revenue: r2(revenue), material: r2(material), other: r2(other), labor: r2(labor),
+        profit: r2(revenue - material - other - labor),
+        workerDays: r2(workerDays),
+    };
 }
 
-export function computeKpis(rows: ProductRow[]): Kpis {
-    const sum = (sel: (p: ProductRow) => number) => rows.reduce((s, p) => s + sel(p), 0);
-    const revenue = sum(p => p.selling);
-    const profit = sum(p => p.profit);
+const ACTIVE_EXCLUDED = new Set(['Završeno', 'Otkazano']);
+
+/** Da li projekat ulazi u opseg (Aktivni = nije završen/otkazan; Svi = nije otkazan). */
+export function projectInScope(status: string | undefined, scope: AnalyticsScope): boolean {
+    if (status === 'Otkazano') return false;
+    return scope === 'all' ? true : !ACTIVE_EXCLUDED.has(status || '');
+}
+
+/** Finansije svih projekata za analitiku (sve dnevnice su učitane → bez sačuvanog agregata). */
+export function computeAnalyticsFinance(input: Pick<AnalyticsInput, 'projects' | 'offers' | 'workOrders' | 'logs'>): Map<string, ProjectFinance> {
+    const products: FinProduct[] = [];
+    for (const p of input.projects || []) for (const pr of p.products || []) products.push(pr);
+    return computeProjectsFinance({
+        products,
+        basis: buildFinanceBasis(products, input.offers || []),
+        workOrders: input.workOrders || [],
+        labor: buildLaborIndex(input.logs || [], input.workOrders || []),
+        logs: input.logs || [],
+    });
+}
+
+/**
+ * Glavna agregacija. Finansije svih projekata se računaju JEDNOM (projectFinance), pa
+ * se opseg/period primjenjuju kao čisti filteri — promjena perioda ne mijenja formulu.
+ */
+export function computeAnalytics(input: AnalyticsInput, opts: { from?: string; to?: string; scope?: AnalyticsScope; finance?: Map<string, ProjectFinance> } = {}): AnalyticsData {
+    const scope: AnalyticsScope = opts.scope || 'active';
+    const range: DateRange = { from: opts.from, to: opts.to };
+    const periodOn = hasRange(range);
+
+    const finance = opts.finance || computeAnalyticsFinance(input);
+
+    const projectById = new Map((input.projects || []).map(p => [p.Project_ID, p]));
+    const projectRows: AnalyticsProject[] = [];
+    const productRows: AnalyticsProduct[] = [];
+    const issues: AnalyticsIssue[] = [];
+
+    finance.forEach((f, projectId) => {
+        const proj = projectById.get(projectId);
+        if (!proj || !projectInScope(proj.Status, scope)) return;
+        const started = f.products.some(p => p.stage !== 'nije_zapoceto');
+        if (f.contracted <= 0 && !started && f.razni.count === 0) return;
+
+        const client = proj.Client_Name || '';
+        const label = proj.Name?.trim() || client || '—';
+        const rows: AnalyticsProduct[] = f.products.map(p => ({
+            ...p,
+            projectName: label,
+            client,
+            inPeriod: p.stage === 'zavrseno' ? (!periodOn || inRange(p.completedAt, range)) : true,
+        }));
+        productRows.push(...rows);
+        for (const p of rows) if (p.stage !== 'nije_zapoceto' && hasFlag(p.flags)) issues.push(...issuesOf(p, label));
+
+        const realized = sumStage(rows.filter(p => p.stage === 'zavrseno' && p.inPeriod));
+        const razniProfit = periodOn ? 0 : f.razni.profit;
+        const revenue = realized.revenue + (periodOn ? 0 : f.razni.revenue);
+        const profit = r2(realized.profit + razniProfit);
+        projectRows.push({
+            projectId, client, name: label, status: proj.Status || '',
+            contracted: f.contracted,
+            productCount: f.productCount,
+            finishedCount: f.finishedCount,
+            realized,
+            razniProfit,
+            profit,
+            margin: revenue > 0 ? r2((profit / revenue) * 100) : 0,
+            inProgress: f.inProgress,
+            notStartedCount: f.notStarted.count,
+            flagged: f.flagged,
+        });
+    });
+
+    projectRows.sort((a, b) => b.profit - a.profit || b.contracted - a.contracted);
+
+    const realizedAll = sumStage(productRows.filter(p => p.stage === 'zavrseno' && p.inPeriod));
+    const razniProjects = projectRows.reduce((s, p) => s + p.razniProfit, 0);
+    const razniProjectsRevenue = periodOn ? 0 : Array.from(finance.entries())
+        .filter(([id]) => projectRows.some(p => p.projectId === id))
+        .reduce((s, [, f]) => s + f.razni.revenue, 0);
+    const inProgressAll = sumStage(productRows.filter(p => p.stage === 'u_izradi'));
+    const notStarted = productRows.filter(p => p.stage === 'nije_zapoceto');
+    const profit = r2(realizedAll.profit + razniProjects);
+    const revenueAll = realizedAll.revenue + razniProjectsRevenue;
+
+    const workers = aggregateWorkers({ logs: input.logs || [], attendance: input.attendance, workers: input.workers, workOrders: input.workOrders || [], range });
+    const live = liveLogs(input.logs || []).filter(l => inRange(dOnly(l.Date), range));
+
+    const kpis: AnalyticsKpis = {
+        contracted: r2(projectRows.reduce((s, p) => s + p.contracted, 0)),
+        realized: realizedAll,
+        profit,
+        margin: revenueAll > 0 ? r2((profit / revenueAll) * 100) : 0,
+        inProgress: inProgressAll.count ? inProgressAll : emptyStageTotals(),
+        notStartedCount: notStarted.length,
+        notStartedContracted: r2(notStarted.reduce((s, p) => s + p.contracted, 0)),
+        razni: razniSummary(input.workOrders || [], input.logs || [], range),
+        laborInPeriod: r2(live.reduce((s, l) => s + (l.Daily_Rate || 0), 0)),
+        workerDaysInPeriod: r2(live.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0)),
+        unbookedDays: workers.reduce((s, w) => s + w.unbookedDays, 0),
+        flaggedProducts: new Set(issues.map(i => i.productId)).size,
+    };
+
     return {
-        revenue: r2(revenue), material: r2(sum(p => p.material)), labor: r2(sum(p => p.labor)),
-        services: r2(sum(p => p.services)), transport: r2(sum(p => p.transport)),
-        profit: r2(profit), margin: revenue > 0 ? r2((profit / revenue) * 100) : 0, productCount: rows.length,
-        plannedMaterial: r2(sum(p => p.plannedMaterial)), plannedLabor: r2(sum(p => p.plannedLabor)), plannedProfit: r2(sum(p => p.plannedProfit)),
-        montazaLabor: r2(sum(p => p.nonRevenue ? p.labor : 0)),
+        range,
+        scope,
+        kpis,
+        projects: projectRows,
+        products: productRows,
+        workers,
+        pva: planVsActual(productRows),
+        weeklyTrend: weeklyLaborTrend(input.logs || [], range),
+        issues,
     };
 }

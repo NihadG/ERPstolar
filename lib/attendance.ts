@@ -2272,6 +2272,8 @@ export async function getBookedWorkerDaysByMonth(
         const keys = new Set<string>();
         snapshot.docs.forEach(d => {
             const x = d.data();
+            // Nulirana dnevnica obrisanog naloga ne znači da je dan proknjižen.
+            if (x.Work_Order_Deleted === true) return;
             if (x.Worker_ID && x.Date) keys.add(`${x.Worker_ID}|${x.Date}`);
         });
         return Array.from(keys);
@@ -2300,7 +2302,8 @@ export async function getWorkLogsForMonth(
             where('Date', '<=', `${year}-${m}-31`)
         );
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(d => {
+        // Dnevnice obrisanih naloga su nulirane (Work_Order_Deleted) — ne prikazuju se i ne broje.
+        return snapshot.docs.filter(d => d.data().Work_Order_Deleted !== true).map(d => {
             const x = d.data();
             return {
                 Worker_ID: x.Worker_ID,
@@ -3324,14 +3327,11 @@ export async function calculateActualLaborCost(item: any, organizationId?: strin
  */
 export async function recalculateWorkOrder(
     workOrderId: string,
-    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean; forceMaterialBasisRefresh?: boolean }
+    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean }
 ): Promise<void> {
     const skipSnapshot = options?.skipSnapshot ?? false;
     const skipStatusSync = options?.skipStatusSync ?? false;
     const skipMaterialRefresh = options?.skipMaterialRefresh ?? false;
-    // Probija „zamrznutu osnovicu" i povuče živi materijalni trošak — SAMO za eksplicitni
-    // „osvježi profit na trenutno" iz pregleda izmjena. Podrazumijevano false (osnovica frozen).
-    const forceMaterialBasisRefresh = options?.forceMaterialBasisRefresh ?? false;
     try {
         const firestore = getDb();
         const workOrder = await getWorkOrderWithItems(workOrderId);
@@ -3379,20 +3379,17 @@ export async function recalculateWorkOrder(
             // Montaža stavke NIKAD ne nose prihod → 0.
             let itemValue = isMontaza ? 0 : (item.Product_Value || 0);
 
-            // ── LIVE-SYNC IZ PRIHVAĆENE PONUDE (prihod + usluge + planirani rad) ──────────
-            // Prihod (Product_Value = Selling_Price × količina), usluge (Services_Total = Σ extras)
-            // i planirani rad (dani/radnici/dnevnica) povlače se iz PRIHVAĆENE ponude na SVAKI
-            // recalc — da izmjena cijene/usluga/dana u (revidiranoj) ponudi ODMAH uđe u nalog i
-            // profit, i za NOVE i za VEĆ kreirane naloge. Jedno čitanje ponude po stavci (prije su
-            // bila dva: backfill prihoda + sync usluga).
-            // Zamrzavanje (kao materijal): završena/zamrznuta stavka (Status 'Završeno' ili
-            // Completed_At) ostaje na snapshotu — profit se ne mijenja retroaktivno; IZUZETAK:
-            // prihod 0 se ipak self-heal-uje iz ponude (jednokratno). Ručni override
-            // (Profit_Overrides.Selling_Price / .Extras_Total) TRAJNO zamrzava dotičnu vrijednost.
-            const itemFrozen = item.Status === 'Završeno' || !!item.Completed_At;
+            // ── SINHRONIZACIJA IZ PRIHVAĆENE PONUDE (prihod + dodaci + planirani rad) ─────
+            // Profit se NE računa iz ovih sačuvanih polja (lib/projectFinance.ts čita ponudu i
+            // sastavnicu direktno); ovdje se samo drži ogledalo za starije prikaze/dijagnostiku.
+            // Model 04.10.2026: prihod = PRIHVAĆENA ponuda, bez zamrzavanja završenih stavki.
+            // Projekat može imati više prihvaćenih ponuda (faze) — traži se ona u kojoj je
+            // proizvod UKLJUČEN, novije prihvaćena ima prednost (isto kao buildFinanceBasis).
+            // Ručni override (Profit_Overrides.Selling_Price / .Extras_Total) ostaje poštovan.
+            const isCustomItem = (item as any).Item_Type === 'custom';
             const servicesManualOverride = (item as any).Profit_Overrides?.Extras_Total != null;
             const sellingManualOverride = (item as any).Profit_Overrides?.Selling_Price != null && (item as any).Profit_Overrides.Selling_Price > 0;
-            if (!isMontaza && !skipMaterialRefresh && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+            if (!isMontaza && !isCustomItem && !skipMaterialRefresh && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
                 try {
                     const offSnap = await getDocs(query(
                         collection(firestore, COLLECTIONS.OFFERS),
@@ -3400,34 +3397,36 @@ export async function recalculateWorkOrder(
                         where('Status', '==', 'Prihvaćeno'),
                         where('Organization_ID', '==', workOrder.Organization_ID)
                     ));
-                    if (!offSnap.empty) {
-                        const offerId = offSnap.docs[0].data().Offer_ID;
+                    const acceptedOffers = offSnap.docs
+                        .map(d => d.data() as any)
+                        .sort((a, b) => String(b.Accepted_Date || b.Created_Date || '').localeCompare(String(a.Accepted_Date || a.Created_Date || '')));
+                    let op: any = null;
+                    for (const off of acceptedOffers) {
                         const opSnap = await getDocs(query(
                             collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
-                            where('Offer_ID', '==', offerId),
+                            where('Offer_ID', '==', off.Offer_ID),
                             where('Product_ID', '==', item.Product_ID),
                             where('Organization_ID', '==', workOrder.Organization_ID)
                         ));
-                        if (!opSnap.empty) {
-                            const op = opSnap.docs[0].data() as any;
+                        const included = opSnap.docs.map(d => d.data() as any).find(p => p.Included);
+                        if (included) { op = included; break; }
+                    }
+                    {
+                        if (op) {
                             const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
                             const patch: Record<string, any> = {};
 
-                            // PRIHOD: prodajna cijena × količina. Aktivna stavka prati ponudu;
-                            // zamrznuta se samo self-heal-uje iz 0 (ne dira postojeći snapshot).
+                            // PRIHOD: prodajna cijena iz prihvaćene ponude × količina stavke.
                             if (!sellingManualOverride) {
                                 const offerValue = (op.Selling_Price || 0) * (item.Quantity || 1);
-                                const target = !itemFrozen
-                                    ? offerValue
-                                    : ((item.Product_Value || 0) <= 0 ? offerValue : (item.Product_Value || 0));
-                                if (target > 0) {
-                                    itemValue = target;
-                                    if (target !== (item.Product_Value || 0)) patch.Product_Value = target;
+                                if (offerValue > 0) {
+                                    itemValue = offerValue;
+                                    if (offerValue !== (item.Product_Value || 0)) patch.Product_Value = offerValue;
                                 }
                             }
 
-                            // USLUGE (extras) — samo aktivna stavka bez ručnog override-a.
-                            if (!itemFrozen && !servicesManualOverride) {
+                            // DODACI (extras, po komadu) — bez ručnog override-a.
+                            if (!servicesManualOverride) {
                                 let services = 0;
                                 if (op.ID) {
                                     const exSnap = await getDocs(query(
@@ -3442,7 +3441,7 @@ export async function recalculateWorkOrder(
                             }
 
                             // PLANIRANI RAD (dani/radnici/dnevnica) — za auto-rok i planirani trošak.
-                            if (!itemFrozen) {
+                            {
                                 const days = op.Labor_Days || 0;
                                 const wk = op.Labor_Workers || 0;
                                 const rate = op.Labor_Daily_Rate || 0;
@@ -3473,43 +3472,20 @@ export async function recalculateWorkOrder(
                 itemValue = overrides.Selling_Price;
             }
 
-            // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
-            // This prevents retroactive profit changes when material prices change after completion.
-            // Active items still get fresh prices so profit is accurate during production.
-            // PRICE-MODAL FIX: If Material_Cost was manually set (Material_Cost_Source === 'manual'),
-            // preserve the stored value — user explicitly entered this price.
+            // MATERIJAL = ŽIVA sastavnica (model 04.10.2026): izmjena materijala nakon prihvatanja
+            // ponude ulazi u trošak, i za završene stavke — nema više zamrznute osnovice ni
+            // pregleda „utiče li na profit?". Sačuvani Material_Cost (po komadu) je samo ogledalo.
+            // Izuzeci: montaža (bez materijala), razni posao (ručno unesen trošak) i ručno
+            // postavljena cijena (Material_Cost_Source 'manual').
             let itemMaterialCost = 0;
-            // Rizik #3: materijal je ZAMRZNUT za stavku koja je ikad završena (ima Completed_At) —
-            // ostaje zamrznut i ako se status privremeno vrati na 'U toku' (naknadno knjiženje).
-            const matFrozen = item.Status === 'Završeno' || !!item.Completed_At;
             if (isMontaza) {
-                // Montaža nalog ne nosi materijal — spriječi da fresh fetch "uskrsne" trošak.
                 itemMaterialCost = 0;
-            } else if (matFrozen && (item.Material_Cost || 0) > 0) {
-                // Završeno/zamrznuto: koristi pohranjeni trošak
+            } else if (isCustomItem || ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0)) {
                 itemMaterialCost = item.Material_Cost || 0;
-            } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
-                // Manually set via PriceEditModal: preserve user's value
-                itemMaterialCost = item.Material_Cost || 0;
-            } else if ((item.Material_Cost || 0) > 0) {
-                // ZAMRZNUTA OSNOVICA: jednom uspostavljen materijalni trošak proizvodne stavke je
-                // SNAPSHOT (osnovica profita). Izmjene materijala (katalog / kartica proizvoda) NE
-                // ulaze više tihim preračunom — ulaze SAMO kroz odobrenu deltu u pregledu
-                // „utiče li ovo na profit?" (vidi lib/profitBasis.ts). Prvo popunjavanje (osnovica 0)
-                // i dalje povuče živo (self-heal, grana ispod). forceMaterialBasisRefresh probija
-                // freeze samo za eksplicitni „osvježi na trenutno" iz pregleda.
-                if (forceMaterialBasisRefresh && !skipMaterialRefresh && item.Product_ID && workOrder.Organization_ID) {
-                    const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
-                    itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                } else {
-                    itemMaterialCost = item.Material_Cost || 0;
-                }
             } else if (!skipMaterialRefresh && item.Product_ID && workOrder.Organization_ID) {
-                // Prvo popunjavanje (osnovica još 0): povuci živi trošak i time je uspostavi.
                 const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
                 itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
             } else {
-                // Fallback to stored value if no Product_ID
                 itemMaterialCost = item.Material_Cost || 0;
             }
 

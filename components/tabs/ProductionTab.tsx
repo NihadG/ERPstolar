@@ -5,9 +5,7 @@ import type { WorkOrder, Project, Worker, Task, WorkLog } from '@/lib/types';
 import { firstBookingByOrder } from '@/lib/workOrderTasks';
 import { isNewFormatWorkOrderNumber } from '@/lib/workOrderNumber';
 import RenumberWorkOrdersModal from '@/components/ui/RenumberWorkOrdersModal';
-import { deleteWorkOrder, startWorkOrder, updateWorkOrder, applyBasisReview } from '@/lib/services';
-import type { ProjectBasisReview, BasisReviewItem } from '@/lib/profitBasis';
-import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
+import { deleteWorkOrder, startWorkOrder, updateWorkOrder } from '@/lib/services';
 import { checkMissingAttendanceForActiveOrders } from '@/lib/services';
 import { repairAllProductStatuses } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -174,20 +172,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
 
     function toggleWorkOrder(id: string) {
         setExpandedOrderId(prev => prev === id ? null : id);
-    }
-
-    // Gejt „profit zastario" — usklađivanje osnovice na trenutni trošak (iz badge-a na kartici).
-    const [basisReview, setBasisReview] = useState<{ review: ProjectBasisReview[]; label: string } | null>(null);
-    async function handleApplyBasisReview(approvedItems: BasisReviewItem[]) {
-        if (!organizationId) { setBasisReview(null); return; }
-        const res = await applyBasisReview(approvedItems, organizationId);
-        if (res.success) {
-            showToast(approvedItems.length > 0 ? 'Profit usklađen' : 'Profit nepromijenjen', 'success');
-            onRefresh('workOrders', 'projects');
-        } else {
-            showToast(res.message, 'error');
-        }
-        setBasisReview(null);
     }
 
     // Print Modal
@@ -485,7 +469,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             onSummary={setSummaryOrder}
             onAttendanceFix={setAttendanceFixWorkOrder}
             onUpdate={handleUpdateWorkOrder}
-            onReviewBasis={(review, label) => setBasisReview({ review, label })}
             onRefresh={onRefresh}
             showToast={showToast}
         />
@@ -950,16 +933,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                     projects={projects}
                     showToast={showToast}
                     onRefresh={onRefresh}
-                />
-            )}
-
-            {basisReview && (
-                <ProfitBasisReviewModal
-                    review={basisReview.review}
-                    intro="Trenutni trošak materijala odstupa od zamrznute osnovice profita. Odaberi projekte za usklađivanje osnovice na trenutni trošak — ostatak ostaje netaknut."
-                    applyLabel="Uskladi"
-                    onClose={() => setBasisReview(null)}
-                    onApply={handleApplyBasisReview}
                 />
             )}
 

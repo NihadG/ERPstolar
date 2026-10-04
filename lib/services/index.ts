@@ -120,7 +120,6 @@ export type { MaterialOrderPlanGroup, MaterialOrderPlanItem } from '../database'
 // Graf procesa (po nalogu) + templejti toka
 export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
 export { getProductMaterials } from '../database';
-export { applyBasisReview, buildBasisReview } from '../database';
 
 // Katalog procesa (org) + pravila materijal→proces + plan procesa proizvoda
 export {
@@ -174,7 +173,7 @@ export {
 } from './profit/profitService';
 
 // Analitika (jedinstvena — Profiti full-screen)
-export { getAnalytics, getAnalyticsRaw, computeAnalytics } from './profit/analyticsService';
+export { getAnalyticsRaw, computeAnalytics } from './profit/analyticsService';
 export type { AnalyticsData, AnalyticsOptions, AnalyticsScope, AnalyticsRaw } from './profit/analyticsService';
 
 // Notification

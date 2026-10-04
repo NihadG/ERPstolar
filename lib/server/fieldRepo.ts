@@ -195,13 +195,16 @@ export async function getAttendanceForDate(orgId: string, date: string): Promise
 
 // ─── Dnevnice ─────────────────────────────────────────────────────────
 
+/** Žive dnevnice: nulirane dnevnice obrisanih naloga (Work_Order_Deleted) se ne prikazuju ni ne broje. */
+const liveOnly = (logs: WorkLog[]) => logs.filter(l => l.Work_Order_Deleted !== true);
+
 export async function getWorkLogsInRange(orgId: string, from: string, to: string): Promise<WorkLog[]> {
     const snap = await adminDb().collection('work_logs')
         .where('Organization_ID', '==', orgId)
         .where('Date', '>=', from)
         .where('Date', '<=', to)
         .get();
-    return snap.docs.map(d => d.data() as WorkLog);
+    return liveOnly(snap.docs.map(d => d.data() as WorkLog));
 }
 
 /** Dnevnice jednog radnika kroz raspon — indeks work_logs(Worker_ID, Organization_ID, Date). */
@@ -212,7 +215,7 @@ export async function getWorkLogsForWorkerRange(orgId: string, workerId: string,
         .where('Date', '>=', from)
         .where('Date', '<=', to)
         .get();
-    return snap.docs.map(d => d.data() as WorkLog);
+    return liveOnly(snap.docs.map(d => d.data() as WorkLog));
 }
 
 /** Prisustvo jednog radnika kroz raspon — indeks worker_attendance(Worker_ID, Organization_ID, Date). */
@@ -232,7 +235,7 @@ export async function getWorkLogsForWorkerDate(orgId: string, workerId: string, 
         .where('Worker_ID', '==', workerId)
         .where('Date', '==', date)
         .get();
-    return snap.docs.map(d => d.data() as WorkLog);
+    return liveOnly(snap.docs.map(d => d.data() as WorkLog));
 }
 
 /** Posljednji RANIJI dan ovog radnika sa stvarnim knjiženjem, bez čitanja cijele istorije. */
@@ -264,7 +267,7 @@ export async function getWorkLogsForWorkOrder(orgId: string, workOrderId: string
         .where('Organization_ID', '==', orgId)
         .where('Work_Order_ID', '==', workOrderId)
         .get();
-    return snap.docs.map(d => d.data() as WorkLog);
+    return liveOnly(snap.docs.map(d => d.data() as WorkLog));
 }
 
 // ─── Zadaci ───────────────────────────────────────────────────────────

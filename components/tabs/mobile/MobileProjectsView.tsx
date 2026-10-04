@@ -24,7 +24,7 @@ import type {
 import { formatCurrency, compareProjectsByActivity, countActiveWorkOrdersByProject } from '@/lib/utils';
 import { daysUntil } from '@/lib/planning';
 import { sortProjectProducts } from '@/lib/projectProductOrder';
-import { projectProfitBreakdown } from '@/lib/projectProfit';
+import { useProjectsFinance } from '@/lib/useProjectsFinance';
 import { summarizeProjectNotes } from '@/lib/productNotes';
 import MobileProductDetail from './MobileProductDetail';
 import {
@@ -83,7 +83,7 @@ const initials = (name: string) =>
     name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '—';
 
 export default function MobileProjectsView({
-    projects, workOrders, workLogs = [], onRefresh,
+    projects, workOrders, offers = [], workLogs = [], onRefresh,
     onNavigateToTasks, onOpenProjectModal, onDeleteProject,
     onOpenProductModal, onDeleteProduct, onOpenNotes,
     onOpenMaterialModal, onDeleteMaterial, onEditMaterial,
@@ -114,18 +114,14 @@ export default function MobileProjectsView({
     // Broj aktivnih naloga po projektu — ulaz za zadani poredak (kao desktop).
     const activeCounts = useMemo(() => countActiveWorkOrdersByProject(workOrders), [workOrders]);
 
-    // Vrijednost projekta — ISTA formula kao desktop (lib/projectProfit).
-    // Keširano po projektu: lista može imati desetine redova.
-    const revenueOf = useMemo(() => {
-        const cache = new Map<string, number>();
-        return (projectId: string) => {
-            const hit = cache.get(projectId);
-            if (hit !== undefined) return hit;
-            const fin = projectProfitBreakdown({ projectId, workOrders, workLogs });
-            cache.set(projectId, fin.revenue);
-            return fin.revenue;
-        };
-    }, [workOrders, workLogs]);
+    // Vrijednost projekta = ugovoreno (prihvaćene ponude) — isti proračun kao desktop
+    // (lib/projectFinance.ts). Bez ponude: prihod proizvoda koji su u nalozima.
+    const projectsFinance = useProjectsFinance(projects, offers, workOrders, workLogs);
+    const revenueOf = (projectId: string): number => {
+        const fin = projectsFinance.byProject.get(projectId);
+        if (!fin) return 0;
+        return fin.contracted > 0 ? fin.contracted : fin.realized.revenue + fin.inProgress.revenue;
+    };
 
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();

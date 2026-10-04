@@ -21,6 +21,7 @@ import type {
 } from './types';
 import { getProductMaterials } from './database';
 import { itemProfitBreakdown } from './profit';
+import { liveLogs } from './projectFinance';
 
 // ============================================
 // QUERY HELPERS
@@ -75,7 +76,7 @@ export async function calculateWorkerProductivity(
     try {
         // Dnevnice i šihtarica radnika u periodu — Date-range na serveru (paralelno),
         // umjesto povlačenja kompletne istorije radnika pa filtriranja u memoriji.
-        const [workLogs, attendance] = await Promise.all([
+        const [allWorkLogs, attendance] = await Promise.all([
             getDocsInDateRange<WorkLog>('work_logs',
                 [where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId)],
                 dateFrom, dateTo),
@@ -83,6 +84,9 @@ export async function calculateWorkerProductivity(
                 [where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId)],
                 dateFrom, dateTo),
         ]);
+
+        // Dnevnice obrisanih naloga su nulirane — ne ulaze u zaradu (isto kao obračun plata).
+        const workLogs = liveLogs(allWorkLogs);
 
         // Calculate Days_Present (Prisutan + Teren)
         const presentAttendance = attendance.filter(att =>
@@ -106,8 +110,10 @@ export async function calculateWorkerProductivity(
         // Total earnings
         const totalEarnings = workLogs.reduce((sum, log) => sum + (log.Daily_Rate || 0), 0);
 
-        // Average daily rate
-        const avgDailyRate = daysWorked > 0 ? totalEarnings / daysWorked : 0;
+        // Prosječna dnevnica = zarada / radnik-dani (Σ Day_Fraction) — isto kao Analitika.
+        // (Ranije / broj datuma: pola dana ili dio dana na drugom nalogu je „kvario" prosjek.)
+        const bookedDays = workLogs.reduce((sum, log) => sum + (log.Day_Fraction ?? 1), 0);
+        const avgDailyRate = bookedDays > 0 ? totalEarnings / bookedDays : 0;
 
         // Products worked on (unique Product_IDs)
         const uniqueProducts = new Set(workLogs.map(log => log.Product_ID));

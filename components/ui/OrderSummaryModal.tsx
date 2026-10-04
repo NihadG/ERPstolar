@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import type { WorkOrder, WorkOrderItem, ProductionSnapshot, WorkLog } from '@/lib/types';
-import { getProductionSnapshotForWorkOrder, getWorkLogsForWorkOrder } from '@/lib/services';
+import { useState, useEffect, useMemo } from 'react';
+import type { WorkOrder, WorkOrderItem, WorkLog } from '@/lib/types';
+import { getWorkLogsForWorkOrder } from '@/lib/services';
 import { workOrderDisplayName } from '@/lib/utils';
-import { itemMaterialTotal } from '@/lib/materialCost';
-import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
+import { itemFinance, sumItemFinance, liveLogs, type FinanceBasis, type ItemFinance } from '@/lib/projectFinance';
+import { useFinanceBasis } from '@/context/FinanceBasisContext';
 import Modal from '@/components/ui/Modal';
-import { Receipt, AlertTriangle } from 'lucide-react';
+import { Receipt } from 'lucide-react';
 
 interface OrderSummaryModalProps {
     workOrder: WorkOrder;
@@ -21,7 +21,7 @@ interface SummaryRow {
     selling: number;
     material: number;
     labor: number;
-    other: number;      // transport + usluge
+    other: number;      // ostali troškovi (razni poslovi)
     profit: number;
     margin: number | null;
     plannedDays?: number;
@@ -35,7 +35,6 @@ interface SummaryWorker {
 }
 
 interface SummaryData {
-    source: 'snapshot' | 'live';
     rows: SummaryRow[];
     workers: SummaryWorker[];
     totals: { selling: number; material: number; labor: number; other: number; profit: number; margin: number | null };
@@ -43,81 +42,17 @@ interface SummaryData {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-function fromSnapshot(s: ProductionSnapshot): SummaryData {
-    // v2+ snapshot: Total_Material_Cost je već UKUPAN. Legacy (bez verzije): bio je PO KOMADU →
-    // množimo količinom i preračunavamo profit (inače je materijal potcijenjen, profit precijenjen).
-    const isV2 = (s.Snapshot_Version || 1) >= 2;
-    const rows: SummaryRow[] = (s.Items || []).map(it => {
-        const extras = (it.Extras || []).reduce((sum, e) => sum + (e.Total || 0), 0);
-        const other = (it.Transport_Share || 0) + extras;
-        const laborCost = (it.Workers_Assigned || []).reduce((sum, w) => sum + (w.Total_Cost || 0), 0);
-        const selling = it.Selling_Price || 0;
-        const material = isV2 ? (it.Total_Material_Cost || 0) : itemMaterialTotal(it.Total_Material_Cost, it.Quantity);
-        const profit = selling - material - laborCost - other;
-        return {
-            name: it.Product_Name,
-            qty: it.Quantity || 1,
-            selling,
-            material,
-            labor: laborCost,
-            other,
-            profit,
-            margin: selling > 0 ? (profit / selling) * 100 : null,
-            plannedDays: it.Planned_Labor_Days,
-            actualDays: it.Actual_Labor_Days,
-        };
-    });
-
-    // Radnici agregirano preko svih stavki
-    const wMap = new Map<string, SummaryWorker>();
-    (s.Items || []).forEach(it => (it.Workers_Assigned || []).forEach(w => {
-        const cur = wMap.get(w.Worker_ID) || { name: w.Worker_Name, days: 0, cost: 0 };
-        cur.days += w.Days_Worked || 0;
-        cur.cost += w.Total_Cost || 0;
-        wMap.set(w.Worker_ID, cur);
-    }));
-
-    // Totali iz redova (koji su već korigovani za količinu) — stored agregati su za legacy
-    // snapshote pogrešni (materijal po komadu), pa im ne vjerujemo bezuslovno.
-    const selling = rows.reduce((x, r) => x + r.selling, 0) || s.Total_Selling_Price || 0;
-    const material = rows.reduce((x, r) => x + r.material, 0);
-    const labor = rows.reduce((x, r) => x + r.labor, 0) || s.Actual_Labor_Cost || 0;
-    const other = rows.reduce((x, r) => x + r.other, 0);
-    const profit = selling - material - labor - other;
-    return {
-        source: 'snapshot',
-        rows,
-        workers: Array.from(wMap.values()).sort((a, b) => b.cost - a.cost),
-        totals: {
-            selling: round2(selling), material: round2(material), labor: round2(labor),
-            other: round2(other), profit: round2(profit),
-            margin: selling > 0 ? round2((profit / selling) * 100) : null,
-        },
-    };
-}
-
-// Fallback za stare naloge bez snapshota — JEDINSTVENA formula iz lib/profit.ts
-// (isti izvor kao WorkOrderExpandedDetail itemFin/orderFin — ne inline formula).
-function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
-    const isMontaza = wo.Work_Order_Type === 'Montaža';
-    const itemFins: { item: WorkOrderItem; actualDays: number; fin: ProfitBreakdown }[] = (wo.items || []).map(item => {
+// Rezime naloga = ISTI proračun kao detalj naloga, kartica projekta i analitika
+// (lib/projectFinance): prihod iz prihvaćene ponude (ili završni račun), materijal =
+// živa sastavnica + dodaci iz ponude, rad = Σ dnevnica. Ranije se čitao zamrznuti
+// snapshot sa završetka, pa je rezime znao pokazati drugi broj od ostatka aplikacije.
+function summarize(wo: WorkOrder, allLogs: WorkLog[], basis: FinanceBasis): SummaryData {
+    const logs = liveLogs(allLogs);
+    const itemFins: { item: WorkOrderItem; actualDays: number; fin: ItemFinance }[] = (wo.items || []).map(item => {
         const itemLogs = logs.filter(l => l.Work_Order_Item_ID === item.ID);
         const labor = itemLogs.reduce((s, l) => s + (l.Daily_Rate || 0), 0);
         const actualDays = round2(itemLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0));
-        const fin = isMontaza
-            ? itemProfitBreakdown({ laborTotal: labor })
-            : itemProfitBreakdown({
-                productValue: item.Product_Value,
-                sellingOverride: (item as any).Profit_Overrides?.Selling_Price,
-                materialPerUnit: item.Material_Cost,
-                quantity: item.Quantity,
-                laborTotal: labor,
-                servicesTotal: (item as any).Services_Total,
-                transportShare: (item as any).Transport_Share,
-                transportOverride: (item as any).Profit_Overrides?.Transport_Share,
-                otherCosts: (item as any).Other_Costs,
-            });
-        return { item, actualDays, fin };
+        return { item, actualDays, fin: itemFinance(item, wo, basis, labor) };
     });
 
     const rows: SummaryRow[] = itemFins.map(({ item, actualDays, fin }) => ({
@@ -126,7 +61,7 @@ function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
         selling: fin.revenue,
         material: fin.material,
         labor: fin.labor,
-        other: round2(fin.services + fin.transport),
+        other: fin.other,
         profit: fin.profit,
         margin: fin.revenue > 0 ? fin.margin : null,
         plannedDays: item.Planned_Labor_Days,
@@ -141,48 +76,43 @@ function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
         wMap.set(l.Worker_ID, cur);
     });
 
-    // Ukupno = sumBreakdowns preko istih per-item breakdowns (invarijanta Σ redova == ukupno).
-    const total = sumBreakdowns(itemFins.map(x => x.fin));
+    // Ukupno = Σ istih per-item proračuna (invarijanta Σ redova == ukupno).
+    const total = sumItemFinance(itemFins.map(x => x.fin));
     return {
-        source: 'live',
         rows,
         workers: Array.from(wMap.values()).map(w => ({ ...w, days: round2(w.days), cost: round2(w.cost) })).sort((a, b) => b.cost - a.cost),
         totals: {
             selling: total.revenue, material: total.material, labor: total.labor,
-            other: round2(total.services + total.transport), profit: total.profit,
+            other: total.other, profit: total.profit,
             margin: total.revenue > 0 ? total.margin : null,
         },
     };
 }
 
-/** Rezime završenog naloga: finalni P&L iz production snapshota (fallback: živi izračun). */
+/** Rezime naloga: P&L po proizvodu — isti proračun kao ostatak aplikacije (lib/projectFinance). */
 export default function OrderSummaryModal({ workOrder, organizationId, onClose }: OrderSummaryModalProps) {
     const [loading, setLoading] = useState(true);
-    const [data, setData] = useState<SummaryData | null>(null);
+    const [logs, setLogs] = useState<WorkLog[] | null>(null);
+    const basis = useFinanceBasis();
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
             setLoading(true);
             try {
-                const snap = await getProductionSnapshotForWorkOrder(workOrder.Work_Order_ID, organizationId);
-                if (cancelled) return;
-                if (snap && (snap.Items || []).length > 0) {
-                    setData(fromSnapshot(snap));
-                } else {
-                    const logs = await getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId);
-                    if (cancelled) return;
-                    setData(fromLive(workOrder, logs));
-                }
+                const l = await getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId);
+                if (!cancelled) setLogs(l);
             } catch (e) {
                 console.error('order summary load error', e);
-                if (!cancelled) setData(null);
+                if (!cancelled) setLogs(null);
             } finally {
                 if (!cancelled) setLoading(false);
             }
         })();
         return () => { cancelled = true; };
     }, [workOrder.Work_Order_ID, organizationId]);
+
+    const data = useMemo(() => (logs ? summarize(workOrder, logs, basis) : null), [logs, workOrder, basis]);
 
     const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
     const fmtDays = (n?: number) => n === undefined ? '—' : (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -216,11 +146,9 @@ export default function OrderSummaryModal({ workOrder, organizationId, onClose }
                 <div>
                     <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
                         {fmtDate(workOrder.Started_At)} → {fmtDate(workOrder.Completed_At)}
-                        {data.source === 'live' && (
-                            <span style={{ marginLeft: '10px', color: 'var(--warning)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                <AlertTriangle size={13} /> izračunato uživo (nalog nema snapshot)
-                            </span>
-                        )}
+                        <span style={{ marginLeft: '10px' }}>
+                            · prihod iz prihvaćene ponude, materijal = sastavnica + dodaci, rad = dnevnice
+                        </span>
                     </div>
 
                     {/* Totali */}
@@ -229,7 +157,7 @@ export default function OrderSummaryModal({ workOrder, organizationId, onClose }
                             { label: 'Prihod', value: data.totals.selling, color: '#0f172a' },
                             { label: 'Materijal', value: data.totals.material, color: '#0f172a' },
                             { label: 'Rad', value: data.totals.labor, color: '#b45309' },
-                            { label: 'Transport + usluge', value: data.totals.other, color: '#0f172a' },
+                            ...(data.totals.other > 0 ? [{ label: 'Ostali troškovi', value: data.totals.other, color: '#0f172a' }] : []),
                         ].map(k => (
                             <div key={k.label} style={{ flex: '1 1 120px', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: '10px' }}>
                                 <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{k.label}</div>

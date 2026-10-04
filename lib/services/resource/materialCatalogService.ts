@@ -10,7 +10,6 @@ import { queryByOrg, findByIdAndOrg, findRef, createDoc, updateDocByRef, getDb, 
 import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
 import type { Material, MaterialTemplate } from '../../types';
-import type { ProjectBasisReview } from '../../profitBasis';
 
 // ============================================
 // READ
@@ -27,7 +26,7 @@ export async function getMaterialsCatalog(organizationId: string): Promise<Mater
 export async function saveMaterial(
     data: Partial<Material>,
     organizationId: string
-): Promise<{ success: boolean; data?: { Material_ID: string }; message: string; basisReview?: ProjectBasisReview[] }> {
+): Promise<{ success: boolean; data?: { Material_ID: string }; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -51,14 +50,13 @@ export async function saveMaterial(
         }
 
         // REACTIVE: If price or name changed, propagate to all ProductMaterials
-        let basisReview: ProjectBasisReview[] = [];
         if (!isNew && oldData) {
             const priceChanged = data.Default_Unit_Price !== undefined && data.Default_Unit_Price !== oldData.Default_Unit_Price;
             const nameChanged = data.Name !== undefined && data.Name !== oldData.Name;
             const supplierChanged = data.Default_Supplier !== undefined && data.Default_Supplier !== oldData.Default_Supplier;
 
             if (priceChanged || nameChanged || supplierChanged) {
-                basisReview = await propagateMaterialChange(data.Material_ID!, data, organizationId);
+                await propagateMaterialChange(data.Material_ID!, data, organizationId);
                 eventBus.emit('material:priceChanged', { materialId: data.Material_ID!, organizationId });
             }
         }
@@ -67,7 +65,6 @@ export async function saveMaterial(
             success: true,
             data: { Material_ID: data.Material_ID! },
             message: isNew ? 'Materijal kreiran' : 'Materijal ažuriran',
-            basisReview,
         };
     } catch (error) {
         console.error('saveMaterial error:', error);
@@ -105,7 +102,7 @@ async function propagateMaterialChange(
     materialId: string,
     updatedData: Partial<Material>,
     organizationId: string
-): Promise<ProjectBasisReview[]> {
+): Promise<void> {
     const db = getDb();
     const pmQ = query(
         collection(db, COLLECTIONS.PRODUCT_MATERIALS),
@@ -113,12 +110,9 @@ async function propagateMaterialChange(
         where('Organization_ID', '==', organizationId)
     );
     const pmSnap = await getDocs(pmQ);
-    if (pmSnap.empty) return [];
+    if (pmSnap.empty) return;
 
     const affectedProductIds = new Set<string>();
-    // Δ troška materijala PO KOMADU po proizvodu (Σ Δ Total_Price OVE izmjene) — osnovica
-    // za gejtovani pregled. Primljeni (zamrznuti) materijali se izostavljaju iz delte.
-    const productDelta = new Map<string, number>();
     const batch = writeBatch(db);
 
     pmSnap.docs.forEach(docSnap => {
@@ -133,15 +127,11 @@ async function propagateMaterialChange(
         }
         if (updatedData.Default_Unit_Price !== undefined) {
             const isSpecialMaterial = pm.Is_Glass || pm.Is_Alu_Door;
-            if (!isSpecialMaterial) {
-                const oldTotal = (pm.Quantity || 0) * (pm.Unit_Price || 0);
-                const newTotal = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
+            // Primljeni materijal je plaćen po cijeni s prijema — nova kataloška cijena ga ne
+            // dira (inače bi živi trošak retroaktivno mijenjao profit završenih proizvoda).
+            if (!isSpecialMaterial && pm.Status !== 'Primljeno') {
                 updates.Unit_Price = updatedData.Default_Unit_Price;
-                updates.Total_Price = newTotal;
-                // Primljeni materijal je zaključan na prijemu → ne ulazi u Δ osnovice profita.
-                if (pm.Product_ID && pm.Status !== 'Primljeno') {
-                    productDelta.set(pm.Product_ID, (productDelta.get(pm.Product_ID) || 0) + (newTotal - oldTotal));
-                }
+                updates.Total_Price = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
             }
         }
 
@@ -153,9 +143,9 @@ async function propagateMaterialChange(
 
     await batch.commit();
 
-    // ŽIVA product cijena (kartica proizvoda / zastarjelost ponude) se ažurira odmah;
-    // osnovica proizvodnih naloga ostaje frozen (recalculateProductCost više ne dira nalog).
-    const { recalculateProductCost, buildBasisReview } = await import('../../database');
+    // Živi trošak proizvoda se ažurira odmah — profit (lib/projectFinance.ts) čita sastavnicu
+    // direktno, pa nova cijena odmah ulazi u trošak projekata.
+    const { recalculateProductCost } = await import('../../database');
     for (const productId of Array.from(affectedProductIds)) {
         try {
             await recalculateProductCost(productId, organizationId);
@@ -163,10 +153,6 @@ async function propagateMaterialChange(
             console.warn(`propagateMaterialChange: Failed to recalculate product ${productId}:`, err);
         }
     }
-
-    // GEJT: vrati Δ profita po projektu (samo proizvodne, ne-zamrznute stavke).
-    const changedProducts = Array.from(productDelta.entries()).filter(([, d]) => d !== 0).map(([pid]) => pid);
-    return buildBasisReview(organizationId, changedProducts, productDelta);
 }
 
 // ============================================

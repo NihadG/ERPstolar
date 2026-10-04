@@ -18,6 +18,7 @@ export interface PayrollLogLite {
     Date: string;      // YYYY-MM-DD
     Daily_Rate?: number;    // već PODIJELJEN iznos po proizvodu
     Day_Fraction?: number;  // udio radnog dana (presence / N)
+    Work_Order_Deleted?: boolean;  // dnevnica obrisanog naloga — nulirana, ne ulazi u obračun
 }
 
 export interface PayrollWorkerLite {
@@ -72,7 +73,7 @@ export function computeMonthlyPayroll(
     workers: PayrollWorkerLite[]
 ): MonthlyPayroll {
     const monthAtt = attendance.filter(a => inMonth(a.Date, year, month));
-    const monthLogs = workLogs.filter(l => inMonth(l.Date, year, month));
+    const monthLogs = workLogs.filter(l => inMonth(l.Date, year, month) && l.Work_Order_Deleted !== true);
 
     // Skupovi po radniku
     const attByWorker = new Map<string, PayrollAttendanceLite[]>();

@@ -11,7 +11,6 @@ import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { updatePlannedStartDate } from '@/lib/services';
 import { daysUntil, plannedVsActualDays } from '@/lib/planning';
 import { workOrderDisplayName, orderProcessProgress, isOrderPaused, workOrderStatusDetails } from '@/lib/utils';
-import { basisDriftReview, type ProjectBasisReview, type ItemDriftInput } from '@/lib/profitBasis';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 
 export interface AttendanceWarningLite {
@@ -42,8 +41,6 @@ interface WorkOrderCardProps {
     onSummary: (wo: WorkOrder) => void;
     onAttendanceFix: (wo: WorkOrder) => void;
     onUpdate: (workOrderId: string, updates: any) => Promise<void>;
-    /** Otvori pregled „profit zastario" (sinhronizacija osnovice na trenutni trošak). */
-    onReviewBasis?: (review: ProjectBasisReview[], label: string) => void;
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
@@ -65,36 +62,9 @@ export default function WorkOrderCard({
     onSummary,
     onAttendanceFix,
     onUpdate,
-    onReviewBasis,
     onRefresh,
     showToast,
 }: WorkOrderCardProps) {
-    // „Profit zastario" — trenutni (živi) trošak materijala odstupa od zamrznute osnovice.
-    // Živi trošak = product.Material_Cost iz projekata; osnovica = item.Material_Cost.
-    const driftReview = useMemo<ProjectBasisReview[]>(() => {
-        if (wo.Status === 'Otkazano' || wo.Work_Order_Type === 'Montaža') return [];
-        const liveByProduct = new Map<string, number>();
-        for (const p of projects) for (const pr of (p.products || [])) liveByProduct.set(pr.Product_ID, pr.Material_Cost || 0);
-        const inputs: ItemDriftInput[] = (wo.items || []).map(it => ({
-            itemId: it.ID,
-            workOrderId: wo.Work_Order_ID,
-            workOrderStatus: wo.Status,
-            isMontaza: wo.Work_Order_Type === 'Montaža',
-            projectId: it.Project_ID || '',
-            projectName: it.Project_Name || '—',
-            productName: it.Product_Name,
-            quantity: it.Quantity || 1,
-            basisPerUnit: it.Material_Cost || 0,
-            livePerUnit: liveByProduct.has(it.Product_ID) ? (liveByProduct.get(it.Product_ID) || 0) : (it.Material_Cost || 0),
-            Status: it.Status,
-            Completed_At: it.Completed_At,
-            Material_Cost_Source: (it as { Material_Cost_Source?: string }).Material_Cost_Source,
-        }));
-        return basisDriftReview(inputs);
-    }, [wo, projects]);
-    const driftProfitDelta = driftReview.reduce((s, r) => s + r.profitDelta, 0);
-    // Prag 1 KM — ne uznemiravaj zbog zaokruživanja.
-    const hasDrift = driftReview.length > 0 && Math.abs(driftProfitDelta) >= 1;
     // Glatko otvaranje/zatvaranje proširenog detalja (grid-rows 0fr↔1fr):
     // - `showDetail` drži sadržaj montiran (na zatvaranju ostaje 320ms da se i skupljanje animira)
     // - `detailOpen` prebacuje klasu `.open` u sljedećem frame-u (da tranzicija krene s montiranog,
@@ -257,20 +227,6 @@ export default function WorkOrderCard({
                                         );
                                     })()}
 
-                                    {/* „Profit zastario" — živi trošak ≠ osnovica; klik → usklađivanje */}
-                                    {hasDrift && onReviewBasis && (
-                                        <>
-                                            <span style={{ color: '#d1d5db' }}>•</span>
-                                            <span
-                                                className="wo-drift-chip"
-                                                title="Trenutni trošak materijala odstupa od osnovice profita — klikni za usklađivanje"
-                                                onClick={(e) => { e.stopPropagation(); onReviewBasis(driftReview, 'trenutni trošak materijala'); }}
-                                            >
-                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>sync_problem</span>
-                                                profit zastario {driftProfitDelta >= 0 ? '+' : ''}{Math.round(driftProfitDelta)} KM
-                                            </span>
-                                        </>
-                                    )}
 
                                 </div>
                             </div>
@@ -479,15 +435,6 @@ export default function WorkOrderCard({
                 .wo-expand.open { grid-template-rows: 1fr; }
                 .wo-expand-inner { overflow: hidden; min-height: 0; }
 
-                /* „Profit zastario" chip — tih signal drift-a osnovice, klik → usklađivanje */
-                .wo-drift-chip {
-                    display: inline-flex; align-items: center; gap: 4px;
-                    font-size: 12px; font-weight: 600; color: #b45309;
-                    background: #fffbeb; border: 1px solid #fde68a;
-                    padding: 1px 8px; border-radius: 6px; cursor: pointer;
-                    transition: background 0.15s, border-color 0.15s;
-                }
-                .wo-drift-chip:hover { background: #fef3c7; border-color: #fcd34d; }
                 @media (prefers-reduced-motion: reduce) {
                     .wo-expand { transition: none; }
                 }

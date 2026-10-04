@@ -5,10 +5,10 @@
 // u memoriji (projekti+proizvodi+materijali, nalozi+stavke, dnevnik rada, ponude) —
 // bez ijednog novog Firestore upita, pa je otvaranje TRENUTNO (kao WorkOrderFullScreen).
 //
-// FINANSIJE koriste ISTI izvor kao kartica projekta (lib/projectProfit.ts),
-// nalog (WorkOrderExpandedDetail) i analitika (lib/analytics.ts): itemProfitBreakdown
-// po stavci, montaža = samo rad. Time je profit projekta == Σ profita naloga do centa,
-// i pregled se ne može razići od ostatka aplikacije.
+// FINANSIJE dolaze iz lib/projectFinance.ts — ISTI proračun kao kartica projekta,
+// nalog (WorkOrderExpandedDetail) i analitika: prihod iz prihvaćene ponude, materijal =
+// živa sastavnica + dodaci iz ponude, rad = Σ dnevnica; profit za ZAVRŠENE proizvode.
+// Pregled se zato ne može razići od ostatka aplikacije.
 //
 // Ulazni tipovi su NAMJERNO uski (samo polja koja se čitaju) — pravi tipovi
 // (WorkOrder, WorkOrderItem, …) ih strukturno zadovoljavaju, pa komponenta
@@ -16,8 +16,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { itemProfitBreakdown, profitFromTotals, type ProfitBreakdown } from './profit';
-import { itemMaterialTotal } from './materialCost';
 import { mondayOf } from './analytics';
+import {
+    buildFinanceBasis, buildLaborIndex, computeProjectFinance, itemFinance, sumItemFinance, liveLogs,
+    type FinOffer, type FinProduct, type ProjectFinance, type ProductStage, type ProductFlags, type RevenueSource,
+} from './projectFinance';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -62,6 +65,7 @@ export interface OverviewItemInput {
     Services_Total?: number;
     Transport_Share?: number;
     Planned_Labor_Cost?: number;
+    Actual_Labor_Cost?: number;
     Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number };
 }
 export interface OverviewWorkOrderInput {
@@ -77,7 +81,9 @@ export interface OverviewWorkOrderInput {
     items?: OverviewItemInput[];
 }
 export interface OverviewLogInput {
+    Work_Order_ID?: string;
     Work_Order_Item_ID?: string;
+    Work_Order_Deleted?: boolean;
     Product_ID?: string;
     Worker_ID?: string;
     Worker_Name?: string;
@@ -88,10 +94,19 @@ export interface OverviewLogInput {
 }
 export interface OverviewOfferProductInput {
     Product_ID?: string;
+    Product_Name?: string;
+    Included?: boolean;
     Material_Cost?: number;
     Quantity?: number;
+    Selling_Price?: number;
+    Total_Price?: number;
+    Labor_Workers?: number;
+    Labor_Days?: number;
+    Labor_Daily_Rate?: number;
+    extras?: { Total?: number }[];
 }
 export interface OverviewOfferInput {
+    Offer_ID?: string;
     Project_ID?: string;
     Offer_Number?: string;
     Status?: string;
@@ -100,7 +115,10 @@ export interface OverviewOfferInput {
     Include_PDV?: boolean;
     PDV_Rate?: number;
     Transport_Cost?: number;
+    Onsite_Assembly?: boolean;
+    Onsite_Discount?: number;
     Accepted_Date?: string;
+    Created_Date?: string;
     products?: OverviewOfferProductInput[];
 }
 export interface OverviewWorkerInput {
@@ -115,7 +133,12 @@ export interface ProductOverviewRow {
     productId: string;
     productName: string;
     quantity: number;
-    status: string;                 // izveden iz stavki (pouzdaniji od Product.Status)
+    status: string;                 // 'Završeno' | 'U toku' | 'Na čekanju' (iz faze proizvoda)
+    stage: ProductStage;            // faza iz lib/projectFinance (završeno / u izradi / nije započeto)
+    contracted: number;             // vrijednost u prihvaćenoj ponudi (0 bez ponude)
+    revenueSource: RevenueSource;   // 'ponuda' | 'nalog' (nema prihvaćene ponude)
+    materialExtras: number;         // dio materijala iz dodataka ponude
+    flags?: ProductFlags;
     revenue: number;
     material: number;
     labor: number;
@@ -196,8 +219,13 @@ export interface DayLaborBucket {
 
 export interface ProjectOverview {
     projectId: string;
-    // Finansije (profit-konzistentno — isti izvor kao kartica/nalog/analitika)
+    /** Pun proračun projekta (lib/projectFinance): ugovoreno, završeno, u izradi, nije započeto. */
+    finance: ProjectFinance;
+    // NASLOVNE finansije = ZAVRŠENI proizvodi (+ razni nalozi projekta) — isti broj kao
+    // kartica projekta i analitika. Proizvodi u izradi su u finance.inProgress.
     financial: ProfitBreakdown;
+    /** Sav rad uložen u projekat do sada (završeno + u izradi + razni), za tab Radnici. */
+    spentLabor: number;
     // PLAN (iz prihvaćene ponude / snapshot stavki) za poređenje „koliko sam potrefio"
     hasPlan: boolean;
     plannedMaterial: number;
@@ -214,7 +242,8 @@ export interface ProjectOverview {
     laborByDay: DayLaborBucket[];
     counts: {
         products: number;           // svi proizvodi projekta (uklj. one koji nisu u nalogu)
-        productsInProduction: number;
+        productsFinished: number;   // završeni (ulaze u profit)
+        productsInProduction: number;   // u izradi
         productsNotStarted: number; // proizvodi bez ijednog naloga
         workOrders: number;
         workers: number;
@@ -229,6 +258,8 @@ export interface ProjectOverview {
         pdvRate: number;
         transportCost: number;
     };
+    /** Sve prihvaćene ponude projekta (faze) — ugovoreno = Σ. */
+    acceptedOffers: { offerNumber: string; total: number; acceptedDate: string }[];
 }
 
 // Najgori (najmanje spreman) status materijala određuje status grupe.
@@ -253,7 +284,12 @@ function deriveProductStatus(statuses: string[], fallback?: string): string {
 
 /**
  * Glavna agregacija: sve što „Pregled projekta" treba, iz podataka u memoriji.
- * Otkazani nalozi se potpuno isključuju; montaža nosi SAMO trošak rada.
+ * Finansije = lib/projectFinance (ponuda − živi materijal − rad, profit za završene
+ * proizvode) — isti proračun kao kartica projekta i analitika. Otkazani nalozi se ne
+ * prikazuju u listi naloga; njihov isplaćeni rad ostaje trošak proizvoda.
+ *
+ * `storedLaborBefore` (YYYY-MM-DD): početak prozora dnevnica u memoriji — stavke
+ * započete prije njega uzimaju sačuvani agregat rada (vidi buildLaborIndex).
  */
 export function buildProjectOverview(args: {
     project: OverviewProjectInput;
@@ -261,97 +297,46 @@ export function buildProjectOverview(args: {
     workLogs: OverviewLogInput[];
     offers?: OverviewOfferInput[];
     workers?: OverviewWorkerInput[];
+    storedLaborBefore?: string;
 }): ProjectOverview {
-    const { project, workOrders, workLogs, offers = [], workers = [] } = args;
+    const { project, workOrders, workLogs, offers = [], workers = [], storedLaborBefore } = args;
     const projectId = project.Project_ID;
+    const live = liveLogs(workLogs);
 
-    // ── Rad po stavci (Σ Daily_Rate) ─────────────────────────────────
-    const laborByItem = new Map<string, number>();
-    for (const wl of workLogs) {
-        if (!wl.Work_Order_Item_ID) continue;
-        laborByItem.set(wl.Work_Order_Item_ID, (laborByItem.get(wl.Work_Order_Item_ID) || 0) + (wl.Daily_Rate || 0));
-    }
+    // ── Finansije (jedan proračun za cijelu aplikaciju) ──────────────
+    const projectOffers: FinOffer[] = offers
+        .filter(o => o.Offer_ID && o.Project_ID === projectId)
+        .map(o => ({ ...o, Offer_ID: o.Offer_ID as string, Project_ID: projectId }));
+    const finProducts: FinProduct[] = (project.products || []).map(p => ({ ...p, Project_ID: projectId }));
+    const basis = buildFinanceBasis(finProducts, projectOffers);
+    const labor = buildLaborIndex(workLogs, workOrders, storedLaborBefore);
+    const finance = computeProjectFinance({ projectId, products: finProducts, basis, workOrders, labor, logs: workLogs });
+    const laborOf = (itemId: string) => labor.byItem.get(itemId)?.cost || 0;
 
-    // ── Prihvaćena ponuda projekta (za PLAN materijala) ──────────────
-    const acceptedOffer = offers.find(o => o.Project_ID === projectId && o.Status === 'Prihvaćeno');
-    const offerMaterialByProduct = new Map<string, number>();
-    if (acceptedOffer) {
-        for (const op of acceptedOffer.products || []) {
-            if (!op.Product_ID) continue;
-            offerMaterialByProduct.set(op.Product_ID, (op.Material_Cost || 0) * (op.Quantity || 1));
-        }
-    }
-
-    // ── Prolaz kroz naloge/stavke projekta ───────────────────────────
-    const projectItemIds = new Set<string>();
-    const productAcc = new Map<string, {
-        productName: string; quantity: number; isCustom: boolean;
-        statuses: string[]; woNumbers: Set<string>;
-        rev: number; mat: number; lab: number; ser: number; tra: number; oth: number;
-        plannedLabor: number; plannedMaterial: number; missingPrice: boolean;
-    }>();
+    // ── Nalozi projekta (bez otkazanih) + razni nalozi projekta ──────
+    const projectItemIds = new Set<string>();       // SVE stavke projekta (i otkazanih naloga — njihov rad je trošak)
     const woRows: WorkOrderOverviewRow[] = [];
+    const razni = {
+        quantity: 0, statuses: [] as string[], woNumbers: new Set<string>(),
+        fins: [] as ReturnType<typeof itemFinance>[],
+    };
 
     for (const wo of workOrders) {
-        if (wo.Status === 'Otkazano') continue;
-        const isMontaza = wo.Work_Order_Type === 'Montaža';
         const items = (wo.items || []).filter(it => it.Project_ID === projectId);
         if (items.length === 0) continue;
+        for (const item of items) projectItemIds.add(item.ID);
+        if (wo.Status === 'Otkazano') continue;
 
-        const woAcc: ProfitBreakdown[] = [];
-        for (const item of items) {
-            projectItemIds.add(item.ID);
-            const labor = laborByItem.get(item.ID) || 0;
-            const isCustom = item.Item_Type === 'custom';
-            const breakdown = isMontaza
-                ? itemProfitBreakdown({ laborTotal: labor })
-                : itemProfitBreakdown({
-                    productValue: item.Product_Value,
-                    sellingOverride: item.Profit_Overrides?.Selling_Price,
-                    materialPerUnit: item.Material_Cost,
-                    quantity: item.Quantity,
-                    laborTotal: labor,
-                    servicesTotal: item.Services_Total,
-                    transportShare: item.Transport_Share,
-                    transportOverride: item.Profit_Overrides?.Transport_Share,
-                    otherCosts: item.Other_Costs,   // ostali troškovi raznih naloga
-                });
-            woAcc.push(breakdown);
+        const fins = items.map(item => itemFinance(item, wo, basis, laborOf(item.ID)));
+        items.forEach((item, i) => {
+            if (fins[i].kind !== 'razno' || item.Linked_Item_ID) return;
+            razni.quantity += item.Quantity || 1;
+            razni.statuses.push(item.Status || 'Na čekanju');
+            if (wo.Work_Order_Number) razni.woNumbers.add(wo.Work_Order_Number);
+            razni.fins.push(fins[i]);
+        });
 
-            // Per-proizvod agregacija. SVE custom stavke (razni poslovi) padaju u JEDAN
-            // red „Razni nalozi" — korisnik ih tako i posmatra (jedna stalna stavka).
-            const pid = isCustom ? '__razni__' : (item.Product_ID || `custom:${item.ID}`);
-            let pa = productAcc.get(pid);
-            if (!pa) {
-                pa = {
-                    productName: isCustom ? 'Razni nalozi' : (item.Product_Name || 'Proizvod'),
-                    quantity: 0, isCustom,
-                    statuses: [], woNumbers: new Set(),
-                    rev: 0, mat: 0, lab: 0, ser: 0, tra: 0, oth: 0,
-                    plannedLabor: 0, plannedMaterial: 0, missingPrice: false,
-                };
-                productAcc.set(pid, pa);
-            }
-            // Količina: proizvod → najveća viđena (montaža/ponovni nalozi ne duplaju);
-            // razni → BROJ poslova (svaka custom stavka je jedan posao).
-            pa.quantity = isCustom ? pa.quantity + (item.Quantity || 1) : Math.max(pa.quantity, item.Quantity || 0);
-            pa.statuses.push(item.Status || 'Na čekanju');
-            if (wo.Work_Order_Number) pa.woNumbers.add(wo.Work_Order_Number);
-            pa.rev += breakdown.revenue;
-            pa.mat += breakdown.material;
-            pa.lab += breakdown.labor;
-            pa.ser += breakdown.services;
-            pa.tra += breakdown.transport;
-            pa.oth += breakdown.other;
-            if (breakdown.missingPrice && !isMontaza && !isCustom) pa.missingPrice = true;
-            // PLAN: rad iz snapshot-a stavke (po komadu × kol.); materijal iz ponude (fallback: stavka).
-            if (!isMontaza) {
-                pa.plannedLabor += (item.Planned_Labor_Cost || 0) * (item.Quantity && item.Quantity > 0 ? item.Quantity : 1);
-                pa.plannedMaterial += offerMaterialByProduct.get(pid) ?? itemMaterialTotal(item.Material_Cost, item.Quantity);
-            }
-        }
-
-        const woTot = sumBreakdownsLocal(woAcc);
+        const woTot = sumItemFinance(fins);
         woRows.push({
             workOrderId: wo.Work_Order_ID,
             number: wo.Work_Order_Number || '',
@@ -366,14 +351,14 @@ export function buildProjectOverview(args: {
             revenue: woTot.revenue,
             material: woTot.material,
             labor: woTot.labor,
-            services: woTot.services,
-            transport: woTot.transport,
+            services: 0,
+            transport: 0,
             profit: woTot.profit,
             margin: woTot.margin,
         });
     }
 
-    // ── Radnici / trend rada (samo logovi stavki ovog projekta) ──────
+    // ── Radnici / trend rada (žive dnevnice stavki ovog projekta) ────
     const workerById = new Map(workers.map(w => [w.Worker_ID, w]));
     const workerAcc = new Map<string, {
         name: string; days: number; cost: number;
@@ -381,10 +366,9 @@ export function buildProjectOverview(args: {
     }>();
     const weekAcc = new Map<string, number>();
     const dayAcc = new Map<string, { labor: number; workers: Set<string> }>();
-    const daysByProductId = new Map<string, number>();
     const workersByProductId = new Map<string, Set<string>>();
 
-    for (const wl of workLogs) {
+    for (const wl of live) {
         if (!wl.Work_Order_Item_ID || !projectItemIds.has(wl.Work_Order_Item_ID)) continue;
         const frac = wl.Day_Fraction ?? 1;
         const rate = wl.Daily_Rate || 0;
@@ -406,16 +390,77 @@ export function buildProjectOverview(args: {
             da.workers.add(wid);
         }
         if (wl.Product_ID) {
-            daysByProductId.set(wl.Product_ID, (daysByProductId.get(wl.Product_ID) || 0) + frac);
             let wset = workersByProductId.get(wl.Product_ID);
             if (!wset) { wset = new Set(); workersByProductId.set(wl.Product_ID, wset); }
             wset.add(wid);
         }
     }
 
+    // ── Redovi proizvoda (iz proračuna) + jedan red „Razni nalozi" ───
+    const STATUS_OF: Record<ProductStage, string> = { zavrseno: 'Završeno', u_izradi: 'U toku', nije_zapoceto: 'Na čekanju' };
+    const productRows: ProductOverviewRow[] = finance.products.map(p => ({
+        productId: p.productId,
+        productName: p.name,
+        quantity: p.quantity,
+        status: STATUS_OF[p.stage],
+        stage: p.stage,
+        contracted: p.contracted,
+        revenueSource: p.revenueSource,
+        materialExtras: p.materialExtras,
+        flags: p.flags,
+        revenue: p.stage === 'nije_zapoceto' ? 0 : p.revenue,
+        material: p.material,
+        labor: p.labor,
+        services: 0,
+        transport: 0,
+        other: 0,
+        profit: p.stage === 'nije_zapoceto' ? 0 : p.profit,
+        margin: p.stage === 'nije_zapoceto' ? 0 : p.margin,
+        missingPrice: p.flags.noPrice,
+        plannedLabor: p.plannedLabor,
+        plannedMaterial: p.plannedMaterial,
+        workerDays: p.laborDays,
+        workerCount: workersByProductId.get(p.productId)?.size || 0,
+        workOrderNumbers: p.workOrders.filter(w => w.status !== 'Otkazano').map(w => w.number).filter(Boolean),
+        isCustom: false,
+        notInProduction: p.stage === 'nije_zapoceto',
+    }));
+    if (razni.fins.length > 0) {
+        const t = sumItemFinance(razni.fins);
+        productRows.push({
+            productId: '__razni__',
+            productName: 'Razni nalozi',
+            quantity: razni.quantity,
+            status: deriveProductStatus(razni.statuses),
+            stage: razni.statuses.every(st => st === 'Završeno') ? 'zavrseno' : 'u_izradi',
+            contracted: 0,
+            revenueSource: 'nalog',
+            materialExtras: 0,
+            revenue: t.revenue,
+            material: t.material,
+            labor: t.labor,
+            services: 0,
+            transport: 0,
+            other: t.other,
+            profit: t.profit,
+            margin: t.margin,
+            missingPrice: false,
+            plannedLabor: 0,
+            plannedMaterial: 0,
+            workerDays: 0,
+            workerCount: 0,
+            workOrderNumbers: Array.from(razni.woNumbers),
+            isCustom: true,
+            notInProduction: false,
+        });
+    }
+    productRows.sort((a, b) => {
+        const rank = (r: ProductOverviewRow) => (r.isCustom ? 3 : r.stage === 'u_izradi' ? 0 : r.stage === 'zavrseno' ? 1 : 2);
+        return rank(a) - rank(b) || (b.revenue || b.contracted) - (a.revenue || a.contracted) || a.productName.localeCompare(b.productName, 'hr');
+    });
+
     // Mapa Product_ID → naziv (za listu proizvoda radnika)
-    const productNameById = new Map<string, string>();
-    for (const [pid, pa] of Array.from(productAcc.entries())) productNameById.set(pid, pa.productName);
+    const productNameById = new Map(finance.products.map(p => [p.productId, p.name]));
 
     const workerRows: WorkerOverviewRow[] = Array.from(workerAcc.entries())
         .map(([workerId, w]) => {
@@ -436,65 +481,6 @@ export function buildProjectOverview(args: {
             };
         })
         .sort((a, b) => b.cost - a.cost);
-
-    // ── Redovi proizvoda ─────────────────────────────────────────────
-    // U proizvodnji (bar jedan nalog) — nose finansije.
-    const inProductionRows: ProductOverviewRow[] = Array.from(productAcc.entries())
-        .map(([pid, pa]) => {
-            const fin = profitFromTotals({ revenue: pa.rev, material: pa.mat, labor: pa.lab, services: pa.ser, transport: pa.tra, other: pa.oth });
-            return {
-                productId: pid,
-                productName: pa.productName,
-                quantity: pa.quantity,
-                status: deriveProductStatus(pa.statuses),
-                revenue: fin.revenue,
-                material: fin.material,
-                labor: fin.labor,
-                services: fin.services,
-                transport: fin.transport,
-                other: fin.other,
-                profit: fin.profit,
-                margin: fin.margin,
-                missingPrice: pa.missingPrice,
-                plannedLabor: r2(pa.plannedLabor),
-                plannedMaterial: r2(pa.plannedMaterial),
-                workerDays: r2(daysByProductId.get(pid) || 0),
-                workerCount: workersByProductId.get(pid)?.size || 0,
-                workOrderNumbers: Array.from(pa.woNumbers),
-                isCustom: pa.isCustom,
-                notInProduction: false,
-            };
-        });
-
-    // Proizvodi projekta koji JOŠ nisu ni u jednom nalogu → informativni redovi.
-    // NE ulaze u `financial` (nema prihoda ni uloženog rada) da profit projekta ostane
-    // == Σ profita naloga (invarijanta iz lib/projectProfit.ts). Materijal = katalog (× kol.).
-    const inProdIds = new Set(inProductionRows.map(r => r.productId));
-    const notStartedRows: ProductOverviewRow[] = (project.products || [])
-        .filter(p => !inProdIds.has(p.Product_ID))
-        .map(p => {
-            const qty = p.Quantity && p.Quantity > 0 ? p.Quantity : 1;
-            const material = r2((p.materials || []).reduce((s, m) => s + (m.Total_Price || 0), 0) * qty);
-            return {
-                productId: p.Product_ID,
-                productName: p.Name || 'Proizvod',
-                quantity: p.Quantity || 0,
-                status: 'Na čekanju',
-                revenue: 0, material, labor: 0, services: 0, transport: 0, other: 0,
-                profit: 0, margin: 0, missingPrice: false,
-                plannedLabor: 0, plannedMaterial: material,
-                workerDays: 0, workerCount: 0,
-                workOrderNumbers: [],
-                isCustom: false,
-                notInProduction: true,
-            };
-        });
-
-    const productRows: ProductOverviewRow[] = [...inProductionRows, ...notStartedRows]
-        .sort((a, b) => {
-            if (a.notInProduction !== b.notInProduction) return a.notInProduction ? 1 : -1;
-            return b.revenue - a.revenue || b.profit - a.profit || a.productName.localeCompare(b.productName, 'hr');
-        });
 
     // ── Materijali (BOM projekta, kao ProjectMaterialsModal) ─────────
     const matMap = new Map<string, MaterialOverviewRow>();
@@ -541,19 +527,27 @@ export function buildProjectOverview(args: {
     materials.sort((a, b) => a.name.localeCompare(b.name, 'hr'));
     const materialCatalogCost = r2(materials.reduce((s, m) => s + m.lineCost, 0));
 
-    // ── Finansije projekta (Σ proizvoda U PROIZVODNJI == Σ svih naloga) ───────
-    const financial = sumBreakdownsLocal(inProductionRows.map(p => ({
-        revenue: p.revenue, material: p.material, labor: p.labor, services: p.services, transport: p.transport,
-        other: p.other, profit: p.profit, margin: p.margin, missingPrice: p.missingPrice, missingMaterial: p.material <= 0,
-    })));
+    // ── Naslovne finansije = ZAVRŠENI proizvodi + razni nalozi projekta ─────────
+    const started = finance.products.filter(p => p.stage !== 'nije_zapoceto');
+    const financial: ProfitBreakdown = {
+        revenue: finance.revenue,
+        material: finance.material,
+        labor: finance.labor,
+        services: 0,
+        transport: 0,
+        other: r2(finance.razni.other),
+        profit: finance.profit,
+        margin: finance.margin,
+        missingPrice: started.some(p => p.flags.noPrice || p.flags.noOffer),
+        missingMaterial: started.some(p => p.flags.noMaterial),
+    };
 
-    const plannedMaterial = r2(inProductionRows.reduce((s, p) => s + p.plannedMaterial, 0));
-    const plannedLabor = r2(inProductionRows.reduce((s, p) => s + p.plannedLabor, 0));
-    const plannedTot = profitFromTotals({
-        revenue: financial.revenue, material: plannedMaterial, labor: plannedLabor,
-        services: financial.services, transport: financial.transport,
-    });
-    const hasPlan = !!acceptedOffer || plannedLabor > 0 || plannedMaterial > 0;
+    // PLAN (ponuda) vs stvarno — za iste (završene) proizvode koji nose profit.
+    const plannedMaterial = finance.realized.plannedMaterial;
+    const plannedLabor = finance.realized.plannedLabor;
+    const plannedProfit = r2(finance.realized.plannedProfit + finance.razni.profit);
+    const hasPlan = plannedMaterial > 0 || plannedLabor > 0;
+    const plannedMargin = finance.revenue > 0 ? r2((plannedProfit / finance.revenue) * 100) : 0;
 
     const totalWorkerDays = r2(workerRows.reduce((s, w) => s + w.days, 0));
 
@@ -573,14 +567,22 @@ export function buildProjectOverview(args: {
         return (b.createdDate || '').localeCompare(a.createdDate || '');
     });
 
+    // Prihvaćene ponude (faze) — najnovija za oznaku, sve za „ugovoreno".
+    const accepted = offers
+        .filter(o => o.Project_ID === projectId && o.Status === 'Prihvaćeno')
+        .sort((a, b) => (b.Accepted_Date || b.Created_Date || '').localeCompare(a.Accepted_Date || a.Created_Date || ''));
+    const acceptedOffer = accepted[0];
+
     return {
         projectId,
+        finance,
         financial,
+        spentLabor: finance.spentLabor,
         hasPlan,
         plannedMaterial,
         plannedLabor,
-        plannedProfit: plannedTot.profit,
-        plannedMargin: plannedTot.margin,
+        plannedProfit,
+        plannedMargin,
         products: productRows,
         workOrders: woRows,
         workers: workerRows,
@@ -590,8 +592,9 @@ export function buildProjectOverview(args: {
         laborByDay,
         counts: {
             products: productRows.filter(p => !p.isCustom).length,
-            productsInProduction: inProductionRows.filter(p => !p.isCustom).length,
-            productsNotStarted: notStartedRows.length,
+            productsFinished: finance.finishedCount,
+            productsInProduction: finance.inProgress.count,
+            productsNotStarted: finance.notStarted.count,
             workOrders: woRows.length,
             workers: workerRows.length,
             totalWorkerDays,
@@ -599,12 +602,13 @@ export function buildProjectOverview(args: {
         },
         acceptedOffer: acceptedOffer ? {
             offerNumber: acceptedOffer.Offer_Number,
-            total: r2(acceptedOffer.Total || 0),
+            total: r2(finance.contracted || acceptedOffer.Total || 0),
             subtotal: r2(acceptedOffer.Subtotal || 0),
             includePDV: !!acceptedOffer.Include_PDV,
             pdvRate: acceptedOffer.PDV_Rate || 0,
             transportCost: r2(acceptedOffer.Transport_Cost || 0),
         } : undefined,
+        acceptedOffers: finance.contractOffers.map(o => ({ offerNumber: o.offerNumber, total: o.total, acceptedDate: o.acceptedDate })),
     };
 }
 
@@ -630,7 +634,7 @@ export function buildMiscOverview(args: {
     const { workOrders, workLogs } = args;
 
     const laborByItem = new Map<string, number>();
-    for (const wl of workLogs) {
+    for (const wl of liveLogs(workLogs)) {
         if (!wl.Work_Order_Item_ID) continue;
         laborByItem.set(wl.Work_Order_Item_ID, (laborByItem.get(wl.Work_Order_Item_ID) || 0) + (wl.Daily_Rate || 0));
     }
@@ -664,7 +668,7 @@ export function buildMiscOverview(args: {
     }
 
     let workerDays = 0;
-    for (const wl of workLogs) {
+    for (const wl of liveLogs(workLogs)) {
         if (wl.Work_Order_Item_ID && itemIds.has(wl.Work_Order_Item_ID)) workerDays += wl.Day_Fraction ?? 1;
     }
 

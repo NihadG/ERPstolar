@@ -1,162 +1,180 @@
 import {
-    aggregateProductRows, aggregateProjects, planVsActual, aggregateWorkers,
-    weeklyLaborTrend, computeKpis, mondayOf,
-    type ProductInput, type ALog,
+    computeAnalytics, computeAnalyticsFinance, aggregateWorkers, razniSummary, weeklyLaborTrend, mondayOf, projectInScope,
+    type AnalyticsInput,
 } from '../analytics';
+import { computeMonthlyPayroll } from '../payroll';
 
-// Po proizvodu: stvarno (živi materijal + stvarni rad) i planirano (iz ponude).
-const inputs: ProductInput[] = [
-    { itemId: 'IA', productId: 'PA', productName: 'Ormar', projectId: 'P1', projectName: 'Kuhinja', woId: 'WO1', woNumber: '1', woType: '', status: 'U toku',
-        selling: 1000, liveMaterial: 350, plannedMaterial: 300, actualLabor: 195, plannedLabor: 200, services: 70, transport: 40 },
-    { itemId: 'IB', productId: 'PB', productName: 'Pult', projectId: 'P1', projectName: 'Kuhinja', woId: 'WO1', woNumber: '1', woType: '', status: 'Završeno',
-        selling: 600, liveMaterial: 180, plannedMaterial: 150, actualLabor: 100, plannedLabor: 100, services: 0, transport: 0 },
-    { itemId: 'IC', productId: 'PC', productName: 'Vrata', projectId: 'P2', projectName: 'Hotel', woId: 'WO2', woNumber: '2', woType: '', status: 'U toku',
-        selling: 800, liveMaterial: 200, plannedMaterial: 200, actualLabor: 65, plannedLabor: 300, services: 0, transport: 0 },
-];
+// ── Fiksture: dva projekta, završeni / u izradi / nezapočeti proizvodi ──────────
+const input = (): AnalyticsInput => ({
+    projects: [
+        {
+            Project_ID: 'P1', Name: 'Kuća', Client_Name: 'Jerko', Status: 'U proizvodnji',
+            products: [
+                { Product_ID: 'A', Project_ID: 'P1', Name: 'Ormar A', Quantity: 1, Status: 'Spremno', materials: [{ Total_Price: 300 }] },
+                { Product_ID: 'B', Project_ID: 'P1', Name: 'Ormar B', Quantity: 1, Status: 'Spremno', materials: [{ Total_Price: 200 }] },
+                { Product_ID: 'C', Project_ID: 'P1', Name: 'Kuhinja', Quantity: 1, Status: 'Sklapanje', materials: [{ Total_Price: 500 }] },
+                { Product_ID: 'D', Project_ID: 'P1', Name: 'Vrata', Quantity: 1, Status: 'Na čekanju', materials: [] },
+            ],
+        },
+        {
+            Project_ID: 'P2', Name: 'Stan', Client_Name: 'Meliha', Status: 'Završeno',
+            products: [{ Product_ID: 'E', Project_ID: 'P2', Name: 'Garderoba', Quantity: 1, Status: 'Instalirano', materials: [{ Total_Price: 100 }] }],
+        },
+    ],
+    offers: [
+        {
+            Offer_ID: 'O1', Project_ID: 'P1', Offer_Number: 'P-1', Status: 'Prihvaćeno', Accepted_Date: '2026-07-01',
+            products: [
+                { Product_ID: 'A', Included: true, Quantity: 1, Selling_Price: 1000, Total_Price: 1000, Material_Cost: 280, Labor_Workers: 1, Labor_Days: 2, Labor_Daily_Rate: 100 },
+                { Product_ID: 'B', Included: true, Quantity: 1, Selling_Price: 800, Total_Price: 800, Material_Cost: 200, extras: [{ Total: 50 }] },
+                { Product_ID: 'C', Included: true, Quantity: 1, Selling_Price: 2000, Total_Price: 2000, Labor_Workers: 2, Labor_Days: 3, Labor_Daily_Rate: 100 },
+                { Product_ID: 'D', Included: true, Quantity: 1, Selling_Price: 600, Total_Price: 600 },
+            ],
+        },
+        {
+            Offer_ID: 'O2', Project_ID: 'P2', Offer_Number: 'P-2', Status: 'Prihvaćeno', Accepted_Date: '2026-06-01',
+            products: [{ Product_ID: 'E', Included: true, Quantity: 1, Selling_Price: 500, Total_Price: 500 }],
+        },
+    ],
+    workOrders: [
+        { Work_Order_ID: 'W1', Work_Order_Number: '1', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items: [
+            { ID: 'a', Product_ID: 'A', Project_ID: 'P1', Quantity: 1, Status: 'Završeno', Completed_At: '2026-09-10T08:00:00Z' },
+            { ID: 'b', Product_ID: 'B', Project_ID: 'P1', Quantity: 1, Status: 'Završeno', Completed_At: '2026-10-02T08:00:00Z' },
+        ] },
+        { Work_Order_ID: 'W2', Work_Order_Number: '2', Status: 'U toku', Work_Order_Type: 'Proizvodnja', items: [
+            { ID: 'c', Product_ID: 'C', Project_ID: 'P1', Quantity: 1, Status: 'U toku' },
+        ] },
+        { Work_Order_ID: 'W3', Work_Order_Number: '3', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items: [
+            { ID: 'e', Product_ID: 'E', Project_ID: 'P2', Quantity: 1, Status: 'Završeno', Completed_At: '2026-08-20T08:00:00Z' },
+        ] },
+        { Work_Order_ID: 'Z', Work_Order_Number: 'Z1', Status: 'U toku', Work_Order_Type: 'Zadaci', items: [
+            { ID: 'z', Item_Type: 'custom', Product_ID: 'custom-1', Project_ID: '', Quantity: 1, Product_Value: 0, Other_Costs: 20, Status: 'U toku' },
+        ] },
+    ],
+    logs: [
+        { Work_Order_Item_ID: 'a', Product_ID: 'A', Worker_ID: 'W1', Worker_Name: 'Emrah', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-09-08' },
+        { Work_Order_Item_ID: 'b', Product_ID: 'B', Worker_ID: 'W1', Worker_Name: 'Emrah', Daily_Rate: 65, Day_Fraction: 0.5, Date: '2026-10-01' },
+        { Work_Order_Item_ID: 'c', Product_ID: 'C', Worker_ID: 'W1', Worker_Name: 'Emrah', Daily_Rate: 65, Day_Fraction: 0.5, Date: '2026-10-01' },
+        { Work_Order_Item_ID: 'e', Product_ID: 'E', Worker_ID: 'W2', Worker_Name: 'Ahmad', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-08-19' },
+        { Work_Order_Item_ID: 'z', Product_ID: 'custom-1', Worker_ID: 'W2', Worker_Name: 'Ahmad', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-10-02' },
+        // Obrisan nalog — nulirano, ne broji se nigdje:
+        { Work_Order_ID: 'OBRISAN', Work_Order_Item_ID: 'x', Product_ID: 'A', Worker_ID: 'W1', Worker_Name: 'Emrah', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-09-09', Work_Order_Deleted: true },
+    ],
+    attendance: [
+        { Worker_ID: 'W1', Date: '2026-09-08', Status: 'Prisutan' },
+        { Worker_ID: 'W1', Date: '2026-09-09', Status: 'Prisutan' },   // samo obrisan nalog → bez dnevnice
+        { Worker_ID: 'W1', Date: '2026-10-01', Status: 'Prisutan' },
+        { Worker_ID: 'W2', Date: '2026-08-19', Status: 'Teren' },
+        { Worker_ID: 'W2', Date: '2026-10-02', Status: 'Prisutan' },
+        { Worker_ID: 'W2', Date: '2026-10-03', Status: 'Odsutan' },
+    ],
+    workers: [{ Worker_ID: 'W1', Name: 'Emrah Gluhić' }, { Worker_ID: 'W2', Name: 'Ahmad Al-Masaud' }],
+});
 
-describe('aggregateProductRows — STVARNI profit (živi mat + stvarni rad) + PLANIRANI (ponuda)', () => {
-    test('po proizvodu tačno', () => {
-        const r = aggregateProductRows(inputs);
-        const a = r.find(x => x.productId === 'PA')!;
-        expect(a.material).toBe(350);
-        expect(a.labor).toBe(195);
-        expect(a.profit).toBe(1000 - 350 - 195 - 70 - 40);        // 345 (stvarno)
-        expect(a.plannedProfit).toBe(1000 - 300 - 200 - 70 - 40);  // 390 (plan)
-        const c = r.find(x => x.productId === 'PC')!;
-        expect(c.profit).toBe(800 - 200 - 65);                     // 535 (malo rada → visok stvarni)
-        expect(c.plannedProfit).toBe(800 - 200 - 300);             // 300 (plan računa puni rad)
+describe('computeAnalytics — profit = završeni proizvodi (ponuda − materijal − rad)', () => {
+    const all = computeAnalytics(input(), { scope: 'all' });
+
+    test('KPI: samo završeni proizvodi ulaze u profit', () => {
+        // A: 1000 − 300 − 130 = 570 · B: 800 − (200 + 50) − 65 = 485 · E: 500 − 100 − 130 = 270
+        expect(all.kpis.realized.count).toBe(3);
+        expect(all.kpis.realized.revenue).toBe(2300);
+        expect(all.kpis.profit).toBe(570 + 485 + 270);
+        expect(all.kpis.inProgress.count).toBe(1);
+        expect(all.kpis.inProgress.labor).toBe(65);
+        expect(all.kpis.notStartedCount).toBe(1);
+        expect(all.kpis.contracted).toBe(4900);
+    });
+
+    test('INVARIJANTA: Σ projekata == KPI == isti proračun kao kartica projekta', () => {
+        const sum = all.projects.reduce((s, p) => s + p.profit, 0);
+        expect(Math.round(sum * 100) / 100).toBe(all.kpis.profit);
+        const finance = computeAnalyticsFinance(input());
+        for (const p of all.projects) expect(p.profit).toBe(finance.get(p.projectId)!.profit);
+    });
+
+    test('materijal = živa sastavnica + dodaci iz ponude', () => {
+        const b = all.products.find(p => p.productId === 'B')!;
+        expect(b.materialBom).toBe(200);
+        expect(b.materialExtras).toBe(50);
+        expect(b.material).toBe(250);
     });
 });
 
-describe('aggregateProjects + INVARIJANTA (Σ proizvod == projekt == KPI)', () => {
-    test('profit projekta = zbir proizvoda', () => {
-        const rows = aggregateProductRows(inputs);
-        const projects = aggregateProjects(rows);
-        const p1 = projects.find(x => x.projectId === 'P1')!;
-        expect(p1.revenue).toBe(1600);
-        expect(p1.profit).toBe(665);            // 345 + 320
-        expect(p1.plannedProfit).toBe(740);     // 390 + 350
-        expect(p1.margin).toBe(41.56);
+describe('computeAnalytics — period i opseg', () => {
+    test('period: ostvareni profit samo za proizvode završene u periodu', () => {
+        const oct = computeAnalytics(input(), { scope: 'all', from: '2026-10-01', to: '2026-10-31' });
+        expect(oct.kpis.realized.count).toBe(1);          // samo B (2.10.)
+        expect(oct.kpis.profit).toBe(485);
+        expect(oct.kpis.inProgress.count).toBe(1);        // stanje sada, ne zavisi od perioda
     });
-    test('Σ profit == 1200 (stvarno); Σ planirani == 1040', () => {
-        const rows = aggregateProductRows(inputs);
-        const k = computeKpis(rows);
-        expect(k.profit).toBe(1200);
-        expect(k.plannedProfit).toBe(1040);
-        const projects = aggregateProjects(rows);
-        expect(Math.round(projects.reduce((s, p) => s + p.profit, 0) * 100) / 100).toBe(1200);
+
+    test('opseg „Aktivni" izbacuje završene projekte; finansije projekta se ne mijenjaju', () => {
+        const active = computeAnalytics(input(), { scope: 'active' });
+        const all = computeAnalytics(input(), { scope: 'all' });
+        expect(active.projects.map(p => p.projectId)).toEqual(['P1']);
+        expect(active.projects[0].profit).toBe(all.projects.find(p => p.projectId === 'P1')!.profit);
+        expect(projectInScope('Otkazano', 'all')).toBe(false);
     });
 });
 
-describe('montaža/teren = ne-prihodovni (#7): samo trošak rada, ne kvari prihod', () => {
-    const withMontaza: ProductInput[] = [
-        ...inputs,
-        { itemId: 'IM', productId: 'PM', productName: 'Teren Begić', projectId: '', projectName: '—', woId: 'WO3', woNumber: '3', woType: 'Montaža', status: 'U toku',
-            selling: 0, liveMaterial: 0, plannedMaterial: 0, actualLabor: 100, plannedLabor: 0, services: 0, transport: 0 },
-    ];
-    test('montaža red: nonRevenue=true, profit = −rad, margin 0', () => {
-        const r = aggregateProductRows(withMontaza);
-        const m = r.find(x => x.productId === 'PM')!;
-        expect(m.nonRevenue).toBe(true);
-        expect(m.profit).toBe(-100);
-        expect(m.margin).toBe(0);
-        const a = r.find(x => x.productId === 'PA')!;
-        expect(a.nonRevenue).toBe(false);
+describe('aggregateWorkers — zarada = Σ živih dnevnica (kao obračun plata)', () => {
+    test('opseg projekata NE utiče na zaradu; obrisani nalozi se ne broje', () => {
+        const active = computeAnalytics(input(), { scope: 'active' });
+        const emrah = active.workers.find(w => w.workerId === 'W1')!;
+        expect(emrah.earnings).toBe(260);          // 130 + 65 + 65 (bez 130 s obrisanog naloga)
+        expect(emrah.bookedDays).toBe(2);          // 1 + 0.5 + 0.5
+        expect(emrah.avgRate).toBe(130);           // zarada / radnik-dani
+        expect(emrah.presentDays).toBe(3);
+        expect(emrah.unbookedDays).toBe(1);        // 9.9. — rad samo na obrisanom nalogu
+        const ahmad = active.workers.find(w => w.workerId === 'W2')!;
+        expect(ahmad.earnings).toBe(260);          // i rad na završenom projektu P2 se broji
+        expect(ahmad.razniKM).toBe(130);
+        expect(ahmad.productsKM).toBe(130);
     });
-    test('KPI: prihod nepromijenjen, montažaLabor izdvojen, profit uključuje trošak', () => {
-        const k = computeKpis(aggregateProductRows(withMontaza));
-        expect(k.revenue).toBe(2400);          // 1000+600+800 (montaža 0 ne diže prihod)
-        expect(k.montazaLabor).toBe(100);
-        expect(k.profit).toBe(1100);           // 1200 − 100 (trošak montaže ispravno smanjuje profit)
+
+    test('PARITET s obračunom plata za mjesec', () => {
+        const inp = input();
+        const rows = aggregateWorkers({ logs: inp.logs, attendance: inp.attendance, workers: inp.workers, workOrders: inp.workOrders, range: { from: '2026-10-01', to: '2026-10-31' } });
+        const payroll = computeMonthlyPayroll(2026, 10,
+            inp.attendance!.map(a => ({ Worker_ID: a.Worker_ID, Date: a.Date, Status: a.Status })),
+            inp.logs.map(l => ({ Worker_ID: l.Worker_ID!, Date: l.Date!, Daily_Rate: l.Daily_Rate, Day_Fraction: l.Day_Fraction, Work_Order_Deleted: l.Work_Order_Deleted })),
+            inp.workers!.map(w => ({ Worker_ID: w.Worker_ID, Name: w.Name || '' })));
+        for (const r of rows) {
+            const p = payroll.rows.find(x => x.workerId === r.workerId)!;
+            expect(r.earnings).toBe(p.totalPay);
+            expect(r.bookedDays).toBe(p.bookedDays);
+            expect(r.unbookedDays).toBe(p.unbookedPresentDays);
+        }
     });
 });
 
-describe('planVsActual — MATERIJAL i RAD, plan (ponuda) vs stvarno', () => {
-    const rows = aggregateProductRows(inputs);
-    test('ukupno: materijal poskupio, rad ispod plana', () => {
-        const { total } = planVsActual(rows);
-        // materijal: plan 650, stvarno 730 → prekoračenje 80
-        expect(total.material.planned).toBe(650);
-        expect(total.material.actual).toBe(730);
-        expect(total.material.variance).toBe(-80);
-        // rad: plan 600, stvarno 360 → ušteda 240
-        expect(total.labor.planned).toBe(600);
-        expect(total.labor.actual).toBe(360);
-        expect(total.labor.variance).toBe(240);
-    });
-    test('accuracy ("koliko potrefio") = 100 − |odstupanje%|', () => {
-        const { total } = planVsActual(rows);
-        expect(total.material.accuracyPct).toBe(87.69);   // 100 − 12.31
-        expect(total.labor.accuracyPct).toBe(60);          // 100 − 40
-    });
-    test('po projektu', () => {
-        const { byProject } = planVsActual(rows);
-        const p1 = byProject.find(r => r.projectId === 'P1')!;
-        expect(p1.material.variance).toBe(-80);            // plan 450 − stvarno 530
-        expect(p1.labor.variance).toBe(5);                 // plan 300 − stvarno 295
-        const p2 = byProject.find(r => r.projectId === 'P2')!;
-        expect(p2.material.variance).toBe(0);
-        expect(p2.labor.variance).toBe(235);
+describe('razni poslovi i provjere', () => {
+    test('razni bez projekta: rad po datumu dnevnice, ostali troškovi posla', () => {
+        const inp = input();
+        const r = razniSummary(inp.workOrders, inp.logs);
+        expect(r.labor).toBe(130);
+        expect(r.other).toBe(20);
+        expect(r.profit).toBe(-150);
+        expect(razniSummary(inp.workOrders, inp.logs, { from: '2026-09-01', to: '2026-09-30' }).labor).toBe(0);
     });
 
-    test('REGRESIJA: proizvod BEZ plana ne napuhava prekoračenje — stvarno mu ide u unplannedActual', () => {
-        // Prije: rad plan 520 vs stvarno 12.957 → "prekoračenje 2392%", jer su proizvodi
-        // bez ikakvog plana (bez ponude) ulazili u poređenje s planom 0.
-        const withUnplanned: ProductInput[] = [
-            ...inputs,
-            { itemId: 'IX', productId: 'PX', productName: 'Razni', projectId: 'P3', projectName: 'Razni poslovi', woId: 'WO9', woNumber: '9', woType: '', status: 'U toku',
-                selling: 0, liveMaterial: 400, plannedMaterial: 0, actualLabor: 3700, plannedLabor: 0, services: 0, transport: 0 },
-        ];
-        const { total, byProject } = planVsActual(aggregateProductRows(withUnplanned));
-        // Poređenje NEPROMIJENJENO u odnosu na planirane proizvode:
-        expect(total.labor.planned).toBe(600);
-        expect(total.labor.actual).toBe(360);
-        expect(total.labor.accuracyPct).toBe(60);
-        expect(total.material.planned).toBe(650);
-        expect(total.material.actual).toBe(730);
-        // Trošak bez plana izdvojen:
-        expect(total.labor.unplannedActual).toBe(3700);
-        expect(total.material.unplannedActual).toBe(400);
-        // Projekat bez ijednog plana: planned=0, sve stvarno u unplanned.
-        const p3 = byProject.find(r => r.projectId === 'P3')!;
-        expect(p3.labor.planned).toBe(0);
-        expect(p3.labor.unplannedActual).toBe(3700);
-        expect(p3.material.unplannedActual).toBe(400);
-    });
-});
-
-// ── Radnici / trend (nepromijenjeno) ─────────────────────────────────────────
-const logs: ALog[] = [
-    { Date: '2026-06-22', Worker_ID: 'M', Worker_Name: 'Marko', Daily_Rate: 65, Work_Order_Item_ID: 'A1' },
-    { Date: '2026-06-22', Worker_ID: 'M', Worker_Name: 'Marko', Daily_Rate: 65, Work_Order_Item_ID: 'B1' },
-    { Date: '2026-06-23', Worker_ID: 'M', Worker_Name: 'Marko', Daily_Rate: 130, Work_Order_Item_ID: 'A1' },
-    { Date: '2026-06-22', Worker_ID: 'I', Worker_Name: 'Ivan', Daily_Rate: 100, Work_Order_Item_ID: 'A2' },
-];
-
-describe('aggregateWorkers — UNIQUE dani + period', () => {
-    test('multi-proizvod dan = 1 dan; zarada = Σ', () => {
-        const w = aggregateWorkers(logs);
-        const marko = w.find(x => x.workerId === 'M')!;
-        expect(marko.days).toBe(2);
-        expect(marko.earnings).toBe(260);
-        expect(marko.avgRate).toBe(130);
-        expect(marko.products).toBe(2);
-    });
-    test('filter po periodu (samo 23.)', () => {
-        const w = aggregateWorkers(logs, { from: '2026-06-23' });
-        expect(w).toHaveLength(1);
-        expect(w[0].earnings).toBe(130);
+    test('proizvod bez prihvaćene ponude ide na listu za provjeru', () => {
+        const inp = input();
+        inp.offers[0].products = inp.offers[0].products!.filter(p => p.Product_ID !== 'A');
+        const d = computeAnalytics(inp, { scope: 'all' });
+        expect(d.issues.some(i => i.productId === 'A' && i.kind === 'noOffer')).toBe(true);
+        expect(d.kpis.flaggedProducts).toBe(1);
     });
 });
 
 describe('weeklyLaborTrend + mondayOf', () => {
     test('mondayOf', () => {
-        expect(mondayOf('2026-06-23')).toBe('2026-06-22');
-        expect(mondayOf('2026-06-21')).toBe('2026-06-15');
+        expect(mondayOf('2026-10-01')).toBe('2026-09-28');
+        expect(mondayOf('2026-09-28')).toBe('2026-09-28');
     });
-    test('grupisanje po sedmici', () => {
-        const t = weeklyLaborTrend(logs);
-        expect(t).toHaveLength(1);
-        expect(t[0].labor).toBe(360);
+    test('grupisanje po sedmici, bez obrisanih', () => {
+        const t = weeklyLaborTrend(input().logs);
+        expect(t.find(w => w.weekStart === '2026-09-07')?.labor).toBe(130);
+        expect(t.find(w => w.weekStart === '2026-09-28')?.labor).toBe(260);
     });
 });

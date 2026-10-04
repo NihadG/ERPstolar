@@ -12,8 +12,8 @@ import {
     getAllAttendanceByMonth,
 } from '@/lib/services';
 import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
-import { itemMaterialTotal } from '@/lib/materialCost';
-import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
+import { itemFinance, sumItemFinance, liveLogs, type ItemFinance } from '@/lib/projectFinance';
+import { useFinanceBasis } from '@/context/FinanceBasisContext';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog, Task } from '@/lib/types';
 import Modal from './Modal';
 import ProductTimelineModal from './ProductTimelineModal';
@@ -376,30 +376,24 @@ export default function WorkOrderExpandedDetail({
     const isMontaza = workOrder.Work_Order_Type === 'Montaža';
     const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
 
-    // Financije po stavci — JEDINSTVENA formula iz lib/profit.ts (isti izvor kao
-    // productivity i analitika); izvor i za per-item red i za hero total.
+    // Finansije po stavci — ISTI proračun kao kartica projekta, pregled i analitika
+    // (lib/projectFinance): prihod iz prihvaćene ponude (ili završni račun), materijal =
+    // živa sastavnica + dodaci iz ponude, rad = Σ dnevnica stavke. Montaža = samo rad.
+    const financeBasis = useFinanceBasis();
     const itemFin = useMemo(() => {
-        const map = new Map<string, ProfitBreakdown>();
+        const map = new Map<string, ItemFinance>();
+        const live = liveLogs(workLogs);
         for (const item of localItems) {
-            const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
-            const labor = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-            map.set(item.ID, itemProfitBreakdown({
-                productValue: item.Product_Value,
-                sellingOverride: (item as any).Profit_Overrides?.Selling_Price,
-                materialPerUnit: item.Material_Cost,   // PO KOMADU (invarijanta baze)
-                quantity: item.Quantity,
-                laborTotal: labor,
-                servicesTotal: (item as any).Services_Total,
-                transportShare: (item as any).Transport_Share,
-                transportOverride: (item as any).Profit_Overrides?.Transport_Share,
-                otherCosts: (item as any).Other_Costs,   // ostali troškovi raznih naloga
-            }));
+            const labor = live
+                .filter(wl => wl.Work_Order_Item_ID === item.ID)
+                .reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+            map.set(item.ID, itemFinance(item, workOrder, financeBasis, labor));
         }
         return map;
-    }, [localItems, workLogs]);
+    }, [localItems, workLogs, workOrder, financeBasis]);
 
     // Hero total = suma per-item (poklapa se s redovima).
-    const orderFin = useMemo(() => sumBreakdowns(Array.from(itemFin.values())), [itemFin]);
+    const orderFin = useMemo(() => sumItemFinance(Array.from(itemFin.values())), [itemFin]);
 
     // Preusmjeren rad povezanih "raznih poslova" — SAMO INFORMATIVNO (namjerno NE ulazi u
     // itemFin/orderFin iznad): taj trošak je već uračunat u profit POVEZANOG proizvoda
@@ -497,8 +491,8 @@ export default function WorkOrderExpandedDetail({
 
     const profitWarn = !isMontaza && (orderFin.missingPrice || orderFin.missingMaterial);
     const profitWarnTitle = orderFin.missingPrice
-        ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — profit je nepotpun'
-        : 'Materijali nisu dodati ili nemaju cijenu — profit je nepotpun';
+        ? 'Proizvod nema cijenu (nije u prihvaćenoj ponudi?) — profit je nepotpun'
+        : 'Sastavnica je prazna i nema dodataka u ponudi — materijal je 0, profit je nepotpun';
 
     // Rok advisory: stavke bez planiranih dana (ponuda nedopunjena) potcjenjuju auto-rok.
     const missingDaysCount = useMemo(() => (!isMontaza && woActive ? itemsWithoutPlannedDays(localItems) : 0), [localItems, isMontaza, woActive]);
@@ -784,7 +778,7 @@ export default function WorkOrderExpandedDetail({
                         </div>
 
                     {productsOpen && (localItems.length > 0 ? localItems.map(item => {
-                        const fin = itemFin.get(item.ID) || itemProfitBreakdown({});
+                        const fin = itemFin.get(item.ID) || itemFinance(item, workOrder, financeBasis, 0);
                         const status = (item.Status as string) || 'Na čekanju';
                         const isPaused = !!item.Is_Paused;
                         const showWarn = !isMontaza && (fin.missingPrice || fin.missingMaterial);
@@ -1042,9 +1036,9 @@ export default function WorkOrderExpandedDetail({
                     productName={timelineItem.Product_Name}
                     workOrderItem={timelineItem}
                     workLogs={workLogs.filter(wl => wl.Product_ID === timelineItem.Product_ID)}
-                    sellingPrice={timelineItem.Product_Value}
-                    materialCost={itemMaterialTotal(timelineItem.Material_Cost, timelineItem.Quantity)}
-                    laborCost={timelineItem.Actual_Labor_Cost}
+                    sellingPrice={itemFin.get(timelineItem.ID)?.revenue ?? timelineItem.Product_Value}
+                    materialCost={itemFin.get(timelineItem.ID)?.material}
+                    laborCost={itemFin.get(timelineItem.ID)?.labor ?? timelineItem.Actual_Labor_Cost}
                     workers={workers}
                     readOnly
                 />

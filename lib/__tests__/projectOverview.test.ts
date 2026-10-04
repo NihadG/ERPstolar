@@ -1,76 +1,107 @@
 import { buildProjectOverview, buildMiscOverview } from '../projectOverview';
-import { projectProfitBreakdown } from '../projectProfit';
+import { buildFinanceBasis, buildLaborIndex, computeProjectsFinance } from '../projectFinance';
 
 // Minimalne fiksture — uski ulazni tipovi (samo čitana polja).
 function baseProject(products: any[] = []) {
     return { Project_ID: 'P1', products };
 }
 
-describe('buildProjectOverview — finansije', () => {
-    test('jednostavan proizvodni nalog: financial == itemProfitBreakdown', () => {
-        const ov = buildProjectOverview({
-            project: baseProject(),
-            workOrders: [{
-                Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'U toku', Work_Order_Type: 'Proizvodnja',
-                items: [{ ID: 'I1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 1200, Material_Cost: 100, Quantity: 3, Services_Total: 0, Transport_Share: 0, Status: 'U toku' }],
-            }],
-            workLogs: [{ Work_Order_Item_ID: 'I1', Product_ID: 'PR1', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 180, Day_Fraction: 1, Date: '2026-07-01' }],
-        });
-        // materijal = 100 × 3 = 300; profit = 1200 − 300 − 180 = 720
-        expect(ov.financial.material).toBe(300);
-        expect(ov.financial.labor).toBe(180);
-        expect(ov.financial.profit).toBe(720);
+// Prihvaćena ponuda projekta P1 (cijene po komadu).
+const offer = (lines: { pid: string; sell: number; qty?: number; mat?: number; labor?: [number, number, number] }[]) => [{
+    Offer_ID: 'O1', Project_ID: 'P1', Offer_Number: 'P-1', Status: 'Prihvaćeno', Accepted_Date: '2026-07-01', Total: 0,
+    products: lines.map(l => ({
+        Product_ID: l.pid, Included: true, Quantity: l.qty ?? 1, Selling_Price: l.sell, Total_Price: l.sell * (l.qty ?? 1),
+        Material_Cost: l.mat ?? 0, Labor_Workers: l.labor?.[0] ?? 0, Labor_Days: l.labor?.[1] ?? 0, Labor_Daily_Rate: l.labor?.[2] ?? 0,
+    })),
+}];
+
+describe('buildProjectOverview — finansije (prihvaćena ponuda − živi materijal − rad, završeni proizvodi)', () => {
+    const products = [
+        { Product_ID: 'PR1', Name: 'Ormar', Quantity: 3, Status: 'Spremno', materials: [{ Material_ID: 'M1', Material_Name: 'Iveral', Quantity: 2, Total_Price: 100 }] },
+        { Product_ID: 'PR2', Name: 'Komoda', Quantity: 1, Status: 'Na čekanju', materials: [{ Material_ID: 'M2', Material_Name: 'MDF', Quantity: 1, Total_Price: 40 }] },
+    ];
+    const offers = offer([{ pid: 'PR1', sell: 400, qty: 3, mat: 90, labor: [1, 1, 150] }, { pid: 'PR2', sell: 300 }]);
+    const workOrders = [
+        {
+            Work_Order_ID: 'WOA', Work_Order_Number: 'RN-A', Status: 'Završeno', Work_Order_Type: 'Proizvodnja',
+            items: [{ ID: 'A1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 1, Material_Cost: 999, Quantity: 3, Status: 'Završeno', Completed_At: '2026-07-05T10:00:00Z' }],
+        },
+        {
+            Work_Order_ID: 'WOB', Work_Order_Number: 'RN-B', Status: 'U toku', Work_Order_Type: 'Montaža',
+            items: [{ ID: 'B1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 999, Material_Cost: 50, Quantity: 3, Status: 'U toku' }],
+        },
+        {
+            Work_Order_ID: 'WOC', Work_Order_Number: 'RN-C', Status: 'U toku', Work_Order_Type: 'Proizvodnja',
+            items: [{ ID: 'C1', Product_ID: 'PR2', Product_Name: 'Komoda', Project_ID: 'P1', Quantity: 1, Status: 'U toku' }],
+        },
+    ];
+    const workLogs = [
+        { Work_Order_Item_ID: 'A1', Product_ID: 'PR1', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 180, Day_Fraction: 1, Date: '2026-07-01' },
+        { Work_Order_Item_ID: 'B1', Product_ID: 'PR1', Worker_ID: 'W2', Worker_Name: 'Marko', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-07-06' },
+        { Work_Order_Item_ID: 'C1', Product_ID: 'PR2', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 90, Day_Fraction: 0.5, Date: '2026-07-07' },
+        { Work_Order_Item_ID: 'A1', Product_ID: 'PR1', Worker_ID: 'W3', Worker_Name: 'Obrisan', Daily_Rate: 500, Day_Fraction: 1, Date: '2026-07-02', Work_Order_Deleted: true },
+    ];
+    const ov = buildProjectOverview({ project: baseProject(products), workOrders, workLogs, offers });
+
+    test('naslovni profit = završeni proizvod: ponuda (1200) − sastavnica (300) − rad proizvodnje + montaže (310)', () => {
         expect(ov.financial.revenue).toBe(1200);
-        expect(ov.counts.products).toBe(1);
+        expect(ov.financial.material).toBe(300);
+        expect(ov.financial.labor).toBe(310);
+        expect(ov.financial.profit).toBe(590);
+        expect(ov.counts.productsFinished).toBe(1);
     });
 
-    test('INVARIJANTA: financial.profit == projectProfitBreakdown().profit (multi-WO, proizvodnja + montaža)', () => {
-        const workOrders = [
-            {
-                Work_Order_ID: 'WOA', Work_Order_Number: 'RN-A', Status: 'U toku', Work_Order_Type: 'Proizvodnja',
-                items: [
-                    { ID: 'A1', Product_ID: 'PR1', Product_Name: 'Kuhinja', Project_ID: 'P1', Product_Value: 1200, Material_Cost: 100, Quantity: 3, Services_Total: 20, Transport_Share: 10, Status: 'U toku' },
-                    { ID: 'A2', Product_ID: 'PR2', Product_Name: 'Nedopunjen', Project_ID: 'P1', Product_Value: 0, Material_Cost: 0, Quantity: 1, Status: 'Na čekanju' },
-                ],
-            },
-            {
-                Work_Order_ID: 'WOB', Work_Order_Number: 'RN-B', Status: 'U toku', Work_Order_Type: 'Montaža',
-                items: [{ ID: 'B1', Product_ID: 'PR1', Product_Name: 'Kuhinja', Project_ID: 'P1', Product_Value: 999, Material_Cost: 50, Quantity: 1, Status: 'U toku' }],
-            },
-        ];
-        const workLogs = [
-            { Work_Order_Item_ID: 'A1', Product_ID: 'PR1', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 180, Day_Fraction: 1, Date: '2026-07-01' },
-            { Work_Order_Item_ID: 'A2', Product_ID: 'PR2', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 90, Day_Fraction: 0.5, Date: '2026-07-02' },
-            { Work_Order_Item_ID: 'B1', Product_ID: 'PR1', Worker_ID: 'W2', Worker_Name: 'Marko', Daily_Rate: 130, Day_Fraction: 1, Date: '2026-07-03' },
-        ];
-
-        const ov = buildProjectOverview({ project: baseProject(), workOrders, workLogs });
-        const ref = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders as any, workLogs });
-
-        expect(ov.financial.profit).toBe(ref.profit);
-        expect(ov.financial.revenue).toBe(ref.revenue);
-        expect(ov.financial.material).toBe(ref.material);
-        expect(ov.financial.labor).toBe(ref.labor);
-        expect(ov.financial.services).toBe(ref.services);
-        expect(ov.financial.transport).toBe(ref.transport);
-        expect(ov.financial.missingPrice).toBe(ref.missingPrice);
+    test('proizvod u izradi NIJE u profitu, ali je u finance.inProgress', () => {
+        expect(ov.finance.inProgress.count).toBe(1);
+        expect(ov.finance.inProgress.revenue).toBe(300);
+        expect(ov.finance.inProgress.labor).toBe(90);
+        expect(ov.products.find(p => p.productId === 'PR2')?.stage).toBe('u_izradi');
     });
 
-    test('otkazan nalog i stavke drugih projekata se isključuju', () => {
-        const ov = buildProjectOverview({
+    test('ugovoreno = Σ prihvaćenih ponuda; obrisane dnevnice se ne broje nigdje', () => {
+        expect(ov.finance.contracted).toBe(1500);
+        expect(ov.spentLabor).toBe(400);   // 180 + 130 + 90 (bez 500 s obrisanog naloga)
+        expect(ov.workers.find(w => w.workerId === 'W3')).toBeUndefined();
+    });
+
+    test('plan vs stvarno za završene proizvode (iz ponude)', () => {
+        expect(ov.hasPlan).toBe(true);
+        expect(ov.plannedMaterial).toBe(270);   // 90 × 3
+        expect(ov.plannedLabor).toBe(450);      // 1 × 1 × 150 × 3
+    });
+
+    test('INVARIJANTA: pregled projekta == proračun kartice/analitike (isti broj)', () => {
+        const prods = products.map(p => ({ ...p, Project_ID: 'P1' }));
+        const basis = buildFinanceBasis(prods, offers);
+        const all = computeProjectsFinance({ products: prods, basis, workOrders, labor: buildLaborIndex(workLogs, workOrders), logs: workLogs });
+        expect(all.get('P1')?.profit).toBe(ov.financial.profit);
+        expect(all.get('P1')?.revenue).toBe(ov.financial.revenue);
+    });
+
+    test('nalozi: montaža nosi samo rad; završeni nalog nosi prihod iz ponude i živu sastavnicu', () => {
+        const mont = ov.workOrders.find(w => w.workOrderId === 'WOB')!;
+        expect(mont.revenue).toBe(0);
+        expect(mont.profit).toBe(-130);
+        const a = ov.workOrders.find(w => w.workOrderId === 'WOA')!;
+        expect(a.revenue).toBe(1200);
+        expect(a.material).toBe(300);
+    });
+
+    test('otkazan nalog i stavke drugih projekata se ne prikazuju u nalozima', () => {
+        const ov2 = buildProjectOverview({
             project: baseProject(),
             workOrders: [
                 { Work_Order_ID: 'WOX', Work_Order_Number: 'X', Status: 'Otkazano', Work_Order_Type: 'Proizvodnja', items: [{ ID: 'IX', Product_ID: 'PRX', Project_ID: 'P1', Product_Value: 5000, Material_Cost: 10, Quantity: 1 }] },
-                { Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'U toku', Work_Order_Type: 'Proizvodnja', items: [
-                    { ID: 'I1', Product_ID: 'PR1', Project_ID: 'P1', Product_Value: 100, Material_Cost: 0, Quantity: 1 },
-                    { ID: 'I2', Product_ID: 'PR2', Project_ID: 'P2', Product_Value: 999, Material_Cost: 0, Quantity: 1 },
+                { Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items: [
+                    { ID: 'I1', Product_ID: 'PR1', Project_ID: 'P1', Product_Value: 100, Material_Cost: 0, Quantity: 1, Status: 'Završeno' },
+                    { ID: 'I2', Product_ID: 'PR2', Project_ID: 'P2', Product_Value: 999, Material_Cost: 0, Quantity: 1, Status: 'Završeno' },
                 ] },
             ],
             workLogs: [],
         });
-        expect(ov.financial.revenue).toBe(100);
-        expect(ov.workOrders.length).toBe(1);
-        expect(ov.workOrders[0].workOrderId).toBe('WO1');
+        expect(ov2.financial.revenue).toBe(100);   // bez ponude: cijena s naloga
+        expect(ov2.workOrders.length).toBe(1);
+        expect(ov2.workOrders[0].workOrderId).toBe('WO1');
     });
 });
 
@@ -99,27 +130,27 @@ describe('buildProjectOverview — radnici', () => {
 });
 
 describe('buildProjectOverview — svi proizvodi (uklj. one van proizvodnje)', () => {
-    test('proizvod bez naloga se prikazuje (notInProduction), ali NE ulazi u financial', () => {
+    test('proizvod bez naloga se prikazuje (notInProduction), ali NE ulazi u profit', () => {
         const ov = buildProjectOverview({
             project: baseProject([
                 { Product_ID: 'PR1', Name: 'Ormar', Quantity: 2, materials: [{ Material_ID: 'M1', Material_Name: 'Iveral', Quantity: 4, Total_Price: 100 }] },
                 { Product_ID: 'PR2', Name: 'Komoda (nije u nalogu)', Quantity: 3, materials: [{ Material_ID: 'M2', Material_Name: 'MDF', Quantity: 2, Total_Price: 50 }] },
             ]),
             workOrders: [{
-                Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'U toku', Work_Order_Type: 'Proizvodnja',
-                items: [{ ID: 'I1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 1000, Material_Cost: 0, Quantity: 2, Status: 'U toku' }],
+                Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'Završeno', Work_Order_Type: 'Proizvodnja',
+                items: [{ ID: 'I1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 1000, Material_Cost: 0, Quantity: 2, Status: 'Završeno' }],
             }],
             workLogs: [],
+            offers: offer([{ pid: 'PR1', sell: 500, qty: 2 }, { pid: 'PR2', sell: 200, qty: 3 }]),
         });
-        // PR1 u proizvodnji, PR2 nije
         expect(ov.products.length).toBe(2);
         const pr2 = ov.products.find(p => p.productId === 'PR2')!;
         expect(pr2.notInProduction).toBe(true);
-        expect(pr2.material).toBe(150); // 50 (po komadu) × 3 kom
-        // Financial gleda SAMO proizvodnju (PR1): prihod 1000, PR2 ne obara profit
+        expect(pr2.contracted).toBe(600);
+        // Profit = samo završeni PR1: 1000 (ponuda) − 200 (sastavnica 100 × 2)
         expect(ov.financial.revenue).toBe(1000);
-        expect(ov.financial.profit).toBe(1000);
-        expect(ov.counts.productsInProduction).toBe(1);
+        expect(ov.financial.profit).toBe(800);
+        expect(ov.counts.productsFinished).toBe(1);
         expect(ov.counts.productsNotStarted).toBe(1);
         expect(ov.counts.products).toBe(2);
     });

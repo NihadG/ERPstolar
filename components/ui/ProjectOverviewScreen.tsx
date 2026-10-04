@@ -7,7 +7,8 @@
 // Finansijski podaci ostaju u odvojenim detaljnim tabovima.
 // Sve se računa iz podataka u memoriji (buildProjectOverview) — otvaranje trenutno.
 //
-// Finansije = isti izvor kao kartica/nalog/analitika (lib/projectOverview → lib/profit).
+// Finansije = isti proračun kao kartica/nalog/analitika (lib/projectOverview → lib/projectFinance):
+// profit = prihvaćena ponuda − materijal (sastavnica + dodaci) − rad, za ZAVRŠENE proizvode.
 // ════════════════════════════════════════════════════════════════════
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
@@ -22,6 +23,7 @@ import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task,
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
 import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOverview';
+import { workLogsWindowStart, REVENUE_SOURCE_LABEL } from '@/lib/projectFinance';
 import { formatDate } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
 import { useIsCompact } from '@/hooks/useIsCompact';
@@ -105,7 +107,7 @@ export default function ProjectOverviewScreen({
     const [taskModal, setTaskModal] = useState<{ mode: 'create' | 'edit'; task?: Task } | null>(null);
 
     const ov = useMemo<ProjectOverview>(
-        () => buildProjectOverview({ project, workOrders, workLogs, offers, workers }),
+        () => buildProjectOverview({ project, workOrders, workLogs, offers, workers, storedLaborBefore: workLogsWindowStart() }),
         [project, workOrders, workLogs, offers, workers]
     );
 
@@ -589,31 +591,29 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
                 <div className="pov-kpi accent">
                     <div className="pov-kpi-icon"><Wallet size={19} /></div>
                     <div className="pov-kpi-body">
-                        <span className="pov-kpi-label">Klijent plaća</span>
-                        <span className="pov-kpi-value">{fmt(fin.revenue)}</span>
-                        {ov.acceptedOffer
-                            ? <span className="pov-kpi-sub">Ponuda {ov.acceptedOffer.offerNumber ? `#${ov.acceptedOffer.offerNumber}` : ''}{ov.acceptedOffer.includePDV ? ` · s PDV` : ''}</span>
-                            : fin.missingPrice
-                                ? <span className="pov-kpi-sub warn"><AlertTriangle size={12} /> neki bez cijene</span>
-                                : <span className="pov-kpi-sub">prihod projekta</span>}
+                        <span className="pov-kpi-label">Ugovoreno</span>
+                        <span className="pov-kpi-value">{fmt(ov.finance.contracted)}</span>
+                        {ov.acceptedOffers.length > 0
+                            ? <span className="pov-kpi-sub">{ov.acceptedOffers.length === 1 ? 'Ponuda' : 'Ponude'} {ov.acceptedOffers.map(o => `#${o.offerNumber}`).join(' + ')}{ov.acceptedOffer?.includePDV ? ' · bez PDV-a' : ''}</span>
+                            : <span className="pov-kpi-sub warn"><AlertTriangle size={12} /> nema prihvaćene ponude</span>}
                     </div>
                 </div>
                 <div className="pov-kpi">
                     <div className="pov-kpi-icon"><Coins size={19} /></div>
                     <div className="pov-kpi-body">
-                        <span className="pov-kpi-label">Ukupni trošak</span>
-                        <span className="pov-kpi-value">{fmt(cost)}</span>
-                        <span className="pov-kpi-sub">Mat {fmt0(fin.material)} · Rad {fmt0(fin.labor)}</span>
+                        <span className="pov-kpi-label">Prihod završenih</span>
+                        <span className="pov-kpi-value">{fmt(fin.revenue)}</span>
+                        <span className="pov-kpi-sub">trošak {fmt0(cost)} · mat {fmt0(fin.material)} · rad {fmt0(fin.labor)}</span>
                     </div>
                 </div>
                 <div className={`pov-kpi ${marginClass}`}>
                     <div className="pov-kpi-icon">{fin.profit < 0 ? <TrendingDown size={19} /> : <TrendingUp size={19} />}</div>
                     <div className="pov-kpi-body">
-                        <span className="pov-kpi-label">{fin.profit < 0 ? 'Gubitak' : 'Profit'}</span>
+                        <span className="pov-kpi-label">{fin.profit < 0 ? 'Gubitak' : 'Profit'} (završeno)</span>
                         <span className="pov-kpi-value">{fmt(fin.profit)}</span>
                         {ov.hasPlan
                             ? <span className="pov-kpi-sub">plan {fmt(ov.plannedProfit)}</span>
-                            : <span className="pov-kpi-sub">nakon svih troškova</span>}
+                            : <span className="pov-kpi-sub">{ov.counts.productsFinished} od {ov.counts.products} proizvoda završeno</span>}
                     </div>
                 </div>
                 <div className={`pov-kpi ${marginClass}`}>
@@ -628,7 +628,7 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
 
             <section className="pov-card pov-hero-card">
                 <div className="pov-card-head">
-                    <h3>Gdje ide svaki KM koji klijent plaća</h3>
+                    <h3>Gdje ide svaki KM završenih proizvoda</h3>
                     <span className="pov-card-sub">{fmt(fin.revenue)} → trošak {fmt(cost)} · {fin.profit < 0 ? 'gubitak' : 'profit'} {fmt(Math.abs(fin.profit))}</span>
                 </div>
                 <div className="pov-alloc">
@@ -688,16 +688,16 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
                 </section>
 
                 <section className="pov-card">
-                    <div className="pov-card-head"><h3>Sažetak</h3></div>
+                    <div className="pov-card-head"><h3>Stanje projekta</h3></div>
                     <ul className="pov-summary-list">
-                        <li><span>Proizvoda</span><b>{ov.counts.products}</b></li>
-                        <li><span>U proizvodnji</span><b>{ov.counts.productsInProduction}</b></li>
-                        <li><span>Radnih naloga</span><b>{ov.counts.workOrders}</b></li>
-                        <li><span>Radnika</span><b>{ov.counts.workers}</b></li>
-                        <li><span>Radnih dana</span><b>{fmt0(ov.counts.totalWorkerDays)}</b></li>
+                        <li><span>Završeno ({ov.counts.productsFinished}) — u profitu</span><b>{fmt(ov.finance.realized.revenue)}</b></li>
+                        <li><span>U izradi ({ov.counts.productsInProduction}) — uloženo do sada</span><b>{fmt(ov.finance.inProgress.material + ov.finance.inProgress.labor)}</b></li>
+                        <li><span>Nije započeto ({ov.counts.productsNotStarted}) — ugovoreno</span><b>{fmt(ov.finance.notStarted.contracted)}</b></li>
+                        <li><span>Radnih naloga · radnika · radnih dana</span><b>{ov.counts.workOrders} · {ov.counts.workers} · {fmt0(ov.counts.totalWorkerDays)}</b></li>
                     </ul>
+                    <div className="pov-note">Profit = prihvaćena ponuda − materijal (sastavnica + dodaci iz ponude) − rad, i računa se kad je proizvod završen.</div>
                     {fin.missingPrice && (
-                        <div className="pov-note warn"><AlertTriangle size={14} /> Neki proizvodi nemaju prodajnu cijenu — profit je nepotpun (uloženi rad se prikazuje kao gubitak).</div>
+                        <div className="pov-note warn"><AlertTriangle size={14} /> Neki započeti proizvodi nisu u prihvaćenoj ponudi ili nemaju cijenu — za njih je uzeta cijena s naloga (provjeri u Analitici).</div>
                     )}
                 </section>
             </div>
@@ -741,9 +741,9 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
             <div className="pov-mlist">
                 {ov.products.map(p => {
                     const isOpen = open.has(p.productId);
-                    const mc = p.notInProduction ? '' : p.profit < 0 ? 'bad' : p.margin >= 30 ? 'good' : p.margin >= 15 ? 'mid' : 'bad';
+                    const realized = p.isCustom || p.stage === 'zavrseno';
+                    const mc = !realized ? '' : p.profit < 0 ? 'bad' : p.margin >= 30 ? 'good' : p.margin >= 15 ? 'mid' : 'bad';
                     const isSel = selected.has(p.productId);
-                    const noRev = p.notInProduction || (p.missingPrice && p.revenue === 0);
                     return (
                         <div key={p.productId} className={`pov-mcard ${p.notInProduction ? 'muted' : ''} ${isSel ? 'sel' : ''}`}>
                             <div className="pov-mcard-head" onClick={() => toggleOpen(p.productId)}>
@@ -764,17 +764,17 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                 <ChevronRight size={18} className={`pov-chev ${isOpen ? 'open' : ''}`} />
                             </div>
                             <div className="pov-mcard-figs">
-                                <div className="pov-fig"><span>Cijena</span><b>{noRev ? '—' : fmt(p.revenue)}</b></div>
-                                <div className="pov-fig"><span>{p.profit < 0 ? 'Gubitak' : 'Profit'}</span><b className={mc}>{p.notInProduction ? '—' : fmt(p.profit)}</b></div>
-                                <div className="pov-fig"><span>Marža</span><b className={mc}>{p.notInProduction ? '—' : `${Math.round(p.margin)}%`}</b></div>
+                                <div className="pov-fig"><span>{p.notInProduction ? 'Ugovoreno' : 'Cijena'}</span><b>{p.notInProduction ? (p.contracted > 0 ? fmt(p.contracted) : '—') : fmt(p.revenue)}</b></div>
+                                <div className="pov-fig"><span>{realized && p.profit < 0 ? 'Gubitak' : 'Profit'}</span><b className={mc}>{realized ? fmt(p.profit) : p.notInProduction ? '—' : 'u izradi'}</b></div>
+                                <div className="pov-fig"><span>Marža</span><b className={mc}>{realized ? `${Math.round(p.margin)}%` : '—'}</b></div>
                             </div>
                             {isOpen && (
                                 <div className="pov-mcard-detail">
                                     <Detail label="Materijal" value={fmt(p.material)} />
+                                    {p.materialExtras > 0 && <Detail label="od toga dodaci iz ponude" value={fmt(p.materialExtras)} />}
                                     {!p.notInProduction && <Detail label="Rad" value={fmt(p.labor)} />}
                                     {p.other > 0 && <Detail label="Ostali troškovi" value={fmt(p.other)} />}
-                                    <Detail label="Usluge" value={fmt(p.services)} />
-                                    <Detail label="Transport" value={fmt(p.transport)} />
+                                    {!p.isCustom && !p.notInProduction && <Detail label="Cijena iz" value={REVENUE_SOURCE_LABEL[p.revenueSource]} />}
                                     <Detail label="Radnih dana" value={`${p.workerDays}`} />
                                     <Detail label="Radnika" value={`${p.workerCount}`} />
                                     <Detail label="Nalozi" value={p.workOrderNumbers.join(', ') || '—'} />
@@ -785,7 +785,7 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                     );
                 })}
                 <div className="pov-mcard total">
-                    <div className="pov-mcard-name">Ukupno (u proizvodnji)</div>
+                    <div className="pov-mcard-name">Ukupno (završeno)</div>
                     <div className="pov-mcard-figs">
                         <div className="pov-fig"><span>Prihod</span><b>{fmt(ov.financial.revenue)}</b></div>
                         <div className="pov-fig"><span>Profit</span><b>{fmt(ov.financial.profit)}</b></div>
@@ -819,7 +819,8 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                     <tbody>
                         {ov.products.map(p => {
                             const isOpen = open.has(p.productId);
-                            const mc = p.notInProduction ? '' : p.profit < 0 ? 'bad' : p.margin >= 30 ? 'good' : p.margin >= 15 ? 'mid' : 'bad';
+                            const realized = p.isCustom || p.stage === 'zavrseno';
+                            const mc = !realized ? '' : p.profit < 0 ? 'bad' : p.margin >= 30 ? 'good' : p.margin >= 15 ? 'mid' : 'bad';
                             const isSel = selected.has(p.productId);
                             return (
                                 <Fragment key={p.productId}>
@@ -842,11 +843,11 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                         </td>
                                         <td className="c hide-sm">{p.quantity || '—'}</td>
                                         <td className="c"><span className={`pov-chip s-${statusSlug(p.status)}`}>{p.status}</span></td>
-                                        <td className="r fw">{p.notInProduction || (p.missingPrice && p.revenue === 0) ? '—' : fmt(p.revenue)}</td>
+                                        <td className="r fw" title={p.notInProduction ? 'Ugovorena vrijednost (proizvod još nije u nalogu)' : `Cijena iz: ${REVENUE_SOURCE_LABEL[p.revenueSource]}`}>{p.notInProduction ? (p.contracted > 0 ? <span className="dim">{fmt(p.contracted)}</span> : '—') : fmt(p.revenue)}</td>
                                         <td className="r dim hide-md">{fmt(p.material)}</td>
                                         <td className="r dim hide-md">{p.notInProduction ? '—' : fmt(p.labor)}</td>
-                                        <td className={`r hl fw ${mc}`}>{p.notInProduction ? '—' : fmt(p.profit)}</td>
-                                        <td className={`r hide-sm ${mc}`}>{p.notInProduction ? '—' : `${Math.round(p.margin)}%`}</td>
+                                        <td className={`r hl fw ${mc}`} title={!realized && !p.notInProduction ? 'Profit se računa kad je proizvod završen' : undefined}>{realized ? fmt(p.profit) : p.notInProduction ? '—' : <span className="dim">u izradi</span>}</td>
+                                        <td className={`r hide-sm ${mc}`}>{realized ? `${Math.round(p.margin)}%` : '—'}</td>
                                         <td className="c"><ChevronRight size={16} className={`pov-chev ${isOpen ? 'open' : ''}`} /></td>
                                     </tr>
                                     {isOpen && (
@@ -854,10 +855,10 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                             <td colSpan={onCreateWorkOrder ? 10 : 9}>
                                                 <div className="pov-detail-grid">
                                                     <Detail label="Materijal" value={fmt(p.material)} />
+                                                    {p.materialExtras > 0 && <Detail label="od toga dodaci iz ponude" value={fmt(p.materialExtras)} />}
                                                     {!p.notInProduction && <Detail label="Rad" value={fmt(p.labor)} />}
-                                                    {!p.notInProduction && <Detail label="Marža" value={`${Math.round(p.margin)}%`} />}
-                                                    <Detail label="Usluge" value={fmt(p.services)} />
-                                                    <Detail label="Transport" value={fmt(p.transport)} />
+                                                    {!p.isCustom && !p.notInProduction && <Detail label="Cijena iz" value={REVENUE_SOURCE_LABEL[p.revenueSource]} />}
+                                                    {p.contracted > 0 && <Detail label="Ugovoreno" value={fmt(p.contracted)} />}
                                                     <Detail label="Radnih dana" value={`${p.workerDays}`} />
                                                     <Detail label="Radnika" value={`${p.workerCount}`} />
                                                     <Detail label="Nalozi" value={p.workOrderNumbers.join(', ') || '—'} />
@@ -873,7 +874,7 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                     <tfoot>
                         <tr>
                             {onCreateWorkOrder && <td className="pov-sel-col" />}
-                            <td className="fw">Ukupno (u proizvodnji)</td>
+                            <td className="fw">Ukupno (završeno)</td>
                             <td className="hide-sm" /><td />
                             <td className="r fw">{fmt(ov.financial.revenue)}</td>
                             <td className="r fw hide-md">{fmt(ov.financial.material)}</td>
@@ -1172,7 +1173,7 @@ function RadniciTab({ ov, fmt }: { ov: ProjectOverview; fmt: (n: number) => stri
             <section className="pov-card">
                 <div className="pov-card-head">
                     <h3>Trošak rada po radniku</h3>
-                    <span className="pov-card-sub">Ukupno {fmt(ov.financial.labor)} · {ov.counts.workers} radnika · {ov.counts.totalWorkerDays} radnih dana</span>
+                    <span className="pov-card-sub">Ukupno {fmt(ov.spentLabor)} · {ov.counts.workers} radnika · {ov.counts.totalWorkerDays} radnih dana</span>
                 </div>
                 <div className="pov-worker-list">
                     {ov.workers.map(w => (

@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { Material, MaterialTemplate } from '@/lib/types';
-import { saveMaterial, deleteMaterial, deleteDuplicateMaterials, getMaterialTemplates, applyMaterialTemplate, applyBasisReview } from '@/lib/services';
-import type { ProjectBasisReview, BasisReviewItem } from '@/lib/profitBasis';
+import { saveMaterial, deleteMaterial, deleteDuplicateMaterials, getMaterialTemplates, applyMaterialTemplate } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
-import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
 import MaterialTemplatesModal from '@/components/ui/MaterialTemplatesModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
@@ -25,8 +23,6 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
     const [materialModal, setMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<Partial<Material> | null>(null);
     const [removingDuplicates, setRemovingDuplicates] = useState(false);
-    // Gejt „utiče li na profit?" nakon promjene cijene materijala u katalogu.
-    const [basisReview, setBasisReview] = useState<{ review: ProjectBasisReview[]; label: string } | null>(null);
 
     // Material templates
     const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
@@ -98,31 +94,16 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
             return;
         }
 
-        const materialName = editingMaterial.Name;
         const result = await saveMaterial(editingMaterial, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setMaterialModal(false);
-            onRefresh('materials');
-            // Promjena cijene dira osnovicu profita proizvodnih naloga → gejt pregled.
-            if (result.basisReview && result.basisReview.length > 0) {
-                setBasisReview({ review: result.basisReview, label: materialName || 'materijal' });
-            }
+            // Nova cijena se prenosi na sastavnice proizvoda → živi trošak materijala (i profit)
+            // projekata se mijenja, pa se osvježavaju i projekti.
+            onRefresh('materials', 'projects');
         } else {
             showToast(result.message, 'error');
         }
-    }
-
-    async function handleApplyBasisReview(approvedItems: BasisReviewItem[]) {
-        if (!organizationId) return;
-        const res = await applyBasisReview(approvedItems, organizationId);
-        if (res.success) {
-            showToast(approvedItems.length > 0 ? 'Profit ažuriran' : 'Profit nepromijenjen', 'success');
-            onRefresh('workOrders', 'projects');
-        } else {
-            showToast(res.message, 'error');
-        }
-        setBasisReview(null);
     }
 
     async function handleDeleteMaterial(materialId: string) {
@@ -356,14 +337,6 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                 onApplied={() => onRefresh('materials')}
             />
 
-            {basisReview && (
-                <ProfitBasisReviewModal
-                    review={basisReview.review}
-                    changeLabel={basisReview.label}
-                    onClose={() => setBasisReview(null)}
-                    onApply={handleApplyBasisReview}
-                />
-            )}
         </div>
     );
 }

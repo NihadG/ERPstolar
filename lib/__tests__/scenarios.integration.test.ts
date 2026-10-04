@@ -16,7 +16,7 @@
 import { splitDnevnicaExact, normalizePresence } from '../laborSplit';
 import { workOrderDueDate, isWorkingDay, buildSaturdayChecker, type AttendanceLite } from '../planning';
 import { itemMaterialTotal, isItemMaterialFrozen } from '../materialCost';
-import { projectProfitBreakdown } from '../projectProfit';
+import { buildFinanceBasis, buildLaborIndex, computeProjectFinance, type FinItem } from '../projectFinance';
 import { distributeAmountByQuantity } from '../invoicePricing';
 import { resolveLaborCostTarget, type LaborTargetItem } from '../laborTarget';
 
@@ -425,76 +425,86 @@ describe('Scenarij — montaža nalog ne nosi prihod/materijal (WS-0 guard)', ()
 // profit projekta preko istog izvora kao kartica/nalozi.
 // ════════════════════════════════════════════════════════════════════════════
 describe('Scenarij — Završni račun mijenja i vraća profit projekta (issueInvoice/cancelInvoice oblik upisa)', () => {
-    // Ponuda: PA (400/kom × 2 = 800), PB (500/kom × 1 = 500). Materijal: PA 100/kom, PB 50/kom.
+    // Ponuda: PA (400/kom × 2 = 800), PB (500/kom × 1 = 500). Sastavnica: PA 100/kom, PB 50/kom.
+    // Profit projekta = lib/projectFinance (prihod iz ponude; izdat završni račun ima prednost).
     const offerSellingPerUnitPA = 400;
-    const baseItems = () => [
-        { ID: 'A1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2 },
-        { ID: 'A2', Project_ID: 'P1', Product_ID: 'PB', Product_Value: 500, Material_Cost: 50, Quantity: 1 },
+    const products = [
+        { Product_ID: 'PA', Project_ID: 'P1', Name: 'PA', Quantity: 2, Status: 'Spremno', materials: [{ Total_Price: 100 }] },
+        { Product_ID: 'PB', Project_ID: 'P1', Name: 'PB', Quantity: 1, Status: 'Spremno', materials: [{ Total_Price: 50 }] },
     ];
-    const workOrders = (items: ReturnType<typeof baseItems>) => [
-        { Work_Order_ID: 'WO1', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items },
+    const offers = [{
+        Offer_ID: 'O1', Project_ID: 'P1', Status: 'Prihvaćeno', Accepted_Date: '2026-07-01',
+        products: [
+            { Product_ID: 'PA', Included: true, Quantity: 2, Selling_Price: 400, Total_Price: 800 },
+            { Product_ID: 'PB', Included: true, Quantity: 1, Selling_Price: 500, Total_Price: 500 },
+        ],
+    }];
+    const baseItems = (): FinItem[] => [
+        { ID: 'A1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2, Status: 'Završeno' },
+        { ID: 'A2', Project_ID: 'P1', Product_ID: 'PB', Product_Value: 500, Material_Cost: 50, Quantity: 1, Status: 'Završeno' },
     ];
+    const finOf = (items: FinItem[]) => {
+        const workOrders = [{ Work_Order_ID: 'WO1', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items }];
+        return computeProjectFinance({
+            projectId: 'P1', products, basis: buildFinanceBasis(products, offers),
+            workOrders, labor: buildLaborIndex([], workOrders), logs: [],
+        });
+    };
 
-    test('prije fakturisanja: profit projekta = Σ Product_Value ponude', () => {
-        const before = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(baseItems()), workLogs: [] });
+    test('prije fakturisanja: prihod projekta = prihvaćena ponuda', () => {
+        const before = finOf(baseItems());
         expect(before.revenue).toBe(1300); // 800 + 500
         expect(before.material).toBe(250); // 100×2 + 50×1
         expect(before.profit).toBe(1050);
     });
 
-    test('izdavanje računa (nova cijena samo za PA=900) → revenue projekta se mijenja SAMO za PA', () => {
+    test('izdavanje računa (nova cijena samo za PA=900) → prihod projekta se mijenja SAMO za PA', () => {
         const items = baseItems();
         // issueInvoice: raspodijeli Final_Total (900) na stavke proizvoda PA po količini (ovdje 1 stavka).
-        const distribution = distributeAmountByQuantity(900, [{ id: 'A1', qty: items[0].Quantity }]);
+        const distribution = distributeAmountByQuantity(900, [{ id: 'A1', qty: items[0].Quantity || 1 }]);
         expect(distribution).toEqual([{ id: 'A1', amount: 900 }]);
         // Isti oblik upisa kao issueInvoice: Profit_Overrides.Selling_Price + Product_Value mirror.
         const invoiced = items.map(it => it.ID === 'A1'
-            ? { ...it, Profit_Overrides: { Selling_Price: 900 }, Product_Value: 900 }
+            ? { ...it, Profit_Overrides: { Selling_Price: 900, Notes: 'Završni račun R-1' }, Product_Value: 900 }
             : it);
 
-        const after = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(invoiced), workLogs: [] });
-        expect(after.revenue).toBe(1400); // 900 (fakturisano) + 500 (nepromijenjeno)
+        const after = finOf(invoiced);
+        expect(after.revenue).toBe(1400); // 900 (fakturisano) + 500 (ponuda)
         expect(after.material).toBe(250); // materijal se ne mijenja izdavanjem
         expect(after.profit).toBe(1150);
+        expect(after.products.find(p => p.productId === 'PA')?.revenueSource).toBe('racun');
     });
 
-    test('storno: brisanje override-a + restauracija Product_Value iz ponude (Selling_Price × qty) vraća profit na pretfakturisano stanje', () => {
+    test('storno: brisanje override-a vraća prihod na prihvaćenu ponudu', () => {
         const items = baseItems();
-        const invoiced = items.map(it => it.ID === 'A1'
-            ? { ...it, Profit_Overrides: { Selling_Price: 900 }, Product_Value: 900 }
+        const restored = items.map(it => it.ID === 'A1'
+            ? { ...it, Profit_Overrides: {}, Product_Value: offerSellingPerUnitPA * (it.Quantity || 1) }
             : it);
-
-        // cancelInvoice: Profit_Overrides:{} (brisanje) + Product_Value = offerSellingPerUnit × qty (EKSPLICITNO, ne backfill).
-        const restored = invoiced.map(it => it.ID === 'A1'
-            ? { ...it, Profit_Overrides: {}, Product_Value: offerSellingPerUnitPA * it.Quantity }
-            : it);
-
-        const afterCancel = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(restored), workLogs: [] });
-        const before = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(items), workLogs: [] });
+        const afterCancel = finOf(restored);
+        const before = finOf(items);
         expect(afterCancel.revenue).toBe(before.revenue); // 1300 — potpuno vraćeno
         expect(afterCancel.profit).toBe(before.profit);
     });
 
-    test('proizvod podijeljen na 2 stavke (2 naloga): distributeAmountByQuantity + projectProfitBreakdown daju Σ == fakturisani total', () => {
+    test('proizvod podijeljen na 2 stavke: distributeAmountByQuantity + projectFinance daju Σ == fakturisani total', () => {
         // PA podijeljen 2+1 komada kroz dva proizvodna naloga.
-        const split = [
-            { ID: 'S1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2 },
-            { ID: 'S2', Project_ID: 'P1', Product_ID: 'PA', Material_Cost: 100, Quantity: 1, Product_Value: 400 },
+        const split: FinItem[] = [
+            { ID: 'S1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2, Status: 'Završeno' },
+            { ID: 'S2', Project_ID: 'P1', Product_ID: 'PA', Material_Cost: 100, Quantity: 1, Product_Value: 400, Status: 'Završeno' },
         ];
         const distribution = distributeAmountByQuantity(1500, [
-            { id: 'S1', qty: split[0].Quantity },
-            { id: 'S2', qty: split[1].Quantity },
+            { id: 'S1', qty: split[0].Quantity || 1 },
+            { id: 'S2', qty: split[1].Quantity || 1 },
         ]);
         // Σ raspodjele == fakturisani total, bez drifta
         expect(distribution.reduce((s, d) => s + d.amount, 0)).toBe(1500);
 
         const invoicedSplit = split.map(it => {
             const d = distribution.find(x => x.id === it.ID)!;
-            return { ...it, Profit_Overrides: { Selling_Price: d.amount }, Product_Value: d.amount };
+            return { ...it, Profit_Overrides: { Selling_Price: d.amount, Notes: 'Završni račun R-2' }, Product_Value: d.amount };
         });
-        const wo = [{ Work_Order_ID: 'WOA', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: invoicedSplit }];
-        const result = projectProfitBreakdown({ projectId: 'P1', workOrders: wo, workLogs: [] });
-        expect(result.revenue).toBe(1500);
+        const result = finOf(invoicedSplit);
+        expect(result.products.find(p => p.productId === 'PA')?.revenue).toBe(1500);
     });
 });
 
@@ -502,7 +512,7 @@ describe('Scenarij — Završni račun mijenja i vraća profit projekta (issueIn
 // SCENARIJ — Povezani "razni poslovi": rad se preusmjerava na proizvod i ULAZI
 // u njegov profit projekta. Mirror onoga što bookWorkerDayItems/saveWorkOrderDayBooking
 // rade pri upisu (resolveLaborCostTarget → log na povezanu stavku), pa se provjeri
-// da projectProfitBreakdown (stvarna funkcija) taj rad uračuna u trošak proizvoda.
+// da lib/projectFinance (stvarna funkcija profita) taj rad uračuna u trošak proizvoda.
 // ════════════════════════════════════════════════════════════════════════════
 describe('Scenarij — povezani razni posao uračunava rad u trošak proizvoda', () => {
     // Proizvod P1 u proizvodnom nalogu (projekat PRJ), prihod 1000, materijal 0 (jednostavno).
@@ -522,27 +532,35 @@ describe('Scenarij — povezani razni posao uračunava rad u trošak proizvoda',
         expect(retargetedLog.Work_Order_Item_ID).toBe('P1');
     });
 
-    test('projectProfitBreakdown uračuna preusmjereni rad u trošak proizvoda (profit = 1000 − 130)', () => {
+    // Proizvod je završen (profit se računa za završene); bez ponude → cijena s naloga (1000).
+    const finished = { ...product, Status: 'Završeno' };
+    const finOf = (workOrders: { Work_Order_ID: string; Status: string; Work_Order_Type: string; items: FinItem[] }[], logs: { Work_Order_Item_ID: string; Daily_Rate: number }[]) =>
+        computeProjectFinance({
+            projectId: 'PRJ', products: [], basis: buildFinanceBasis([], []),
+            workOrders, labor: buildLaborIndex(logs, workOrders), logs,
+        });
+
+    test('projectFinance uračuna preusmjereni rad u trošak proizvoda (profit = 1000 − 130)', () => {
         const workOrders = [
-            { Work_Order_ID: 'WO-prod', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: [product] },
+            { Work_Order_ID: 'WO-prod', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items: [finished] },
             // Zadaci-nalog: custom stavka ostaje, ali njen rad je fizički na P1 (nije ovdje) →
             // Zadaci-nalog ne nosi trošak; proizvod ga nosi.
-            { Work_Order_ID: 'WO-zad', Status: 'U toku' as const, Work_Order_Type: 'Zadaci' as unknown as 'Proizvodnja', items: [customTask] },
+            { Work_Order_ID: 'WO-zad', Status: 'U toku', Work_Order_Type: 'Zadaci', items: [customTask] },
         ];
-        const r = projectProfitBreakdown({ projectId: 'PRJ', workOrders, workLogs: [retargetedLog] });
+        const r = finOf(workOrders, [retargetedLog]);
         expect(r.labor).toBe(130);
         expect(r.revenue).toBe(1000);
         expect(r.profit).toBe(870);
     });
 
     test('bez preusmjeravanja (da log ostane na custom stavci) rad bi se IZGUBIO iz profita projekta', () => {
-        // Kontra-primjer: log na custom stavci (Project_ID prazan) → projectProfitBreakdown ga preskače.
+        // Kontra-primjer: log na custom stavci (Project_ID prazan) → profit projekta ga ne vidi.
         const lostLog = { Work_Order_Item_ID: 'C1', Daily_Rate: 130 };
         const workOrders = [
-            { Work_Order_ID: 'WO-prod', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: [product] },
-            { Work_Order_ID: 'WO-zad', Status: 'U toku' as const, Work_Order_Type: 'Zadaci' as unknown as 'Proizvodnja', items: [customTask] },
+            { Work_Order_ID: 'WO-prod', Status: 'Završeno', Work_Order_Type: 'Proizvodnja', items: [finished] },
+            { Work_Order_ID: 'WO-zad', Status: 'U toku', Work_Order_Type: 'Zadaci', items: [customTask] },
         ];
-        const r = projectProfitBreakdown({ projectId: 'PRJ', workOrders, workLogs: [lostLog] });
+        const r = finOf(workOrders, [lostLog]);
         expect(r.labor).toBe(0);            // rad se izgubio — upravo problem koji preusmjeravanje rješava
         expect(r.profit).toBe(1000);
     });

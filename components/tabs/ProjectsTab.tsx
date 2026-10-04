@@ -16,11 +16,7 @@ import {
     addAluDoorMaterialToProduct,
     updateAluDoorMaterial,
     saveProfitOverrides,
-    buildBasisReview,
-    applyBasisReview
 } from '@/lib/services';
-import type { ProjectBasisReview, BasisReviewItem } from '@/lib/profitBasis';
-import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
 import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
@@ -32,7 +28,7 @@ import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
 import { productStage, sortProjectProducts } from '@/lib/projectProductOrder';
 import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER, countActiveWorkOrdersByProject, compareProjectsByActivity } from '@/lib/utils';
-import { projectProfitBreakdown } from '@/lib/projectProfit';
+import { useProjectsFinance } from '@/lib/useProjectsFinance';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import ProjectOverviewScreen from '@/components/ui/ProjectOverviewScreen';
@@ -152,8 +148,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         : null;
     const cutlistProduct = cutlistProject?.products?.find(p => p.Product_ID === cutlistProductId) || null;
 
-    // Gejt „utiče li na profit?" nakon izmjene materijala u kartici proizvoda.
-    const [basisReview, setBasisReview] = useState<{ review: ProjectBasisReview[]; label: string } | null>(null);
 
 
     // Form states
@@ -483,44 +477,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
     }
 
-    // ── GEJT profita za izmjene materijala u kartici proizvoda ──────────────
-    // Δ osnovice PO KOMADU = Δ Total_Price materijala (add=+TP, del=−TP, edit=novi−stari).
-    // UI zna deltu tačno iz same izmjene → ne treba čekati recalc (ne-racy).
-
-    /** Nađi ProductMaterial + njegov proizvod kroz sve projekte (za brisanje/edit). */
-    function locateProductMaterial(materialId: string): { productId: string; material: ProductMaterial } | null {
-        for (const p of projects) {
-            for (const pr of (p.products || [])) {
-                const m = (pr.materials || []).find(mm => mm.ID === materialId);
-                if (m) return { productId: pr.Product_ID, material: m };
-            }
-        }
-        return null;
-    }
-
-    /** Izračunaj pregled i otvori dijalog ako izmjena dira osnovicu proizvodnih naloga. */
-    async function reviewProductBasis(productId: string, label: string, perUnitDelta: number) {
-        if (!organizationId || !productId || !perUnitDelta) return;
-        try {
-            const review = await buildBasisReview(organizationId, [productId], new Map([[productId, perUnitDelta]]));
-            if (review.length > 0) setBasisReview({ review, label });
-        } catch (e) {
-            console.warn('reviewProductBasis failed (non-critical):', e);
-        }
-    }
-
-    async function handleApplyBasisReview(approvedItems: BasisReviewItem[]) {
-        if (!organizationId) return;
-        const res = await applyBasisReview(approvedItems, organizationId);
-        if (res.success) {
-            showToast(approvedItems.length > 0 ? 'Profit ažuriran' : 'Profit nepromijenjen', 'success');
-            onRefresh('workOrders', 'projects');
-        } else {
-            showToast(res.message, 'error');
-        }
-        setBasisReview(null);
-    }
-
     // Batch add materials from the new multi-select modal
     async function handleAddMaterials(items: SelectedMaterial[]) {
         const targetProductId = addingMaterial?.productId;
@@ -531,7 +487,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         let successCount = 0;
         let errorCount = 0;
-        let addedDelta = 0;   // Σ Total_Price uspješno dodanih (za gejt profita)
 
         for (const item of items) {
             const result = await addMaterialToProduct({
@@ -546,7 +501,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
             if (result.success) {
                 successCount++;
-                addedDelta += (item.quantity || 0) * (item.price || 0);
             } else {
                 errorCount++;
             }
@@ -556,7 +510,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast(`Dodano ${successCount} materijal${successCount === 1 ? '' : 'a'}`, 'success');
             setMaterialModal(false);
             onRefresh('projects');
-            await reviewProductBasis(targetProductId, successCount === 1 ? items[0].materialName : `${successCount} materijala`, addedDelta);
         }
         if (errorCount > 0) {
             showToast(`Greška pri dodavanju ${errorCount} materijala`, 'error');
@@ -610,7 +563,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast(result.message, 'success');
             setMaterialModal(false);
             onRefresh('projects');
-            await reviewProductBasis(targetProductId, targetMaterialObj.Name, (targetQuantity || 0) * (effectivePrice || 0));
         } else {
             showToast(result.message, 'error');
         }
@@ -736,14 +688,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        // Uhvati trošak PRIJE brisanja (za gejt: Δ = −Total_Price).
-        const loc = locateProductMaterial(materialId);
-
         const result = await deleteProductMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('projects');
-            if (loc) await reviewProductBasis(loc.productId, loc.material.Material_Name || 'materijal', -(loc.material.Total_Price || 0));
         } else {
             showToast(result.message, 'error');
         }
@@ -770,13 +718,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 showToast('Organization ID is required', 'error');
                 return;
             }
-            const loc = locateProductMaterial(id);   // stari trošak prije izmjene
             const result = await updateProductMaterial(id, updates, organizationId);
             if (result.success) {
                 showToast('Materijal uspješno ažuriran', 'success');
                 setEditMaterialModal(false);
                 onRefresh('projects');
-                if (loc) await reviewProductBasis(loc.productId, loc.material.Material_Name || 'materijal', (updates.Total_Price || 0) - (loc.material.Total_Price || 0));
             } else {
                 showToast(result.message, 'error');
             }
@@ -805,17 +751,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             updatePayload.Supplier = editMaterialNewSupplier;
         }
 
-        const oldTotalPrice = editingMaterial.Total_Price || 0;
-        const newTotalPrice = editMaterialQty * editMaterialPrice;
-        const editedProductId = editingMaterial.Product_ID;
-        const editedName = editingMaterial.Material_Name;
         const result = await updateProductMaterial(editingMaterial.ID, updatePayload as any, organizationId);
 
         if (result.success) {
             showToast('Materijal uspješno ažuriran', 'success');
             setEditMaterialModal(false);
             onRefresh('projects');
-            await reviewProductBasis(editedProductId, editedName || 'materijal', newTotalPrice - oldTotalPrice);
         } else {
             showToast(result.message, 'error');
         }
@@ -1039,6 +980,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     const isMobile = useIsMobile();
+
+    // Finansije svih projekata (jedan proračun — lib/projectFinance.ts), za čipove na karticama.
+    const projectsFinance = useProjectsFinance(projects, offers, workOrders, workLogs);
 
     if (isMobile) {
         return (
@@ -1609,27 +1553,23 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                             {expandedStatusGroups.has(group.status) && group.projects.map(project => {
                                 const isExpanded = expandedProjectId === project.Project_ID;
                                 const totalProducts = project.products?.length || 0;
-                                const totalMaterialCost = (project.products || []).reduce((sum, p) => {
-                                    return sum + (p.materials || []).reduce((ms, m) => ms + (m.Total_Price || 0), 0);
-                                }, 0);
                                 // Status → ima li bar jedan materijal → abeceda (isto na telefonu).
                                 const sortedProducts = sortProjectProducts(project.products, workOrders);
                                 const previewProducts = sortedProducts.slice(0, 3);
                                 const moreCount = totalProducts - previewProducts.length;
 
-                                // Profit projekta = Σ profita svih njegovih naloga (isti izvor/formula kao
-                                // WorkOrderExpandedDetail — vidi lib/projectProfit.ts). Bez preskoka stavki
-                                // bez cijene: rad uložen u nedefinisan proizvod je vidljiv gubitak.
-                                const projectFin = projectProfitBreakdown({
-                                    projectId: project.Project_ID,
-                                    workOrders,
-                                    workLogs,
-                                });
-                                const projectProfit = Math.round(projectFin.profit);
-                                const projectMargin = Math.round(projectFin.margin);
-                                const totalServicesCost = projectFin.services;
-                                const hasAnyProfit = projectFin.itemCount > 0;
-                                const projectProfitIncomplete = projectFin.missingPrice;
+                                // Finansije projekta — JEDAN proračun za cijelu aplikaciju (lib/projectFinance.ts):
+                                // profit = prihvaćena ponuda − materijal (sastavnica + dodaci) − rad, za ZAVRŠENE
+                                // proizvode. Isti broj prikazuju pregled projekta i analitika.
+                                const projectFin = projectsFinance.byProject.get(project.Project_ID);
+                                const contracted = projectFin?.contracted || 0;
+                                const finishedCount = projectFin?.finishedCount || 0;
+                                const productCount = projectFin?.productCount || totalProducts;
+                                const hasRealized = !!projectFin && (finishedCount > 0 || projectFin.razni.count > 0);
+                                const projectProfit = Math.round(projectFin?.profit || 0);
+                                const projectMargin = Math.round(projectFin?.margin || 0);
+                                const flagged = projectFin?.flagged || 0;
+                                const inProgress = projectFin?.inProgress;
 
                                 return (
                                     <div key={project.Project_ID} className={`project-card ${getBorderClass(project.Status)}`}>
@@ -1654,24 +1594,33 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         <span className="material-icons-round">inventory_2</span>
                                                         {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
                                                     </span>
-                                                    {(totalMaterialCost + totalServicesCost) > 0 && (
-                                                        <span className="info-chip chip-cost">
-                                                            <span className="material-icons-round">payments</span>
-                                                            {(totalMaterialCost + totalServicesCost).toLocaleString('hr-HR')} KM
+                                                    {contracted > 0 && (
+                                                        <span className="info-chip chip-cost" title="Zbir prihvaćenih ponuda projekta (bez PDV-a)">
+                                                            <span className="material-icons-round">request_quote</span>
+                                                            Ugovoreno {Math.round(contracted).toLocaleString('hr-HR')} KM
                                                         </span>
                                                     )}
-                                                    {hasAnyProfit && (
+                                                    {projectFin && (hasRealized || (inProgress?.count || 0) > 0) && (
                                                         <span className={`info-chip ${
+                                                            !hasRealized ? '' :
                                                             projectMargin >= 30 ? 'chip-profit-good' :
                                                             projectMargin >= 15 ? 'chip-profit-mid' : 'chip-profit-bad'
                                                         }`}
-                                                            title={`Profit: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%)${projectProfitIncomplete ? ' — neki proizvodi nemaju cijenu, profit je nepotpun' : ''}`}
+                                                            title={[
+                                                                hasRealized
+                                                                    ? `Profit završenih proizvoda: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%) = prihod iz ponude ${Math.round(projectFin.revenue).toLocaleString('hr-HR')} − materijal ${Math.round(projectFin.material).toLocaleString('hr-HR')} − rad ${Math.round(projectFin.labor).toLocaleString('hr-HR')} KM`
+                                                                    : 'Još nijedan proizvod nije završen — profit se računa kad je proizvod gotov',
+                                                                inProgress && inProgress.count > 0 ? `U izradi: ${inProgress.count} proizvoda, uloženo do sada ${Math.round(inProgress.material + inProgress.labor).toLocaleString('hr-HR')} KM (nije u profitu)` : '',
+                                                                flagged > 0 ? `Za provjeru: ${flagged} proizvoda (npr. nisu u prihvaćenoj ponudi) — vidi Analitiku` : '',
+                                                            ].filter(Boolean).join('\n')}
                                                         >
                                                             <span className="material-icons-round">
-                                                                {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                                {!hasRealized ? 'hourglass_top' : projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
                                                             </span>
-                                                            {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin}%)
-                                                            {projectProfitIncomplete && (
+                                                            {hasRealized
+                                                                ? `${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%) · ${finishedCount}/${productCount}`
+                                                                : `0/${productCount} završeno`}
+                                                            {flagged > 0 && (
                                                                 <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '2px' }}>warning_amber</span>
                                                             )}
                                                         </span>
@@ -3082,14 +3031,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 showToast={showToast}
             />
 
-            {basisReview && (
-                <ProfitBasisReviewModal
-                    review={basisReview.review}
-                    changeLabel={basisReview.label}
-                    onClose={() => setBasisReview(null)}
-                    onApply={handleApplyBasisReview}
-                />
-            )}
         </div >
     );
 }

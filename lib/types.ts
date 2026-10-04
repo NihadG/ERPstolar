@@ -522,11 +522,11 @@ export const MONEY_KINDS: ChangeRequestKind[] = [
 ];
 
 /**
- * Vrste koje se moraju primijeniti na DESKTOPU (ne na serveru): mijenjaju
- * materijale na proizvodu koji je već na nalogu, pa moraju proći kroz gejt
- * zamrznute osnovice profita (lib/profitBasis.ts). Ostale novčane vrste
- * (zatvaranje proizvoda/naloga) samo zamrzavaju rad — njih server smije
- * primijeniti (isto što kontrolor već radi kroz completeItem).
+ * Vrste koje se primjenjuju na DESKTOPU (ne na serveru): mijenjaju materijale
+ * proizvoda koji je već na nalogu kroz desktop funkcije sastavnice (živi trošak
+ * materijala ulazi direktno u profit, lib/projectFinance.ts). Ostale novčane
+ * vrste (zatvaranje proizvoda/naloga) server smije primijeniti (isto što
+ * kontrolor već radi kroz completeItem).
  */
 export const DESKTOP_APPLY_KINDS: ChangeRequestKind[] = ['material_usage', 'material_order'];
 
@@ -964,6 +964,13 @@ export interface WorkLog {
     Presence?: number;               // Prisutnost radnika za TAJ DAN: 1 = cijeli dan, 0.5 = pola dana (isto za sve njegove proizvode tog dana)
     Day_Fraction?: number;           // Težina ovog proizvoda u danu = Presence / N (npr. 1 proizvod/cijeli dan = 1, 6 proizvoda = 0.1667)
     Booking_Source?: 'attendance' | 'manual';  // 'manual' = unešeno kroz Dnevnu knjigu rada
+
+    // OBRISAN NALOG — dnevnica je NULIRANA (Daily_Rate = 0, Day_Fraction = 0) i ne ulazi
+    // ni u trošak ni u zaradu radnika. Zapis ostaje radi traga; Voided_* čuvaju stari iznos.
+    Work_Order_Deleted?: boolean;
+    Voided_At?: string;
+    Voided_Daily_Rate?: number;
+    Voided_Day_Fraction?: number;
 
     // Status i metadata
     Is_From_Attendance: boolean;     // Da li je automatski kreirano iz sihtarice

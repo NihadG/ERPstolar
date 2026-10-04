@@ -54,7 +54,7 @@ import { orderItemAllocations } from './orderMaterialAllocation';
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders } from './services/shared/dataAssembler';
 import { naturalCompare } from './naturalCompare';
 import { itemMaterialTotal } from './materialCost';
-import { groupBasisReviewByProject, type ItemMaterialChange, type ProjectBasisReview } from './profitBasis';
+import { voidedWorkLogPatch } from './projectFinance';
 import { orgConstraint } from './orgScope';
 import { workOrderDisplayName } from './utils';
 import {
@@ -861,7 +861,7 @@ export async function getMaterialsCatalog(organizationId: string): Promise<Mater
     return snapshot.docs.map(doc => ({ ...doc.data() } as Material));
 }
 
-export async function saveMaterial(data: Partial<Material>, organizationId: string): Promise<{ success: boolean; data?: { Material_ID: string }; message: string; basisReview?: ProjectBasisReview[] }> {
+export async function saveMaterial(data: Partial<Material>, organizationId: string): Promise<{ success: boolean; data?: { Material_ID: string }; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -886,15 +886,13 @@ export async function saveMaterial(data: Partial<Material>, organizationId: stri
             }
 
             // REACTIVE: Propagate price/name/supplier changes to ALL ProductMaterial records.
-            // Živa product cijena se ažurira odmah; osnovica profita proizvodnih naloga se NE dira —
-            // umjesto toga se vrati pregled po projektu (gejt „utiče li na profit?").
-            let basisReview: ProjectBasisReview[] = [];
+            // Profit čita živu sastavnicu (lib/projectFinance.ts) → nova cijena odmah ulazi u trošak.
             try {
-                basisReview = await propagateMaterialPriceChange(data.Material_ID!, data, organizationId);
+                await propagateMaterialPriceChange(data.Material_ID!, data, organizationId);
             } catch (propErr) {
                 console.warn('Material propagation warning (non-critical):', propErr);
             }
-            return { success: true, data: { Material_ID: data.Material_ID! }, message: 'Materijal ažuriran', basisReview };
+            return { success: true, data: { Material_ID: data.Material_ID! }, message: 'Materijal ažuriran' };
         }
 
         return { success: true, data: { Material_ID: data.Material_ID! }, message: 'Materijal kreiran' };
@@ -919,7 +917,7 @@ async function propagateMaterialPriceChange(
     materialId: string,
     updatedData: Partial<Material>,
     organizationId: string
-): Promise<ProjectBasisReview[]> {
+): Promise<void> {
     const firestore = getDb();
 
     // 1. Find ALL ProductMaterial records referencing this material
@@ -930,12 +928,9 @@ async function propagateMaterialPriceChange(
     );
     const pmSnap = await getDocs(pmQuery);
 
-    if (pmSnap.empty) return []; // No products use this material
+    if (pmSnap.empty) return; // No products use this material
 
     const affectedProductIds = new Set<string>();
-    // Δ troška materijala PO KOMADU po proizvodu (Σ Δ Total_Price ove izmjene) —
-    // sirovina za gejtovani pregled: koliko OVA izmjena mijenja osnovicu profita.
-    const productDelta = new Map<string, number>();
     let updatedCount = 0;
 
     for (const pmDoc of pmSnap.docs) {
@@ -948,11 +943,8 @@ async function propagateMaterialPriceChange(
         const pmUpdate: Record<string, unknown> = {};
 
         if (updatedData.Default_Unit_Price !== undefined && pm.Unit_Price !== updatedData.Default_Unit_Price) {
-            const oldTotal = (pm.Quantity || 0) * (pm.Unit_Price || 0);
-            const newTotal = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
             pmUpdate.Unit_Price = updatedData.Default_Unit_Price;
-            pmUpdate.Total_Price = newTotal;                       // Total_Price = Quantity × new Unit_Price
-            if (pm.Product_ID) productDelta.set(pm.Product_ID, (productDelta.get(pm.Product_ID) || 0) + (newTotal - oldTotal));
+            pmUpdate.Total_Price = (pm.Quantity || 0) * updatedData.Default_Unit_Price;   // Quantity × nova cijena
         }
 
         if (updatedData.Name !== undefined && pm.Material_Name !== updatedData.Name) {
@@ -973,12 +965,11 @@ async function propagateMaterialPriceChange(
         }
     }
 
-    if (updatedCount === 0) return []; // Nothing changed
+    if (updatedCount === 0) return; // Nothing changed
 
     console.log(`[MATERIAL PROPAGATION] Updated ${updatedCount} ProductMaterial records for Material ${materialId}`);
 
-    // 2. Recalculate LIVE product Material_Cost (kartica proizvoda / zastarjelost ponude) —
-    //    ovo je ŽIVA istina; osnovica naloga je odvojena i ostaje frozen (gejt).
+    // 2. Recalculate LIVE product Material_Cost (kartica proizvoda / zastarjelost ponude).
     for (const productId of Array.from(affectedProductIds)) {
         const materials = await getProductMaterials(productId, organizationId);
         const totalCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
@@ -993,121 +984,8 @@ async function propagateMaterialPriceChange(
             await updateDoc(productSnap.docs[0].ref, { Material_Cost: totalCost });
         }
     }
-
-    // 3. GEJT: umjesto tihog recalca naloga, izračunaj Δ profita po projektu za
-    //    proizvodne stavke i vrati pregled. Osnovica se NE dira dok korisnik ne odobri.
-    const changedProducts = Array.from(productDelta.entries()).filter(([, d]) => d !== 0).map(([pid]) => pid);
-    return buildBasisReview(organizationId, changedProducts, productDelta);
 }
 
-/**
- * Primijeni ODOBRENE delte iz pregleda: postavi novu osnovicu materijala PO KOMADU na
- * stavke i osvježi agregate naloga (skipMaterialRefresh — koristi upravo postavljenu
- * osnovicu, ne živo). Neuključeni projekti se ne diraju (osnovica ostaje snapshot).
- */
-export async function applyBasisReview(
-    items: { itemId: string; workOrderId: string; newBasisPerUnit: number }[],
-    organizationId: string,
-): Promise<{ success: boolean; message: string }> {
-    if (!organizationId) return { success: false, message: 'Organization ID is required' };
-    if (!items || items.length === 0) return { success: true, message: 'Ništa za primijeniti' };
-
-    try {
-        const firestore = getDb();
-        const byId = new Map(items.map(i => [i.itemId, i]));
-        const ids = Array.from(byId.keys());
-        const woIds = new Set<string>();
-
-        for (let i = 0; i < ids.length; i += 30) {
-            const chunk = ids.slice(i, i + 30);
-            const snap = await getDocs(query(
-                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                where('ID', 'in', chunk),
-                where('Organization_ID', '==', organizationId),
-            ));
-            if (snap.empty) continue;
-            const batch = writeBatch(firestore);
-            snap.docs.forEach(d => {
-                const upd = byId.get((d.data() as { ID: string }).ID);
-                if (upd) {
-                    batch.update(d.ref, { Material_Cost: upd.newBasisPerUnit });
-                    if (upd.workOrderId) woIds.add(upd.workOrderId);
-                }
-            });
-            await batch.commit();
-        }
-
-        if (woIds.size > 0) {
-            const { recalculateWorkOrder } = await import('./attendance');
-            await Promise.all(Array.from(woIds).map(woId => recalculateWorkOrder(woId, { skipMaterialRefresh: true })));
-        }
-        return { success: true, message: 'Osnovica profita ažurirana' };
-    } catch (error) {
-        console.error('applyBasisReview error:', error);
-        return { success: false, message: 'Greška pri ažuriranju osnovice profita' };
-    }
-}
-
-/**
- * Sastavi gejt-pregled: za date proizvode (s Δ troška po komadu) skupi proizvodne
- * stavke naloga i grupiši po projektu (lib/profitBasis). Montaža/otkazano/zamrznuto
- * se izostavlja. Dijeli ga i katalog (propagate) i kartica proizvoda (recalculateProductCost).
- */
-export async function buildBasisReview(
-    organizationId: string,
-    productIds: string[],
-    productDelta: Map<string, number>,
-): Promise<ProjectBasisReview[]> {
-    if (productIds.length === 0) return [];
-    const firestore = getDb();
-
-    // Skupi stavke naloga za pogođene proizvode (chunked 'in', max 30 po upitu).
-    const items: any[] = [];
-    for (let i = 0; i < productIds.length; i += 30) {
-        const chunk = productIds.slice(i, i + 30);
-        const snap = await getDocs(query(
-            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-            where('Product_ID', 'in', chunk),
-            where('Organization_ID', '==', organizationId),
-        ));
-        snap.docs.forEach(d => items.push(d.data()));
-    }
-    if (items.length === 0) return [];
-
-    // Statusi/tip naloga (za montaža/otkazano filter).
-    const woIds = Array.from(new Set(items.map(it => it.Work_Order_ID).filter(Boolean)));
-    const woById = new Map<string, { Status?: string; Work_Order_Type?: string }>();
-    for (let i = 0; i < woIds.length; i += 30) {
-        const chunk = woIds.slice(i, i + 30);
-        const snap = await getDocs(query(
-            collection(firestore, COLLECTIONS.WORK_ORDERS),
-            where('Work_Order_ID', 'in', chunk),
-            where('Organization_ID', '==', organizationId),
-        ));
-        snap.docs.forEach(d => { const w = d.data(); woById.set(w.Work_Order_ID, { Status: w.Status, Work_Order_Type: w.Work_Order_Type }); });
-    }
-
-    const changes: ItemMaterialChange[] = items.map(it => {
-        const wo = woById.get(it.Work_Order_ID);
-        return {
-            itemId: it.ID,
-            workOrderId: it.Work_Order_ID,
-            workOrderStatus: wo?.Status,
-            isMontaza: wo?.Work_Order_Type === 'Montaža',
-            projectId: it.Project_ID || '',
-            projectName: it.Project_Name || '—',
-            productName: it.Product_Name,
-            quantity: it.Quantity || 1,
-            basisPerUnit: it.Material_Cost || 0,
-            perUnitDelta: productDelta.get(it.Product_ID) || 0,
-            Status: it.Status,
-            Completed_At: it.Completed_At,
-            Material_Cost_Source: it.Material_Cost_Source,
-        };
-    });
-
-    return groupBasisReviewByProject(changes);
-}
 
 export async function getSuppliers(organizationId: string): Promise<Supplier[]> {
     if (!organizationId) return [];
@@ -3319,8 +3197,10 @@ export async function deleteWorkOrder(
             }
         }
 
-        // S3.1: Flag orphaned work logs (preserve for cost history)
-        // FIX #16: Also collect affected workers to resplit their rates on remaining WOs
+        // DNEVNICE OBRISANOG NALOGA SE NULIRAJU (odluka vlasnika 04.10.2026): iznos i udio dana
+        // idu na 0, pa ih ne broje ni profit, ni analitika, ni obračun plata. Zapis ostaje radi
+        // traga (Voided_* = stari iznos). Ranije su se samo označavale, a zadržavale iznos —
+        // radnik bi za isti dan bio plaćen dvaput (preostali nalozi su dobijali punu dnevnicu).
         const workLogsQ = query(
             collection(db, COLLECTIONS.WORK_LOGS),
             where('Work_Order_ID', '==', workOrderId),
@@ -3328,16 +3208,20 @@ export async function deleteWorkOrder(
         );
         const workLogsSnap = await getDocs(workLogsQ);
         const affectedWorkerDates = new Map<string, Set<string>>(); // Worker_ID -> Set<Date>
-        for (const wlDoc of workLogsSnap.docs) {
-            const wlData = wlDoc.data();
-            await updateDoc(wlDoc.ref, { Work_Order_Deleted: true });
-            // Track unique worker+date pairs for resplit
-            if (wlData.Worker_ID && wlData.Date) {
-                if (!affectedWorkerDates.has(wlData.Worker_ID)) {
-                    affectedWorkerDates.set(wlData.Worker_ID, new Set());
+        const voidedAt = new Date().toISOString();
+        for (let i = 0; i < workLogsSnap.docs.length; i += 450) {
+            const voidBatch = writeBatch(db);
+            for (const wlDoc of workLogsSnap.docs.slice(i, i + 450)) {
+                const wlData = wlDoc.data();
+                voidBatch.update(wlDoc.ref, voidedWorkLogPatch(wlData, voidedAt));
+                if (wlData.Worker_ID && wlData.Date) {
+                    if (!affectedWorkerDates.has(wlData.Worker_ID)) {
+                        affectedWorkerDates.set(wlData.Worker_ID, new Set());
+                    }
+                    affectedWorkerDates.get(wlData.Worker_ID)!.add(wlData.Date);
                 }
-                affectedWorkerDates.get(wlData.Worker_ID)!.add(wlData.Date);
             }
+            await voidBatch.commit();
         }
 
         // Delete items
@@ -3357,30 +3241,20 @@ export async function deleteWorkOrder(
 
         await batch.commit();
 
-        // FIX #16: Resplit daily rates for affected workers on remaining WOs
-        // When a WO is deleted, workers' split rates on other WOs become stale
-        // (e.g., was 80/3=26.67, after deleting one WO should be 80/2=40)
+        // Preostale dnevnice radnika za te dane se ponovo dijele KANONSKOM podjelom
+        // (renormalizeWorkerDay: prisustvo, podjela po nalogu pa po proizvodu; nulirani se
+        // preskaču). Radnik koji je tog dana radio i na drugom nalogu zadržava punu dnevnicu;
+        // ako je radio SAMO na obrisanom nalogu, dan ostaje bez dnevnice („prisutan bez
+        // dnevnice" u analitici) — vlasnik ga može proknjižiti na drugi nalog.
         if (affectedWorkerDates.size > 0) {
             try {
-                const { resplitWorkerDailyRate, recalculateWorkOrder: recalcWO } = await import('./attendance');
+                const { renormalizeWorkerDay, recalculateWorkOrder: recalcWO } = await import('./attendance');
                 const recalcWoIds = new Set<string>();
 
                 for (const [workerId, dates] of Array.from(affectedWorkerDates.entries())) {
                     for (const date of Array.from(dates)) {
-                        await resplitWorkerDailyRate(workerId, date, organizationId);
-
-                        // Find remaining WOs that have work logs for this worker+date
-                        const remainingLogsQ = query(
-                            collection(db, COLLECTIONS.WORK_LOGS),
-                            where('Worker_ID', '==', workerId),
-                            where('Date', '==', date),
-                            where('Organization_ID', '==', organizationId)
-                        );
-                        const remainingSnap = await getDocs(remainingLogsQ);
-                        remainingSnap.docs.forEach(d => {
-                            const woId = d.data().Work_Order_ID;
-                            if (woId && woId !== workOrderId) recalcWoIds.add(woId);
-                        });
+                        const affected = await renormalizeWorkerDay(workerId, date, organizationId);
+                        affected.forEach(woId => { if (woId && woId !== workOrderId) recalcWoIds.add(woId); });
                     }
                 }
 
@@ -5641,7 +5515,8 @@ export async function getWorkLogsForItem(workOrderItemId: string, organizationId
             where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => doc.data() as WorkLog);
+        // Dnevnice obrisanih naloga su nulirane (Work_Order_Deleted) — ne prikazuju se i ne broje.
+        return snapshot.docs.map(doc => doc.data() as WorkLog).filter(l => l.Work_Order_Deleted !== true);
     } catch (error) {
         console.error('getWorkLogsForItem error:', error);
         return [];
@@ -5661,7 +5536,8 @@ export async function getWorkLogs(organizationId: string): Promise<WorkLog[]> {
             where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => doc.data() as WorkLog);
+        // Dnevnice obrisanih naloga su nulirane (Work_Order_Deleted) — ne prikazuju se i ne broje.
+        return snapshot.docs.map(doc => doc.data() as WorkLog).filter(l => l.Work_Order_Deleted !== true);
     } catch (error) {
         console.error('getWorkLogs error:', error);
         return [];
@@ -5686,7 +5562,8 @@ export async function getWorkLogsSince(organizationId: string, sinceDate: string
             where('Date', '>=', sinceDate)
         );
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => doc.data() as WorkLog);
+        // Dnevnice obrisanih naloga su nulirane (Work_Order_Deleted) — ne prikazuju se i ne broje.
+        return snapshot.docs.map(doc => doc.data() as WorkLog).filter(l => l.Work_Order_Deleted !== true);
     } catch (error) {
         console.error('getWorkLogsSince error:', error);
         // Fallback na puno učitavanje — bolje sporije nego prazno.
@@ -5721,7 +5598,8 @@ export async function getWorkLogsForWorkOrder(workOrderId: string, organizationI
         const byId = new Map<string, WorkLog>();
         direct.docs.forEach(d => byId.set(d.id, d.data() as WorkLog));
         redirected.docs.forEach(d => byId.set(d.id, d.data() as WorkLog));
-        return Array.from(byId.values());
+        // Dnevnice obrisanih naloga su nulirane (Work_Order_Deleted) — ne prikazuju se i ne broje.
+        return Array.from(byId.values()).filter(l => l.Work_Order_Deleted !== true);
     } catch (error) {
         console.error('getWorkLogsForWorkOrder error:', error);
         return [];

@@ -19,6 +19,9 @@ import MobileTabBar, { MOBILE_TABS } from '@/components/tabs/mobile/MobileTabBar
 import { useSwipeTabs } from '@/components/tabs/mobile/useSwipe';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
 import CSVImportWizard from '@/components/CSVImportWizard';
+// Prozor eager-učitavanja dnevnica (12 mjeseci) — dijeli ga i proračun profita (stariji rad: sačuvani agregat).
+import { workLogsWindowStart } from '@/lib/projectFinance';
+import { FinanceBasisProvider } from '@/context/FinanceBasisContext';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,13 +49,6 @@ const CanvasTab = nextDynamic(() => import('@/components/canvas/CanvasTab'), { l
 const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'), { loading: TabLoading });
 // „Ja" — mobilni ekran naloga (identitet + postavke + odjava). Na desktopu je sve to u sidebaru.
 const MobileAccountView = nextDynamic(() => import('@/components/tabs/mobile/MobileAccountView'), { loading: TabLoading });
-
-/** Početak prozora eager-učitavanja dnevnica: prije 12 mjeseci (YYYY-MM-DD). */
-function workLogsWindowStart(): string {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 12);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 export default function Home() {
     const router = useRouter();
@@ -571,6 +567,8 @@ export default function Home() {
                 {/* Content — Platno je vremenska osa: dobija PUNU širinu (bez 1400px
                     kape), da graf iskoristi bočni prostor na velikom monitoru.
                     Ostali tabovi (forme, tabele) ostaju na čitkoj širini. */}
+                {/* Jedinična ekonomija proizvoda (ponuda + živa sastavnica) za detalj/rezime naloga — lib/projectFinance. */}
+                <FinanceBasisProvider projects={appState.projects} offers={appState.offers}>
                 <main className={`content-area${activeTab === 'platno' ? ' content-area--wide' : ''}`}>
                     {activeTab === 'projects' && (
                         <ProjectsTab
@@ -741,6 +739,7 @@ export default function Home() {
                     {/* „Ja" — samo telefon (glavna navigacija nema sidebar na mobitelu) */}
                     {activeTab === 'account' && <MobileAccountView />}
                 </main>
+                </FinanceBasisProvider>
             </div>
 
             {/* Donja navigacija (telefon) */}
