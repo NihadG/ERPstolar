@@ -13,19 +13,6 @@
  */
 
 /**
- * Da li je trošak materijala stavke ZAMRZNUT (završena / ikad završena stavka)
- * ili RUČNO unesen (PriceEditModal) — u oba slučaja koristi se POHRANJENA vrijednost po komadu,
- * bez svježeg preračuna iz product_materials.
- */
-export function isItemMaterialFrozen(item: {
-    Status?: string;
-    Completed_At?: string;
-    Material_Cost_Source?: string;
-}): boolean {
-    return item.Status === 'Završeno' || !!item.Completed_At || item.Material_Cost_Source === 'manual';
-}
-
-/**
  * Ukupan trošak materijala stavke = trošak PO KOMADU × količina.
  * `quantity` < 1 ili nedostaje → tretira se kao 1 komad.
  */

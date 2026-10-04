@@ -1,7 +1,8 @@
 /**
- * productivity.ts - Productivity and Profitability Calculations
+ * productivity.ts - Worker Productivity Calculations
  * 
- * Funkcije za izračun produktivnosti radnika i profitabilnosti proizvoda.
+ * Funkcije za izračun produktivnosti i zarade radnika.
+ * Profit proizvoda i projekta se računa isključivo u lib/projectFinance.ts.
  */
 
 import { db } from './firebase';
@@ -14,13 +15,10 @@ import {
 } from 'firebase/firestore';
 import type {
     WorkerProductivity,
-    ProductProfitability,
     WorkLog,
     WorkOrderItem,
     WorkerAttendance,
 } from './types';
-import { getProductMaterials } from './database';
-import { itemProfitBreakdown } from './profit';
 import { liveLogs } from './projectFinance';
 
 // ============================================
@@ -198,228 +196,6 @@ function getEmptyWorkerProductivity(workerId: string): WorkerProductivity {
         Value_Generated: 0,
         Value_Per_Day: 0,
     };
-}
-
-// ============================================
-// PRODUCT PROFITABILITY
-// ============================================
-
-/**
- * Calculate profitability for a specific work order item
- * Includes: all costs, profit, margin, workers who worked on it
- */
-export async function calculateProductProfitability(
-    workOrderItemId: string,
-    organizationId: string
-): Promise<ProductProfitability | null> {
-    if (!organizationId) return null;
-
-    try {
-        // Get the work order item
-        const itemQuery = query(
-            collection(db, 'work_order_items'),
-            where('ID', '==', workOrderItemId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const itemSnapshot = await getDocs(itemQuery);
-
-        if (itemSnapshot.empty) return null;
-
-        const item = itemSnapshot.docs[0].data() as WorkOrderItem;
-
-        // Get work logs for this item
-        const logsQuery = query(
-            collection(db, 'work_logs'),
-            where('Work_Order_Item_ID', '==', workOrderItemId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const logsSnapshot = await getDocs(logsQuery);
-        const workLogs = logsSnapshot.docs.map(doc => doc.data() as WorkLog);
-
-        // Calculate worker breakdown — PROFIT-07 FIX: use unique dates for day counting
-        const workerMap = new Map<string, { Name: string; UniqueDates: Set<string>; Cost: number }>();
-
-        for (const log of workLogs) {
-            const existing = workerMap.get(log.Worker_ID);
-            if (existing) {
-                existing.UniqueDates.add(log.Date);
-                existing.Cost += log.Daily_Rate || 0;
-            } else {
-                workerMap.set(log.Worker_ID, {
-                    Name: log.Worker_Name,
-                    UniqueDates: new Set([log.Date]),
-                    Cost: log.Daily_Rate || 0,
-                });
-            }
-        }
-
-        const workers = Array.from(workerMap.entries()).map(([workerId, data]) => ({
-            Worker_ID: workerId,
-            Name: data.Name,
-            Days: data.UniqueDates.size,
-            Cost: data.Cost,
-        }));
-
-        const quantity = item.Quantity || 1;
-
-        // PROFIT-09 FIX: For completed items, use frozen material cost
-        // For active items, fetch fresh prices so profit is accurate during production
-        // NB: obje grane daju trošak PO KOMADU (pohranjeni ili Σ product_materials za 1 komad).
-        let materialPerUnit = 0;
-        if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
-            materialPerUnit = item.Material_Cost || 0;
-        } else {
-            const materials = await getProductMaterials(item.Product_ID, organizationId);
-            materialPerUnit = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-        }
-
-        const plannedLaborCost = item.Planned_Labor_Cost || 0;
-        const actualLaborCost = workLogs.reduce((sum, log) => sum + (log.Daily_Rate || 0), 0);
-
-        // JEDINSTVENA PROFIT FORMULA (lib/profit.ts) — overrides + materijal × količina
-        // se rješavaju u helperu, ista semantika kao recalculateWorkOrder i itemFin kartice.
-        const overrides = (item as any).Profit_Overrides;
-        const breakdown = itemProfitBreakdown({
-            productValue: item.Product_Value,
-            sellingOverride: overrides?.Selling_Price,
-            materialPerUnit,
-            quantity,
-            laborTotal: actualLaborCost,
-            servicesTotal: item.Services_Total,
-            transportShare: item.Transport_Share,
-            transportOverride: overrides?.Transport_Share,
-            otherCosts: (item as any).Other_Costs,
-        });
-        const netProfit = breakdown.profit;
-        const grossProfit = Math.round((netProfit + breakdown.labor) * 100) / 100;
-
-        // Calculate variance
-        const laborVariance = plannedLaborCost - actualLaborCost;
-        const laborVariancePercent = plannedLaborCost > 0
-            ? (laborVariance / plannedLaborCost) * 100
-            : 0;
-
-        // Calculate duration
-        let durationDays: number | undefined;
-        if (item.Started_At && item.Completed_At) {
-            const start = new Date(item.Started_At);
-            const end = new Date(item.Completed_At);
-            durationDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-        }
-
-        return {
-            Product_ID: item.Product_ID,
-            Product_Name: item.Product_Name || 'Unknown',
-            Work_Order_Item_ID: workOrderItemId,
-            Selling_Price: breakdown.revenue,
-            Quantity: quantity,
-            Material_Cost: breakdown.material,
-            Transport_Share: breakdown.transport,
-            Services_Total: breakdown.services,
-            Planned_Labor_Cost: plannedLaborCost,
-            Actual_Labor_Cost: actualLaborCost,
-            Labor_Variance: laborVariance,
-            Labor_Variance_Percent: Math.round(laborVariancePercent * 10) / 10,
-            Gross_Profit: grossProfit,
-            Net_Profit: netProfit,
-            Profit_Margin: Math.round(breakdown.margin * 10) / 10,
-            Workers: workers,
-            Started_At: item.Started_At,
-            Completed_At: item.Completed_At,
-            Duration_Days: durationDays,
-        };
-    } catch (error) {
-        console.error('calculateProductProfitability error:', error);
-        return null;
-    }
-}
-
-// ============================================
-// WORK ORDER PROFITABILITY
-// ============================================
-
-/**
- * Calculate profitability for an entire work order
- * Aggregates all items
- */
-export async function calculateWorkOrderProfitability(
-    workOrderId: string,
-    organizationId: string
-): Promise<{
-    totalValue: number;
-    materialCost: number;
-    transportCost: number;
-    servicesCost: number;
-    plannedLaborCost: number;
-    actualLaborCost: number;
-    laborVariance: number;
-    laborVariancePercent: number;
-    grossProfit: number;
-    netProfit: number;
-    profitMargin: number;
-    items: ProductProfitability[];
-} | null> {
-    if (!organizationId) return null;
-
-    try {
-        // Get all work order items
-        const itemsQuery = query(
-            collection(db, 'work_order_items'),
-            where('Work_Order_ID', '==', workOrderId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const itemsSnapshot = await getDocs(itemsQuery);
-        const items = itemsSnapshot.docs.map(doc => doc.data() as WorkOrderItem);
-
-        if (items.length === 0) return null;
-
-        // Calculate profitability for each item
-        const itemProfitabilities: ProductProfitability[] = [];
-        for (const item of items) {
-            const profitability = await calculateProductProfitability(item.ID, organizationId);
-            if (profitability) {
-                itemProfitabilities.push(profitability);
-            }
-        }
-
-        // Aggregate values
-        const totalValue = itemProfitabilities.reduce((sum, p) => sum + p.Selling_Price, 0);
-        const materialCost = itemProfitabilities.reduce((sum, p) => sum + p.Material_Cost, 0);
-        const transportCost = itemProfitabilities.reduce((sum, p) => sum + p.Transport_Share, 0);
-        const servicesCost = itemProfitabilities.reduce((sum, p) => sum + p.Services_Total, 0);
-        const plannedLaborCost = itemProfitabilities.reduce((sum, p) => sum + p.Planned_Labor_Cost, 0);
-        const actualLaborCost = itemProfitabilities.reduce((sum, p) => sum + p.Actual_Labor_Cost, 0);
-
-        const laborVariance = plannedLaborCost - actualLaborCost;
-        const laborVariancePercent = plannedLaborCost > 0
-            ? (laborVariance / plannedLaborCost) * 100
-            : 0;
-
-        // KONZISTENTNOST: usluge se oduzimaju kao trošak — isto kao per-item
-        // (calculateProductProfitability) i analitika (lib/analytics.ts).
-        // Time je Σ(net proizvoda) === net naloga (invarijanta, vidi scenarios.integration.test).
-        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
-        const netProfit = grossProfit - actualLaborCost;
-        const profitMargin = totalValue > 0 ? (netProfit / totalValue) * 100 : 0;
-
-        return {
-            totalValue,
-            materialCost,
-            transportCost,
-            servicesCost,
-            plannedLaborCost,
-            actualLaborCost,
-            laborVariance,
-            laborVariancePercent: Math.round(laborVariancePercent * 10) / 10,
-            grossProfit,
-            netProfit,
-            profitMargin: Math.round(profitMargin * 10) / 10,
-            items: itemProfitabilities,
-        };
-    } catch (error) {
-        console.error('calculateWorkOrderProfitability error:', error);
-        return null;
-    }
 }
 
 // ============================================

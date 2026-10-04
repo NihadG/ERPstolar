@@ -1,28 +1,8 @@
 /**
- * profitService.ts — Product/Work Order profitability + production snapshots
+ * profitService.ts — Worker productivity, profit overrides + production snapshots
  * 
  * Facade over productivity.ts and database.ts snapshot functions.
  */
-
-// ============================================
-// PRODUCT PROFITABILITY
-// ============================================
-
-export async function calculateProductProfitability(
-    workOrderItemId: string,
-    organizationId: string
-): Promise<any> {
-    const { calculateProductProfitability: _calc } = await import('../../productivity');
-    return _calc(workOrderItemId, organizationId);
-}
-
-export async function calculateWorkOrderProfitability(
-    workOrderId: string,
-    organizationId: string
-): Promise<any> {
-    const { calculateWorkOrderProfitability: _calc } = await import('../../productivity');
-    return _calc(workOrderId, organizationId);
-}
 
 // ============================================
 // WORKER PRODUCTIVITY

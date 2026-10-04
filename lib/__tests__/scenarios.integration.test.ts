@@ -15,7 +15,7 @@
 
 import { splitDnevnicaExact, normalizePresence } from '../laborSplit';
 import { workOrderDueDate, isWorkingDay, buildSaturdayChecker, type AttendanceLite } from '../planning';
-import { itemMaterialTotal, isItemMaterialFrozen } from '../materialCost';
+import { itemMaterialTotal } from '../materialCost';
 import { buildFinanceBasis, buildLaborIndex, computeProjectFinance, type FinItem } from '../projectFinance';
 import { distributeAmountByQuantity } from '../invoicePricing';
 import { resolveLaborCostTarget, type LaborTargetItem } from '../laborTarget';
@@ -358,15 +358,6 @@ describe('Scenarij 6 — trošak materijala se množi količinom (itemMaterialTo
         expect(round2(workOrderProfit(items).net)).toBe(sumItems);
         // materijal naloga = 300 + 100 + 3825 = 4225
         expect(round2(workOrderProfit(items).material)).toBe(4225);
-    });
-
-    test('zamrznuti/manual materijal se prepoznaje (koristi pohranjeni po komadu, pa × qty)', () => {
-        expect(isItemMaterialFrozen({ Status: 'Završeno' })).toBe(true);
-        expect(isItemMaterialFrozen({ Completed_At: '2026-07-01T10:00:00Z' })).toBe(true);
-        expect(isItemMaterialFrozen({ Material_Cost_Source: 'manual' })).toBe(true);
-        expect(isItemMaterialFrozen({ Status: 'U toku' })).toBe(false);
-        // frozen ili ne — ukupno je uvijek po komadu × qty
-        expect(itemMaterialTotal(255, 15)).toBe(3825);
     });
 });
 

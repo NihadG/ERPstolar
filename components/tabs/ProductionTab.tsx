@@ -17,7 +17,6 @@ import Modal from '@/components/ui/Modal';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import AnalyticsDashboard from '@/components/ui/AnalyticsDashboard';
 import OrderSummaryModal from '@/components/ui/OrderSummaryModal';
-import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
 import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
@@ -66,7 +65,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         () => workOrders.filter(w => !isNewFormatWorkOrderNumber(w.Work_Order_Number)).length,
         [workOrders]
     );
-    const [priceEditWorkOrder, setPriceEditWorkOrder] = useState<WorkOrder | null>(null);
     const [attendanceFixWorkOrder, setAttendanceFixWorkOrder] = useState<WorkOrder | null>(null);
     const [profitDashboardOpen, setProfitDashboardOpen] = useState(false);
 
@@ -917,15 +915,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             {/* Upit knjiženja današnjeg dana nakon pokretanja naloga */}
             {renderBookTodayModal()}
 
-
-            {priceEditWorkOrder && (
-                <PriceEditModal
-                    workOrder={priceEditWorkOrder}
-                    onClose={() => setPriceEditWorkOrder(null)}
-                    onSaved={() => onRefresh('workOrders')}
-                    showToast={showToast}
-                />
-            )}
             {renderAttendanceFixModal()}
             {profitDashboardOpen && (
                 <AnalyticsDashboard

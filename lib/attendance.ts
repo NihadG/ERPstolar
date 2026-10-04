@@ -3275,9 +3275,6 @@ export async function calculateSubTaskLaborCost(
  * PROFIT-01 FIX: Previously used attendance + full Daily_Rate from workers collection,
  * which caused 2-3x overcount when workers worked on multiple items simultaneously.
  * Now uses work_logs which store the correctly SPLIT daily rate.
- * 
- * This ensures recalculateWorkOrder() and calculateProductProfitability() produce
- * identical results.
  */
 export async function calculateActualLaborCost(item: any, organizationId?: string): Promise<number> {
     try {

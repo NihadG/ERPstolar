@@ -1242,45 +1242,6 @@ export interface WorkerProductivity {
     Value_Per_Day: number;           // Value_Generated / Days_Worked
 }
 
-export interface ProductProfitability {
-    Product_ID: string;
-    Product_Name: string;
-    Work_Order_Item_ID: string;
-
-    // Vrijednosti
-    Selling_Price: number;           // Cijena iz ponude
-    Quantity: number;                // Količina
-
-    // Troškovi
-    Material_Cost: number;           // Trošak materijala
-    Transport_Share: number;         // Proporcionalni transport
-    Services_Total: number;          // Usluge (LED, etc)
-
-    // Rad
-    Planned_Labor_Cost: number;
-    Actual_Labor_Cost: number;
-    Labor_Variance: number;          // Planirano - Stvarno
-    Labor_Variance_Percent: number;  // (Variance / Planned) × 100
-
-    // Profit
-    Gross_Profit: number;            // Selling - Material - Transport - Services
-    Net_Profit: number;              // Gross - Actual_Labor
-    Profit_Margin: number;           // (Net_Profit / Selling) × 100
-
-    // Radnici koji su radili
-    Workers: {
-        Worker_ID: string;
-        Name: string;
-        Days: number;
-        Cost: number;
-    }[];
-
-    // Datumi
-    Started_At?: string;
-    Completed_At?: string;
-    Duration_Days?: number;
-}
-
 // ============================================
 // PRODUCTION SNAPSHOT - AI/ML Training Data
 // ============================================

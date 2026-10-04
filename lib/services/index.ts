@@ -164,7 +164,6 @@ export type {
 
 // Profit
 export {
-    calculateProductProfitability, calculateWorkOrderProfitability,
     calculateWorkerProductivity, saveProfitOverrides,
     createProductionSnapshot, getProductionSnapshots, getProductionSnapshotForWorkOrder,
     checkZeroMaterialCostProducts, setManualMaterialCost,
