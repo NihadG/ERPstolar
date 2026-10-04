@@ -60,7 +60,11 @@ export interface AnalyticsProject {
     status: string;
     contracted: number;
     productCount: number;
+    scopeCount: number;             // proizvodi u obimu (u ponudi ili započeti)
+    outOfContractCount: number;     // nezapočeti van prihvaćene ponude
     finishedCount: number;          // ukupno završeno (do danas)
+    spentMaterial: number;          // uloženo do danas (svi proizvodi + razni projekta)
+    spentLabor: number;
     realized: StageTotals;          // završeno U PERIODU
     razniProfit: number;            // razni nalozi vezani za projekat (samo „Sve")
     profit: number;                 // realized.profit + razniProfit
@@ -386,7 +390,11 @@ export function computeAnalytics(input: AnalyticsInput, opts: { from?: string; t
             projectId, client, name: label, status: proj.Status || '',
             contracted: f.contracted,
             productCount: f.productCount,
+            scopeCount: f.scopeCount,
+            outOfContractCount: f.outOfContractCount,
             finishedCount: f.finishedCount,
+            spentMaterial: f.spentMaterial,
+            spentLabor: f.spentLabor,
             realized,
             razniProfit,
             profit,
@@ -405,7 +413,7 @@ export function computeAnalytics(input: AnalyticsInput, opts: { from?: string; t
         .filter(([id]) => projectRows.some(p => p.projectId === id))
         .reduce((s, [, f]) => s + f.razni.revenue, 0);
     const inProgressAll = sumStage(productRows.filter(p => p.stage === 'u_izradi'));
-    const notStarted = productRows.filter(p => p.stage === 'nije_zapoceto');
+    const notStarted = productRows.filter(p => p.stage === 'nije_zapoceto' && p.inContract);
     const profit = r2(realizedAll.profit + razniProjects);
     const revenueAll = realizedAll.revenue + razniProjectsRevenue;
 

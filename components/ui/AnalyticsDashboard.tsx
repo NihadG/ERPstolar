@@ -380,11 +380,12 @@ function TrendChart({ points, color }: { points: { label: string; value: number 
 function ProjectsTable({ data, onPick }: { data: AnalyticsData; onPick: (projectId: string, projectName: string) => void }) {
     const rows = data.projects;
     const t = useMemo(() => {
-        const s = { contracted: 0, revenue: 0, material: 0, labor: 0, profit: 0, ipSpent: 0, finished: 0, products: 0 };
+        const s = { contracted: 0, revenue: 0, material: 0, labor: 0, profit: 0, finished: 0, scope: 0, spentMaterial: 0, spentLabor: 0 };
         rows.forEach(p => {
             s.contracted += p.contracted; s.revenue += p.realized.revenue; s.material += p.realized.material;
-            s.labor += p.realized.labor; s.profit += p.profit; s.ipSpent += p.inProgress.material + p.inProgress.labor;
-            s.finished += p.realized.count; s.products += p.productCount;
+            s.labor += p.realized.labor; s.profit += p.profit;
+            s.finished += p.realized.count; s.scope += p.scopeCount;
+            s.spentMaterial += p.spentMaterial; s.spentLabor += p.spentLabor;
         });
         return s;
     }, [rows]);
@@ -393,26 +394,31 @@ function ProjectsTable({ data, onPick }: { data: AnalyticsData; onPick: (project
     return (
         <div className="ana-section">
             <p className="ana-hint">
-                Profit = prihod iz prihvaćene ponude − materijal − rad, za proizvode završene{periodOn ? ' u periodu' : ''}.
-                „U izradi" je trošak uložen do sada u proizvode koji još nisu gotovi (nije u profitu). Klik na red otvara kalendar rada.
+                Profit se računa samo za ZAVRŠENE proizvode{periodOn ? ' (završene u periodu)' : ''}: prihod iz prihvaćene ponude − materijal − rad tih proizvoda.
+                „Uloženo do danas" je SAV materijal i rad na projektu, i na proizvodima koji još nisu gotovi. Klik na red otvara kalendar rada.
             </p>
             <div className="ana-table-wrap">
-                <table className="ana-table">
+                <table className="ana-table ana-table-grouped">
                     <thead>
+                        <tr className="ana-th-group">
+                            <th rowSpan={2}>Projekat</th>
+                            <th rowSpan={2} className="r">Ugovoreno</th>
+                            <th colSpan={6} className="c ana-th-band profit-col">Završeni proizvodi — u profitu</th>
+                            <th colSpan={2} className="c ana-th-band ana-th-spent">Uloženo do danas</th>
+                        </tr>
                         <tr>
-                            <th>Projekat</th>
-                            <th className="r">Ugovoreno</th>
-                            <th className="r">Završeno</th>
+                            <th className="r profit-col" title="Završeni / proizvodi u obimu posla (u prihvaćenoj ponudi ili već započeti)">Gotovo</th>
                             <th className="r">Prihod</th>
                             <th className="r">Materijal</th>
                             <th className="r">Rad</th>
-                            <th className="r profit-col">Profit</th>
+                            <th className="r">Profit</th>
                             <th className="r">Marža</th>
-                            <th className="r">U izradi</th>
+                            <th className="r ana-th-spent">Materijal</th>
+                            <th className="r">Rad</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {rows.length === 0 && <tr><td colSpan={9} className="ana-empty">Nema projekata u odabranom opsegu.</td></tr>}
+                        {rows.length === 0 && <tr><td colSpan={10} className="ana-empty">Nema projekata u odabranom opsegu.</td></tr>}
                         {rows.map(p => (
                             <tr key={p.projectId} className="ana-row-click" onClick={() => onPick(p.projectId, p.name)} title="Otvori kalendar rada">
                                 <td>
@@ -420,13 +426,16 @@ function ProjectsTable({ data, onPick }: { data: AnalyticsData; onPick: (project
                                     <span className="ana-cell-meta">{p.client && p.client !== p.name ? `${p.client} · ` : ''}{p.status || '—'}{p.flagged > 0 ? ` · ${p.flagged} za provjeru` : ''}</span>
                                 </td>
                                 <td className="r money">{p.contracted > 0 ? fmt(p.contracted) : <span className="muted">bez ponude</span>}</td>
-                                <td className="r money">{p.finishedCount}/{p.productCount}</td>
+                                <td className="r money profit-col" title={p.outOfContractCount > 0 ? `${p.outOfContractCount} proizvoda projekta nije ni u jednoj prihvaćenoj ponudi i nije započeto — ne broji se` : undefined}>
+                                    {p.finishedCount}/{p.scopeCount}
+                                </td>
                                 <td className="r money">{p.realized.count > 0 ? fmt(p.realized.revenue) : <span className="muted">—</span>}</td>
                                 <td className="r money">{p.realized.count > 0 ? fmt(p.realized.material) : <span className="muted">—</span>}</td>
                                 <td className="r money">{p.realized.count > 0 ? fmt(p.realized.labor) : <span className="muted">—</span>}</td>
-                                <td className={`r money b profit-col ${tone(p.profit)}`}>{p.realized.count > 0 || p.razniProfit !== 0 ? fmt(p.profit) : <span className="muted">—</span>}</td>
+                                <td className={`r money b ${tone(p.profit)}`}>{p.realized.count > 0 || p.razniProfit !== 0 ? fmt(p.profit) : <span className="muted">—</span>}</td>
                                 <td className={`r money ${tone(p.profit)}`}>{p.realized.count > 0 ? pct(p.margin) : ''}</td>
-                                <td className="r money">{p.inProgress.count > 0 ? <span title={`${p.inProgress.count} proizvoda · materijal ${fmt(p.inProgress.material)} · rad ${fmt(p.inProgress.labor)}`}>{fmt(p.inProgress.material + p.inProgress.labor)}</span> : <span className="muted">—</span>}</td>
+                                <td className="r money ana-th-spent">{p.spentMaterial > 0 ? fmt(p.spentMaterial) : <span className="muted">—</span>}</td>
+                                <td className="r money">{p.spentLabor > 0 ? fmt(p.spentLabor) : <span className="muted">—</span>}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -435,13 +444,14 @@ function ProjectsTable({ data, onPick }: { data: AnalyticsData; onPick: (project
                             <tr>
                                 <td>Ukupno</td>
                                 <td className="r money">{fmt(t.contracted)}</td>
-                                <td className="r money">{t.finished}/{t.products}</td>
+                                <td className="r money profit-col">{t.finished}/{t.scope}</td>
                                 <td className="r money">{fmt(t.revenue)}</td>
                                 <td className="r money">{fmt(t.material)}</td>
                                 <td className="r money">{fmt(t.labor)}</td>
-                                <td className={`r money profit-col ${tone(t.profit)}`}>{fmt(t.profit)}</td>
+                                <td className={`r money ${tone(t.profit)}`}>{fmt(t.profit)}</td>
                                 <td className={`r money ${tone(t.profit)}`}>{t.revenue > 0 ? pct((t.profit / t.revenue) * 100) : ''}</td>
-                                <td className="r money">{fmt(t.ipSpent)}</td>
+                                <td className="r money ana-th-spent">{fmt(t.spentMaterial)}</td>
+                                <td className="r money">{fmt(t.spentLabor)}</td>
                             </tr>
                         </tfoot>
                     )}
@@ -456,7 +466,7 @@ function ProjectsTable({ data, onPick }: { data: AnalyticsData; onPick: (project
                     <span>Vrijednost poslova</span><b>{fmt(razni.revenue)}</b>
                     <span>Rezultat</span><b className={tone(razni.profit)}>{fmt(razni.profit)}</b>
                 </div>
-                <p className="ana-st-note">Računa se kao i do sada (vrijednost − materijal − ostalo − rad) i ne ulazi u profit projekata.</p>
+                <p className="ana-st-note">Računa se kao i do sada (vrijednost − materijal − ostalo − rad) i ne ulazi u profit projekata. Posao koji pripada projektu (npr. montaža ili lakiranje za klijenta) veži za projekat pri kreiranju raznog posla — tada ulazi u trošak tog projekta.</p>
             </div>
         </div>
     );
@@ -789,7 +799,7 @@ function buildMonthDays(year: number, month: number): { iso: string; day: number
     return out;
 }
 
-interface PwcEntry { worker: string; product: string; productId: string; woNumber: string }
+interface PwcEntry { worker: string; product: string; productId: string; woNumber: string; rate: number; fraction: number }
 
 function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: AnalyticsRaw; projectId: string; projectName: string; onClose: () => void }) {
     const idx = useMemo(() => {
@@ -811,7 +821,7 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
             const date = (l.Date || '').split('T')[0];
             if (!date) continue;
             const arr = m.get(date) || [];
-            arr.push({ worker: l.Worker_Name || 'Radnik', product: hit.product, productId: hit.productId, woNumber: hit.woId ? (idx.woNum.get(hit.woId) || '') : '' });
+            arr.push({ worker: l.Worker_Name || 'Radnik', product: hit.product, productId: hit.productId, woNumber: hit.woId ? (idx.woNum.get(hit.woId) || '') : '', rate: l.Daily_Rate || 0, fraction: l.Day_Fraction ?? 1 });
             m.set(date, arr);
         }
         return m;
@@ -826,9 +836,15 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
     const todayIso = toISO(new Date());
 
     const workerList = useMemo(() => {
-        const m = new Map<string, Set<string>>();
-        byDate.forEach((arr, date) => arr.forEach(e => { const s = m.get(e.worker) || new Set<string>(); s.add(date); m.set(e.worker, s); }));
-        return Array.from(m.entries()).map(([worker, dates]) => ({ worker, days: dates.size })).sort((a, b) => b.days - a.days || a.worker.localeCompare(b.worker));
+        const m = new Map<string, { dates: Set<string>; workerDays: number; km: number }>();
+        byDate.forEach((arr, date) => arr.forEach(e => {
+            const w = m.get(e.worker) || { dates: new Set<string>(), workerDays: 0, km: 0 };
+            w.dates.add(date); w.workerDays += e.fraction; w.km += e.rate;
+            m.set(e.worker, w);
+        }));
+        return Array.from(m.entries())
+            .map(([worker, w]) => ({ worker, days: w.dates.size, workerDays: Math.round(w.workerDays * 100) / 100, km: w.km }))
+            .sort((a, b) => b.days - a.days || a.worker.localeCompare(b.worker));
     }, [byDate]);
 
     const dayEntries = useCallback((iso: string) => {
@@ -847,10 +863,13 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
         return { daysWorked: dws, workers: w.size };
     }, [days, byDate, selWorker]);
 
+    // „Dana s radom" = različiti datumi na kojima je IKO radio na projektu; radnik-dani =
+    // Σ udjela dana svih radnika (dnevnica se dijeli na proizvode/naloge tog dana); KM = Σ dnevnica.
     const totals = useMemo(() => {
         const w = new Set<string>();
-        byDate.forEach(arr => arr.forEach(e => w.add(e.worker)));
-        return { days: byDate.size, workers: w.size };
+        let workerDays = 0, km = 0;
+        byDate.forEach(arr => arr.forEach(e => { w.add(e.worker); workerDays += e.fraction; km += e.rate; }));
+        return { days: byDate.size, workers: w.size, workerDays: Math.round(workerDays * 100) / 100, km };
     }, [byDate]);
 
     const shiftMonth = (delta: number) => setYm(prev => { const d = new Date(prev.y, prev.m + delta, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -876,7 +895,7 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
                     <div className="pwc-title">
                         <span className="pwc-title-main">{projectName || '—'}</span>
                         <span className="pwc-title-sub">
-                            {totals.days > 0 ? `${totals.days} radnih dana · ${totals.workers} radnika ukupno` : 'Nema evidentiranog rada'}
+                            {totals.days > 0 ? `${totals.days} ${pl(totals.days, 'dan', 'dana', 'dana')} s radom · ${totals.workerDays.toLocaleString('hr-HR')} radnik-dana · ${fmt(totals.km)} rada · ${totals.workers} ${pl(totals.workers, 'radnik', 'radnika', 'radnika')}` : 'Nema evidentiranog rada'}
                         </span>
                     </div>
                     <div className="pwc-nav">
@@ -897,7 +916,7 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
                                 <button className={`pwc-fchip${!selWorker ? ' on' : ''}`} onClick={() => setSelWorker(null)}>Svi radnici</button>
                                 {workerList.map(({ worker, days: wd }) => (
                                     <button key={worker} className={`pwc-fchip${selWorker === worker ? ' on' : ''}`}
-                                        onClick={() => setSelWorker(s => s === worker ? null : worker)} title={`${worker} · ${wd} radnih dana`}>
+                                        onClick={() => setSelWorker(s => s === worker ? null : worker)} title={`${worker}: radio ${wd} ${pl(wd, 'dan', 'dana', 'dana')} na projektu · ${workerList.find(x => x.worker === worker)?.workerDays.toLocaleString('hr-HR')} radnik-dana · ${fmt(workerList.find(x => x.worker === worker)?.km || 0)}`}>
                                         <span className="pwc-fdot" style={{ background: pwcColor(worker) }} />
                                         <span className="pwc-fname">{worker}</span>
                                         <span className="pwc-fdays">{wd}</span>

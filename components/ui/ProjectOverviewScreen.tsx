@@ -613,7 +613,7 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
                         <span className="pov-kpi-value">{fmt(fin.profit)}</span>
                         {ov.hasPlan
                             ? <span className="pov-kpi-sub">plan {fmt(ov.plannedProfit)}</span>
-                            : <span className="pov-kpi-sub">{ov.counts.productsFinished} od {ov.counts.products} proizvoda završeno</span>}
+                            : <span className="pov-kpi-sub">{ov.counts.productsFinished} od {ov.finance.scopeCount} proizvoda završeno</span>}
                     </div>
                 </div>
                 <div className={`pov-kpi ${marginClass}`}>
@@ -693,6 +693,8 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
                         <li><span>Završeno ({ov.counts.productsFinished}) — u profitu</span><b>{fmt(ov.finance.realized.revenue)}</b></li>
                         <li><span>U izradi ({ov.counts.productsInProduction}) — uloženo do sada</span><b>{fmt(ov.finance.inProgress.material + ov.finance.inProgress.labor)}</b></li>
                         <li><span>Nije započeto ({ov.counts.productsNotStarted}) — ugovoreno</span><b>{fmt(ov.finance.notStarted.contracted)}</b></li>
+                        {ov.finance.outOfContractCount > 0 && <li><span>Van prihvaćene ponude ({ov.finance.outOfContractCount}) — nije u obimu posla</span><b>—</b></li>}
+                        <li><span>Uloženo do danas (materijal · rad)</span><b>{fmt(ov.finance.spentMaterial)} · {fmt(ov.finance.spentLabor)}</b></li>
                         <li><span>Radnih naloga · radnika · radnih dana</span><b>{ov.counts.workOrders} · {ov.counts.workers} · {fmt0(ov.counts.totalWorkerDays)}</b></li>
                     </ul>
                     <div className="pov-note">Profit = prihvaćena ponuda − materijal (sastavnica + dodaci iz ponude) − rad, i računa se kad je proizvod završen.</div>

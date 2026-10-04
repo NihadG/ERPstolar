@@ -861,7 +861,9 @@ export async function renormalizeWorkerDay(
     workerId: string,
     date: string,
     organizationId: string,
-    presenceHint?: number
+    presenceHint?: number,
+    /** Nova dnevnica (promjena cijene radnika) — inače se zadržava Original_Daily_Rate sa zapisa. */
+    dnevnicaOverride?: number
 ): Promise<Set<string>> {
     const affected = new Set<string>();
     if (!workerId || !date || !organizationId) return affected;
@@ -898,8 +900,9 @@ export async function renormalizeWorkerDay(
         console.warn(`[renormalizeWorkerDay] konflikt prisutnosti ${workerId} @ ${date}: postoji ${Array.from(distinctPresence).join('/')}, primjenjujem ${presence}.`);
     }
     // dnevnica = Original_Daily_Rate; fallback na trenutnu dnevnicu radnika ako nedostaje
-    let dnevnica = 0;
+    let dnevnica = dnevnicaOverride && dnevnicaOverride > 0 ? dnevnicaOverride : 0;
     for (const d of docs) {
+        if (dnevnica > 0) break;
         const o = d.data().Original_Daily_Rate;
         if (typeof o === 'number' && o > 0) { dnevnica = o; break; }
     }
@@ -2769,16 +2772,13 @@ async function deleteWorkLogsForWorkerOnItem(
 }
 
 /**
- * Re-split a worker's daily rate across ALL their active item assignments.
- * 
- * When a worker is added to or removed from an item, the split factor changes for ALL of their items.
- * E.g., if Worker A (80 KM/day) was on 2 items (40 KM each) and gets added to a 3rd,
- * ALL 3 items now get 80/3 = 26.67 KM.
- * 
- * This function:
- * 1. Counts how many active items the worker is assigned to
- * 2. Gets the worker's full Daily_Rate from the workers collection
- * 3. Updates ALL work logs for this worker+date with the correct split
+ * Ponovo podijeli dnevnicu radnika za dan nakon promjene ekipe ili njegove cijene.
+ *
+ * Isto kao renormalizeWorkerDay (KANONSKA podjela: prisustvo, prvo po nalogu pa po
+ * proizvodu, Day_Fraction usklađen s iznosom), samo s dnevnicom VAŽEĆOM na taj datum
+ * (Daily_Rate_History) — da promjena cijene radnika uđe u današnje zapise.
+ * Ranije je ovdje bila zasebna podjela „dnevnica ÷ broj zapisa" koja nije ažurirala
+ * Day_Fraction ni poštovala pola dana, pa je dan znao ispasti kao 2 radnik-dana.
  */
 export async function resplitWorkerDailyRate(
     workerId: string,
@@ -2786,46 +2786,13 @@ export async function resplitWorkerDailyRate(
     organizationId: string
 ): Promise<void> {
     try {
-        const firestore = getDb();
-
-        // Get worker's full daily rate VAŽEĆU na datum (efektivno-datirano; rizik #2)
+        // Dnevnica VAŽEĆA na datum (efektivno-datirano; rizik #2)
         const allWorkers = await getWorkers(organizationId);
         const worker = allWorkers.find(w => w.Worker_ID === workerId);
         const fullRate = effectiveDailyRate(worker, date);
         // GARDA (#1): nepoznata cijena (obrisan radnik) → ne diraj logove (ne nuliraj).
         if (!worker || fullRate <= 0) return;
-
-        // Find ALL work logs for this worker on this date
-        const logsQuery = query(
-            collection(firestore, 'work_logs'),
-            where('Worker_ID', '==', workerId),
-            where('Date', '==', date),
-            where('Organization_ID', '==', organizationId)
-        );
-        const logsSnap = await getDocs(logsQuery);
-
-        if (logsSnap.empty) return;
-
-        // Rizik #8: ne računaj logove obrisanih naloga u podjelu.
-        const liveLogs = logsSnap.docs.filter(d => d.data().Work_Order_Deleted !== true);
-        if (liveLogs.length === 0) return;
-
-        // Count total active assignments (= number of live work logs for this date)
-        const totalAssignments = liveLogs.length;
-        const splitRate = Math.round((fullRate / totalAssignments) * 100) / 100;
-
-        // Update each log with new split rate
-        const batch = writeBatch(firestore);
-        liveLogs.forEach(logDoc => {
-            batch.update(logDoc.ref, {
-                Daily_Rate: splitRate,
-                Original_Daily_Rate: fullRate,
-                Split_Factor: totalAssignments
-            });
-        });
-        await batch.commit();
-
-        console.log(`[RATE RESPLIT] Worker ${workerId} on ${date}: ${fullRate} KM ÷ ${totalAssignments} items = ${splitRate} KM each`);
+        await renormalizeWorkerDay(workerId, date, organizationId, undefined, fullRate);
     } catch (error) {
         console.error('resplitWorkerDailyRate error:', error);
     }

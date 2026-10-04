@@ -454,6 +454,8 @@ export interface ProductFinanceRow {
     completedAt: string;        // YYYY-MM-DD završetka proizvodnje ('' ako nije / bez naloga)
     revenueSource: RevenueSource;
     offerNumber: string;
+    /** U prihvaćenoj ponudi (ugovoren). Nezapočet proizvod van ponude je „van ugovora". */
+    inContract: boolean;
     contracted: number;         // vrijednost u prihvaćenoj ponudi (0 bez ponude)
     revenue: number;            // prihod za proizvedenu količinu
     materialBom: number;
@@ -495,6 +497,7 @@ export interface ProjectFinance {
     contractOffers: ProjectContract['offers'];
     realized: StageTotals;          // završeni proizvodi
     inProgress: StageTotals;        // u izradi — prihod za proizvedenu količinu, trošak do sada
+    /** Ugovoreni (u prihvaćenoj ponudi) proizvodi koji još nisu ni u jednom nalogu. */
     notStarted: { count: number; contracted: number; labor: number };
     razni: ProfitBreakdown & { count: number };     // razni nalozi vezani za projekat
     /** NASLOVNI profit projekta = završeni proizvodi + razni nalozi projekta. */
@@ -507,7 +510,11 @@ export interface ProjectFinance {
     spentMaterial: number;
     spentLabor: number;
     products: ProductFinanceRow[];
-    productCount: number;
+    productCount: number;           // svi proizvodi projekta
+    /** Proizvodi u obimu posla: u prihvaćenoj ponudi ILI već započeti/završeni (nazivnik za „završeno n/m"). */
+    scopeCount: number;
+    /** Nezapočeti proizvodi koji nisu ni u jednoj prihvaćenoj ponudi (npr. izbačeni u reviziji). */
+    outOfContractCount: number;
     finishedCount: number;
     flagged: number;                // broj proizvoda s bar jednom oznakom za provjeru
 }
@@ -734,6 +741,7 @@ function productRow(acc: ProductAcc, basis: FinanceBasis): ProductFinanceRow {
         completedAt,
         revenueSource,
         offerNumber: line?.offerNumber || '',
+        inContract: !!line,
         contracted: line ? line.total : 0,
         revenue: profitB.revenue,
         materialBom: fin.materialBom,
@@ -759,7 +767,9 @@ function assembleProject(projectId: string, rows: ProductFinanceRow[], razno: It
     const contract = basis.contracts.get(projectId);
     const finished = rows.filter(r => r.stage === 'zavrseno');
     const inProgress = rows.filter(r => r.stage === 'u_izradi');
-    const notStarted = rows.filter(r => r.stage === 'nije_zapoceto');
+    const notStartedAll = rows.filter(r => r.stage === 'nije_zapoceto');
+    const notStarted = notStartedAll.filter(r => r.inContract);
+    const outOfContract = notStartedAll.filter(r => !r.inContract);
     const realized = sumStage(finished);
     const prog = sumStage(inProgress);
     const raz = sumItemFinance(razno);
@@ -769,7 +779,8 @@ function assembleProject(projectId: string, rows: ProductFinanceRow[], razno: It
     const profit = r2(realized.profit + razni.profit);
     const material = r2(realized.material + razni.material);
     const labor = r2(realized.labor + razni.labor);
-    const nsLabor = r2(notStarted.reduce((s, r) => s + r.labor, 0));
+    // Rad na nezapočetim (npr. otkazan nalog) je stvaran trošak — broji se u uloženo bez obzira na ugovor.
+    const nsLabor = r2(notStartedAll.reduce((s, r) => s + r.labor, 0));
 
     rows.sort((a, b) => {
         const rank = (s: ProductStage) => (s === 'u_izradi' ? 0 : s === 'zavrseno' ? 1 : 2);
@@ -793,6 +804,8 @@ function assembleProject(projectId: string, rows: ProductFinanceRow[], razno: It
         spentLabor: r2(realized.labor + prog.labor + nsLabor + razni.labor),
         products: rows,
         productCount: rows.length,
+        scopeCount: rows.length - outOfContract.length,
+        outOfContractCount: outOfContract.length,
         finishedCount: finished.length,
         flagged: rows.filter(r => hasFlag(r.flags)).length,
     };

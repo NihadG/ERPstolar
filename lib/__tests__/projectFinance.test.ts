@@ -260,3 +260,27 @@ describe('computeProjectsFinance — rubni slučajevi', () => {
         expect(p2.profit).toBe(70 - 7 - 20);
     });
 });
+
+describe('obim posla i završni račun', () => {
+    test('nezapočet proizvod van prihvaćene ponude je „van ugovora" — ne broji se u n/m ni u „nije započeto"', () => {
+        const products = [product('A', { bom: 10 }), product('B'), product('IZBACEN')];
+        const offers = [offer('O', [{ pid: 'A', sell: 100 }, { pid: 'B', sell: 50 }])];
+        const workOrders = [wo('W', [{ ID: 'a', Product_ID: 'A', Project_ID: 'P1', Status: 'Završeno' }], { Status: 'Završeno' })];
+        const fin = computeProjectFinance({ projectId: 'P1', products, basis: buildFinanceBasis(products, offers), workOrders, labor: buildLaborIndex([], workOrders) });
+        expect(fin.productCount).toBe(3);
+        expect(fin.scopeCount).toBe(2);
+        expect(fin.outOfContractCount).toBe(1);
+        expect(fin.notStarted.count).toBe(1);   // samo B (ugovoren)
+        expect(fin.finishedCount).toBe(1);
+    });
+
+    test('izdat završni račun ima prednost nad cijenom iz ponude', () => {
+        const products = [product('A', { bom: 10 })];
+        const offers = [offer('O', [{ pid: 'A', sell: 100 }])];
+        const workOrders = [wo('W', [{ ID: 'a', Product_ID: 'A', Project_ID: 'P1', Status: 'Završeno', Profit_Overrides: { Selling_Price: 130, Notes: 'Završni račun R-7' } }], { Status: 'Završeno' })];
+        const fin = computeProjectFinance({ projectId: 'P1', products, basis: buildFinanceBasis(products, offers), workOrders, labor: buildLaborIndex([], workOrders) });
+        expect(fin.products[0].revenue).toBe(130);
+        expect(fin.products[0].revenueSource).toBe('racun');
+        expect(fin.profit).toBe(120);
+    });
+});

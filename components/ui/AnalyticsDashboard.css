@@ -495,3 +495,9 @@ button.ana-tile:hover { border-color: #94a3b8; }
     .ana-header { padding: 12px; }
     .ana-hero-value { font-size: 20px; }
 }
+
+/* Tabela projekata: grupisano zaglavlje („Završeni proizvodi — u profitu" | „Uloženo do danas") */
+.ana-table-grouped thead tr.ana-th-group th { background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }
+.ana-table-grouped th.c { text-align: center; }
+.ana-table-grouped .ana-th-band { font-size: 12px; font-weight: 600; color: #334155; }
+.ana-table-grouped .ana-th-spent { border-left: 1px solid #eef2f7; }
