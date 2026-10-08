@@ -739,7 +739,13 @@ export interface AttendanceOrderContext {
 }
 
 /** Stvarno knjiženi nalozi za otvoreni dan i posljednji raniji knjiženi dan SVAKOG radnika. */
-const HISTORY_WINDOW = 60;
+const HISTORY_DAYS = 45;
+
+function shiftDateISO(iso: string, days: number): string {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return formatLocalDateISO(d);
+}
 
 export async function getAttendanceOrderContext(
     date: string, organizationId: string, workerIds: string[],
@@ -765,28 +771,37 @@ export async function getAttendanceOrderContext(
         }
     }
 
-    const historyResults = await Promise.allSettled(Array.from(workerSet).map(async workerId => {
-        // Postojeći ASC indeks radi i za limitToLast; ne dovlačimo cijelu istoriju radnika.
-        // Prozor od nekoliko dana (ne samo zadnji datum): ako je zadnji dan imao samo
-        // obrisane/otkazane naloge, „Prepiši" uzima prvi raniji dan s valjanim knjiženjem.
-        const snap = await getDocs(query(
+    // Jedan upit za cijelu organizaciju u prozoru od HISTORY_DAYS dana, pa podjela po
+    // radniku. Ranije je išao upit po radniku (Worker_ID + Organization_ID + Date< +
+    // limitToLast), a limitToLast obrće smjer i traži DESC indeks koji ne postoji —
+    // upit je padao i „Prepiši zadnji dan" nikad nije imao šta prepisati.
+    // Organization_ID + Date raspon koristi isti indeks kao upit za otvoreni dan.
+    try {
+        const histSnap = await getDocs(query(
             collection(firestore, 'work_logs'),
-            where('Worker_ID', '==', workerId),
             where('Organization_ID', '==', organizationId),
-            where('Date', '<', date), orderBy('Date', 'asc'), limitToLast(HISTORY_WINDOW)
+            where('Date', '>=', shiftDateISO(date, -HISTORY_DAYS)),
+            where('Date', '<', date)
         ));
-        const found = lastUsableBookedDay(
-            snap.docs.map(d => d.data() as WorkLog), workerId, isUsableOrder, snap.size >= HISTORY_WINDOW
-        );
-        if (found) {
-            empty.previousByWorker.set(workerId, found.ids);
-            empty.previousDateByWorker.set(workerId, found.date);
+        const byWorker = new Map<string, WorkLog[]>();
+        for (const d of histSnap.docs) {
+            const log = d.data() as WorkLog;
+            if (!workerSet.has(log.Worker_ID)) continue;
+            const list = byWorker.get(log.Worker_ID) || [];
+            list.push(log);
+            byWorker.set(log.Worker_ID, list);
         }
-    }));
-    const historyFailures = historyResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (historyFailures.length > 0) {
+        byWorker.forEach((logs, workerId) => {
+            // Ako je zadnji dan imao samo obrisane/otkazane naloge, uzmi prvi raniji valjani.
+            const found = lastUsableBookedDay(logs, workerId, isUsableOrder);
+            if (found) {
+                empty.previousByWorker.set(workerId, found.ids);
+                empty.previousDateByWorker.set(workerId, found.date);
+            }
+        });
+    } catch (error) {
         empty.historyLookupFailed = true;
-        console.error(`getAttendanceOrderContext: ranije knjiženje nije učitano za ${historyFailures.length} radnika:`, historyFailures[0].reason);
+        console.error('getAttendanceOrderContext: ranija knjiženja nisu učitana:', error);
     }
     return empty;
 }

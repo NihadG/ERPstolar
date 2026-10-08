@@ -241,15 +241,18 @@ export async function getWorkLogsForWorkerDate(orgId: string, workerId: string, 
 
 /** Posljednji RANIJI dan ovog radnika sa stvarnim knjiženjem, bez čitanja cijele istorije. */
 export async function getLastPostedWorkLogsBefore(orgId: string, workerId: string, date: string): Promise<{ date: string; logs: WorkLog[] } | null> {
-    const last = await adminDb().collection('work_logs')
+    // Raspon bez orderBy/limitToLast: limitToLast traži DESC indeks koji ne postoji.
+    // Ovaj oblik koristi isti indeks kao getWorkLogsForWorkerRange.
+    const from = new Date(date + 'T00:00:00Z');
+    from.setUTCDate(from.getUTCDate() - 45);
+    const snap = await adminDb().collection('work_logs')
         .where('Worker_ID', '==', workerId)
         .where('Organization_ID', '==', orgId)
+        .where('Date', '>=', from.toISOString().slice(0, 10))
         .where('Date', '<', date)
-        .orderBy('Date', 'asc')
-        .limitToLast(60)
         .get();
     // Zadnji dan s upotrebljivim (neobrisanim) knjiženjem, ne doslovno zadnji datum.
-    const found = lastUsableBookedDay(last.docs.map(d => d.data() as WorkLog), workerId, undefined, last.size >= 60);
+    const found = lastUsableBookedDay(snap.docs.map(d => d.data() as WorkLog), workerId);
     if (!found) return null;
     return { date: found.date, logs: await getWorkLogsForWorkerDate(orgId, workerId, found.date) };
 }
