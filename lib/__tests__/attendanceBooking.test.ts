@@ -1,4 +1,4 @@
-import { buildBookingProposal, isDeselectedAttendanceLog, postedOrdersByWorker, proposalNeedsConfirm } from '../attendanceBooking';
+import { buildBookingProposal, isDeselectedAttendanceLog, lastUsableBookedDay, postedOrdersByWorker, proposalNeedsConfirm } from '../attendanceBooking';
 import type { WorkOrder, WorkOrderItem } from '../types';
 
 const W = 'W1';
@@ -314,5 +314,24 @@ describe('stvarna knjiženja imaju prednost pri ponovnom otvaranju', () => {
         expect(isDeselectedAttendanceLog({
             Work_Order_ID: 'COST', Source_Work_Order_ID: 'CUSTOM', Booking_Source: 'attendance',
         }, new Set(['CUSTOM']))).toBe(false);
+    });
+});
+
+describe('lastUsableBookedDay', () => {
+    const log = (Date: string, Work_Order_ID: string, extra: Record<string, unknown> = {}) =>
+        ({ Worker_ID: 'w1', Date, Work_Order_ID, ...extra });
+
+    it('uzima zadnji dan s knjiženjem', () => {
+        expect(lastUsableBookedDay([log('2026-10-07', 'A'), log('2026-10-08', 'B'), log('2026-10-08', 'C')], 'w1'))
+            .toEqual({ date: '2026-10-08', ids: ['B', 'C'] });
+    });
+
+    it('preskače dan s obrisanim/neupotrebljivim nalozima i ide unazad', () => {
+        const logs = [log('2026-10-06', 'A'), log('2026-10-07', 'X'), log('2026-10-08', 'D', { Work_Order_Deleted: true })];
+        expect(lastUsableBookedDay(logs, 'w1', id => id !== 'X')).toEqual({ date: '2026-10-06', ids: ['A'] });
+    });
+
+    it('pun prozor: najstariji (možda odsječen) dan se ne koristi', () => {
+        expect(lastUsableBookedDay([log('2026-10-01', 'A'), log('2026-10-08', 'X')], 'w1', id => id !== 'X', true)).toBeNull();
     });
 });

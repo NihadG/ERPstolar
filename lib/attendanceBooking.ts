@@ -89,6 +89,37 @@ export function postedOrdersByWorker(logs: { Worker_ID: string; Work_Order_ID?: 
     return result;
 }
 
+/**
+ * Posljednji raniji dan jednog radnika koji ima UPOTREBLJIVE naloge za „Prepiši".
+ * Ranije se uzimao doslovno zadnji datum s bilo kojim zapisom — ako su tog dana
+ * svi zapisi bili s obrisanog/otkazanog naloga, prijedlog je ostajao prazan i
+ * dugme sivo, iako je dan prije imao sasvim valjano knjiženje.
+ *
+ * @param logs zapisi radnika prije otvorenog dana (prozor posljednjih N, bilo kojim redom)
+ * @param windowFull prozor je pun → najstariji dan u njemu može biti odsječen, pa se preskače
+ */
+export function lastUsableBookedDay(
+    logs: { Worker_ID: string; Date: string; Work_Order_ID?: string; Source_Work_Order_ID?: string; Work_Order_Deleted?: boolean }[],
+    workerId: string,
+    isUsableOrder: (id: string) => boolean = () => true,
+    windowFull = false,
+): { date: string; ids: string[] } | null {
+    const byDate = new Map<string, typeof logs>();
+    for (const log of logs) {
+        if (log.Work_Order_Deleted === true) continue;
+        const list = byDate.get(log.Date) || [];
+        list.push(log);
+        byDate.set(log.Date, list);
+    }
+    const dates = Array.from(new Set(logs.map(l => l.Date))).sort().reverse();
+    const usableDates = windowFull ? dates.slice(0, -1) : dates;
+    for (const date of usableDates) {
+        const ids = (postedOrdersByWorker(byDate.get(date) || []).get(workerId) || []).filter(isUsableOrder);
+        if (ids.length > 0) return { date, ids };
+    }
+    return null;
+}
+
 /** Ručni zapisi se nikad ne brišu iz šihtarice. */
 export function isDeselectedAttendanceLog(
     log: { Work_Order_ID?: string; Source_Work_Order_ID?: string; Booking_Source?: string; Is_From_Attendance?: boolean },

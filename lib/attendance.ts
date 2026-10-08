@@ -16,7 +16,7 @@ import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductio
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
 import { itemMaterialTotal } from './materialCost';
 import { computeMissingAttendanceDays } from './attendanceHistory';
-import { bookedOrderId, isDeselectedAttendanceLog, postedOrdersByWorker } from './attendanceBooking';
+import { bookedOrderId, isDeselectedAttendanceLog, lastUsableBookedDay, postedOrdersByWorker } from './attendanceBooking';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf, type ItemLabor } from './laborAggregate';
 import { orgConstraint } from './orgScope';
 
@@ -739,8 +739,12 @@ export interface AttendanceOrderContext {
 }
 
 /** Stvarno knjiženi nalozi za otvoreni dan i posljednji raniji knjiženi dan SVAKOG radnika. */
+const HISTORY_WINDOW = 60;
+
 export async function getAttendanceOrderContext(
-    date: string, organizationId: string, workerIds: string[]
+    date: string, organizationId: string, workerIds: string[],
+    /** Nalog koji se danas još smije ponuditi (postoji, nije otkazan). */
+    isUsableOrder?: (workOrderId: string) => boolean,
 ): Promise<AttendanceOrderContext> {
     const empty: AttendanceOrderContext = {
         postedTodayByWorker: new Map(), previousByWorker: new Map(),
@@ -763,24 +767,20 @@ export async function getAttendanceOrderContext(
 
     const historyResults = await Promise.allSettled(Array.from(workerSet).map(async workerId => {
         // Postojeći ASC indeks radi i za limitToLast; ne dovlačimo cijelu istoriju radnika.
-        const last = await getDocs(query(
+        // Prozor od nekoliko dana (ne samo zadnji datum): ako je zadnji dan imao samo
+        // obrisane/otkazane naloge, „Prepiši" uzima prvi raniji dan s valjanim knjiženjem.
+        const snap = await getDocs(query(
             collection(firestore, 'work_logs'),
             where('Worker_ID', '==', workerId),
             where('Organization_ID', '==', organizationId),
-            where('Date', '<', date), orderBy('Date', 'asc'), limitToLast(1)
+            where('Date', '<', date), orderBy('Date', 'asc'), limitToLast(HISTORY_WINDOW)
         ));
-        if (last.empty) return;
-        const previousDate = (last.docs[0].data() as WorkLog).Date;
-        const previous = await getDocs(query(
-            collection(firestore, 'work_logs'),
-            where('Worker_ID', '==', workerId),
-            where('Organization_ID', '==', organizationId),
-            where('Date', '==', previousDate)
-        ));
-        const ids = postedOrdersByWorker(previous.docs.map(d => d.data() as WorkLog)).get(workerId);
-        if (ids?.length) {
-            empty.previousByWorker.set(workerId, ids);
-            empty.previousDateByWorker.set(workerId, previousDate);
+        const found = lastUsableBookedDay(
+            snap.docs.map(d => d.data() as WorkLog), workerId, isUsableOrder, snap.size >= HISTORY_WINDOW
+        );
+        if (found) {
+            empty.previousByWorker.set(workerId, found.ids);
+            empty.previousDateByWorker.set(workerId, found.date);
         }
     }));
     const historyFailures = historyResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');

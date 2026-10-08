@@ -10,6 +10,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from './firebaseAdmin';
+import { lastUsableBookedDay } from '../attendanceBooking';
 import type {
     ProcessGraph, Task, WorkerAttendance, WorkLog, WorkOrder, WorkOrderItem, Worker,
 } from '@/lib/types';
@@ -245,11 +246,12 @@ export async function getLastPostedWorkLogsBefore(orgId: string, workerId: strin
         .where('Organization_ID', '==', orgId)
         .where('Date', '<', date)
         .orderBy('Date', 'asc')
-        .limitToLast(1)
+        .limitToLast(60)
         .get();
-    if (last.empty) return null;
-    const previousDate = (last.docs[0].data() as WorkLog).Date;
-    return { date: previousDate, logs: await getWorkLogsForWorkerDate(orgId, workerId, previousDate) };
+    // Zadnji dan s upotrebljivim (neobrisanim) knjiženjem, ne doslovno zadnji datum.
+    const found = lastUsableBookedDay(last.docs.map(d => d.data() as WorkLog), workerId, undefined, last.size >= 60);
+    if (!found) return null;
+    return { date: found.date, logs: await getWorkLogsForWorkerDate(orgId, workerId, found.date) };
 }
 
 /** Zapisi jednog radnika za dan, s referencama — renormalizacija ih prepisuje. */

@@ -417,7 +417,10 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         if (!organizationId) return false;
         let context;
         try {
-            context = await getAttendanceOrderContext(dateStr, organizationId, savedWorkers.map(w => w.workerId));
+            const usable = new Set(workOrders.filter(o => o.Status !== 'Otkazano').map(o => o.Work_Order_ID));
+            context = await getAttendanceOrderContext(
+                dateStr, organizationId, savedWorkers.map(w => w.workerId), id => usable.has(id)
+            );
         } catch (error) {
             // Čitanje istorije je pomoć za prijedlog, ne dio već uspješno sačuvanog
             // prisustva. Ako upit baze zakaže, ponudi naloge bez predizbora.
