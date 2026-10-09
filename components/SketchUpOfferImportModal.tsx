@@ -52,19 +52,20 @@ interface Props {
 
 type Step = 'pick' | 'review' | 'running' | 'done';
 
-const HOW: Record<MatchHow | 'rucno', { label: string; tone: 'ok' | 'warn' | 'new' }> = {
+const HOW: Record<MatchHow | 'rucno' | 'moguce', { label: string; tone: 'ok' | 'warn' | 'new' }> = {
     id: { label: 'iz kataloga', tone: 'ok' },
     naziv: { label: 'po nazivu', tone: 'ok' },
     sifra: { label: 'po šifri dekora', tone: 'ok' },
     slicno: { label: 'prepoznato', tone: 'ok' },
     novi: { label: 'novi materijal', tone: 'new' },
     rucno: { label: 'izabrano ručno', tone: 'ok' },
+    moguce: { label: 'možda postoji', tone: 'warn' },
 };
 
 const KIND_LABEL: Record<string, string> = { ploca: 'Ploča', obloga: 'Obloga', kant: 'Kant', okov: 'Okov', obrada: 'Obrada', ostalo: 'Ostalo', usluga: 'Usluga' };
 
 const fmtQty = (n: number) => (Math.round(n * 1000) / 1000).toLocaleString('de-DE', { maximumFractionDigits: 3 });
-const fmtDims = (p: PlannedProduct) => (p.width || p.height || p.depth) ? `${p.width} × ${p.height} × ${p.depth} mm` : 'bez mjera';
+const fmtDims = (p: PlannedProduct) => (p.width || p.height || p.depth) ? `${p.width} × ${p.height} × ${p.depth}` : '—';
 const fmtDate = (iso?: string) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -91,6 +92,7 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
     const [choices, setChoices] = useState<ImportChoices>({ materials: {}, products: {} });
     const [touched, setTouched] = useState<Set<string>>(new Set());
     const [newNames, setNewNames] = useState<Record<string, string>>({});
+    const [renaming, setRenaming] = useState<string | null>(null);
     const [progress, setProgress] = useState({ label: '', done: 0, total: 1 });
     const [result, setResult] = useState<ImportResult | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
@@ -253,6 +255,16 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
         return [...plan.materials].sort((a, b) => rank(a) - rank(b) || a.vrsta.localeCompare(b.vrsta) || a.name.localeCompare(b.name, 'bs'));
     }, [plan, choices, touched]);
 
+    // Dvije grupe: šta treba potvrditi (novo / možda postoji) i šta je već u katalogu.
+    const matGroups = useMemo(() => {
+        const review = orderedMaterials.filter(m => (choices.materials[m.key] || 'new') === 'new');
+        const linked = orderedMaterials.filter(m => (choices.materials[m.key] || 'new') !== 'new');
+        return [
+            { id: 'review', label: 'Za provjeru', items: review },
+            { id: 'linked', label: 'Povezano s katalogom', items: linked },
+        ];
+    }, [orderedMaterials, choices]);
+
     const title = (
         <span className="sui-title">
             <span className="material-icons-round">view_in_ar</span>
@@ -360,53 +372,83 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                     <section className="sui-section">
                         <header>
                             <h3>Materijali i okov</h3>
-                            <span className="sui-hint">Provjeri samo žuto i plavo — zeleno je već povezano s katalogom.</span>
+                            <span className="sui-hint">Potvrdi stavke „Za provjeru" — povezane su već u katalogu.</span>
                         </header>
-                        <div className="sui-mats">
-                            {orderedMaterials.map(m => {
-                                const choice = choices.materials[m.key] || 'new';
-                                const linked = choice !== 'new' ? catalog.find(c => c.Material_ID === choice) : null;
-                                const suggest = choice === 'new' && !touched.has(m.key) ? m.suggestion : null;
-                                const how = touched.has(m.key) ? (choice === 'new' ? HOW.novi : HOW.rucno)
-                                    : suggest ? { label: 'možda postoji', tone: 'warn' as const } : HOW[m.how];
-                                const unused = !usedMaterialKeys.has(m.key);
-                                return (
-                                    <div key={m.key} className={`sui-mat tone-${choice === 'new' && !suggest ? 'new' : how.tone}${unused ? ' unused' : ''}`}>
-                                        <div className="sui-mat-src">
-                                            <span className="sui-kind">{KIND_LABEL[m.vrsta] || m.vrsta}</span>
-                                            <span className="sui-mat-name" title={m.sources.join('\n')}>{m.sources[0]}</span>
-                                            {m.sources.length > 1 && <span className="sui-more">+{m.sources.length - 1}</span>}
-                                            <span className="sui-uses">{m.lines} {plural(m.lines, 'stavka', 'stavke', 'stavki')}</span>
-                                        </div>
-                                        <span className="material-icons-round sui-arrow">east</span>
-                                        <div className="sui-mat-target">
-                                            <SearchableSelect
-                                                options={optionsFor(m)}
-                                                value={choice}
-                                                onChange={v => setMaterialChoice(m.key, v)}
-                                                placeholder="Traži u katalogu…"
-                                            />
-                                            {suggest && (
-                                                <div className="sui-suggest">
-                                                    <span>U katalogu: <b>{suggest.Name}</b></span>
-                                                    <button type="button" onClick={() => setMaterialChoice(m.key, suggest.Material_ID)}>Poveži</button>
-                                                </div>
-                                            )}
-                                            {choice === 'new' ? (
-                                                <input
-                                                    className="sui-newname"
-                                                    value={newNames[m.key] ?? m.name}
-                                                    onChange={e => setNewNames(n => ({ ...n, [m.key]: e.target.value }))}
-                                                    aria-label="Naziv novog materijala"
-                                                />
-                                            ) : linked ? (
-                                                <span className="sui-linked">{[linked.Category, linked.Unit, linked.Default_Supplier].filter(Boolean).join(' · ')}</span>
-                                            ) : null}
-                                        </div>
-                                        <span className={`sui-how tone-${how.tone}`}>{how.label}</span>
+                        <div className="sui-table" role="table" aria-label="Materijali i okov">
+                            <div className="sui-thead" role="row">
+                                <span role="columnheader">Iz ponude</span>
+                                <span role="columnheader">U ERP katalogu</span>
+                                <span role="columnheader" className="sui-th-status">Status</span>
+                            </div>
+                            {matGroups.map(gr => gr.items.length > 0 && (
+                                <div key={gr.id} role="rowgroup">
+                                    <div className={`sui-group sui-group-${gr.id}`}>
+                                        <span>{gr.label}</span>
+                                        <b>{gr.items.length}</b>
                                     </div>
-                                );
-                            })}
+                                    {gr.items.map(m => {
+                                        const choice = choices.materials[m.key] || 'new';
+                                        const linked = choice !== 'new' ? catalog.find(c => c.Material_ID === choice) : null;
+                                        const suggest = choice === 'new' && !touched.has(m.key) ? m.suggestion : null;
+                                        const how = touched.has(m.key) ? (choice === 'new' ? HOW.novi : HOW.rucno)
+                                            : suggest ? HOW.moguce : choice === 'new' ? HOW.novi : HOW[m.how];
+                                        const unused = !usedMaterialKeys.has(m.key);
+                                        const name = newNames[m.key] ?? m.name;
+                                        return (
+                                            <div key={m.key} role="row" className={`sui-row tone-${how.tone}${unused ? ' unused' : ''}`}>
+                                                <div className="sui-cell-src" role="cell">
+                                                    <span className="sui-kind">{KIND_LABEL[m.vrsta] || m.vrsta}</span>
+                                                    <div className="sui-two">
+                                                        <span className="sui-line1" title={m.sources.join('\n')}>{m.sources[0]}</span>
+                                                        <span className="sui-line2">
+                                                            {m.lines} {plural(m.lines, 'stavka', 'stavke', 'stavki')}
+                                                            {m.sources.length > 1 && <> · još {m.sources.length - 1} {plural(m.sources.length - 1, 'naziv', 'naziva', 'naziva')}</>}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="sui-cell-erp" role="cell">
+                                                    <SearchableSelect
+                                                        options={optionsFor(m)}
+                                                        value={choice}
+                                                        onChange={v => { setMaterialChoice(m.key, v); setRenaming(null); }}
+                                                        placeholder="Traži u katalogu…"
+                                                    />
+                                                    {renaming === m.key && choice === 'new' ? (
+                                                        <input
+                                                            className="sui-rename"
+                                                            autoFocus
+                                                            value={name}
+                                                            onChange={e => setNewNames(n => ({ ...n, [m.key]: e.target.value }))}
+                                                            onBlur={() => setRenaming(null)}
+                                                            onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setRenaming(null); }}
+                                                            aria-label="Naziv novog materijala"
+                                                        />
+                                                    ) : (
+                                                        <span className="sui-line2">
+                                                            {suggest ? (
+                                                                <>
+                                                                    <span className="sui-maybe">Možda: <b>{suggest.Name}</b></span>
+                                                                    <button type="button" className="sui-inline" onClick={() => setMaterialChoice(m.key, suggest.Material_ID)}>Poveži</button>
+                                                                </>
+                                                            ) : choice === 'new' ? (
+                                                                <>
+                                                                    <span>Novi · {m.category} · {m.unit}</span>
+                                                                    <button type="button" className="sui-inline" onClick={() => setRenaming(m.key)}>Uredi naziv</button>
+                                                                </>
+                                                            ) : linked ? (
+                                                                <span>{[linked.Category, linked.Unit, linked.Default_Supplier].filter(Boolean).join(' · ')}</span>
+                                                            ) : null}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="sui-cell-status" role="cell">
+                                                    <span className={`sui-badge tone-${how.tone}`}>{how.label}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ))}
                             {orderedMaterials.length === 0 && <div className="sui-empty">Izvoz nema materijala ni okova (samo usluge).</div>}
                         </div>
                     </section>
@@ -416,19 +458,27 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                             <h3>Proizvodi</h3>
                             <span className="sui-hint">Količine u sastavnici su po komadu proizvoda.</span>
                         </header>
-                        <div className="sui-products">
+                        <div className="sui-table sui-products" role="table" aria-label="Proizvodi">
+                            <div className="sui-thead sui-prod-grid" role="row">
+                                <span />
+                                <span role="columnheader">Proizvod</span>
+                                <span role="columnheader">Š × V × D</span>
+                                <span role="columnheader" className="num">Stavke</span>
+                                <span role="columnheader" className="num">Materijal / kom</span>
+                                <span role="columnheader" className="sui-th-status">Uvoz</span>
+                            </div>
                             {plan.products.map(p => {
                                 const action = choices.products[p.key] || 'new';
                                 const lines = resolveProductLines(p, plan, choices, catalog);
                                 const perUnit = lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
                                 return (
                                     <details key={p.key} className={`sui-prod${action === 'skip' ? ' skipped' : ''}`}>
-                                        <summary>
+                                        <summary className="sui-prod-grid">
                                             <span className="material-icons-round sui-caret">chevron_right</span>
                                             <span className="sui-prod-name">{p.name}{p.quantity > 1 && <em> × {p.quantity}</em>}</span>
                                             <span className="sui-prod-dims">{fmtDims(p)}</span>
-                                            <span className="sui-prod-lines">{lines.length} {plural(lines.length, 'stavka', 'stavke', 'stavki')}</span>
-                                            <span className="sui-prod-cost">{formatCurrency(perUnit)}<small>/kom</small></span>
+                                            <span className="sui-prod-lines num">{lines.length}</span>
+                                            <span className="sui-prod-cost num">{formatCurrency(perUnit)}</span>
                                             {p.existing ? (
                                                 <select
                                                     className="sui-action"
@@ -442,7 +492,7 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                                                     <option value="new">Napravi novi proizvod</option>
                                                     <option value="skip">Preskoči</option>
                                                 </select>
-                                            ) : <span className="sui-badge-new">novi</span>}
+                                            ) : <span className="sui-cell-status"><span className="sui-badge tone-new">novi proizvod</span></span>}
                                         </summary>
                                         {p.existing && (
                                             <p className="sui-exists">
