@@ -28,8 +28,9 @@
 //   se uvijek sučeljavaju zajedno).
 //
 //   ZAVRŠEN proizvod = sve njegove proizvodne stavke (neotkazani nalozi) su 'Završeno' i
-//   pokrivaju njegovu količinu; proizvod bez ijednog naloga je završen samo ako mu je
-//   status ručno postavljen na gotov (npr. kupljeni umivaonik) — uz oznaku „bez naloga".
+//   pokrivaju njegovu količinu. Profit se računa SAMO iz završenih NALOGA: proizvod kome je
+//   status ručno postavljen na gotov, a nema nijedan nalog, NIJE u profitu (nema evidentiran
+//   rad) — ide na listu „za provjeru" (oznaka doneWithoutWorkOrder).
 //
 // Razni poslovi (custom stavke) ostaju na staroj formuli (vrijednost − materijal − ostalo − rad).
 // ════════════════════════════════════════════════════════════════════
@@ -437,7 +438,7 @@ export interface ProductFlags {
     noPrice: boolean;           // prihod 0
     noMaterial: boolean;        // materijal 0 (prazna sastavnica i bez dodataka)
     noLabor: boolean;           // završen proizvodni nalog bez ijedne dnevnice
-    withoutWorkOrder: boolean;  // završen bez naloga (ručni status)
+    withoutWorkOrder: boolean;  // status kaže „gotov", a nema nijedan nalog → NIJE u profitu
     qtyMismatch: boolean;       // proizvedena količina ≠ količina u ponudi
     storedLabor: boolean;       // rad iz sačuvanog agregata (stari nalog van prozora dnevnica)
 }
@@ -545,7 +546,7 @@ export function sumStage(rows: ProductFinanceRow[]): StageTotals {
 }
 
 export function hasFlag(f: ProductFlags): boolean {
-    return f.noOffer || f.noPrice || f.noMaterial || f.noLabor || f.qtyMismatch;
+    return f.noOffer || f.noPrice || f.noMaterial || f.noLabor || f.qtyMismatch || f.withoutWorkOrder;
 }
 
 interface ProductAcc {
@@ -680,34 +681,19 @@ function productRow(acc: ProductAcc, basis: FinanceBasis): ProductFinanceRow {
                 return d > m ? d : m;
             }, '');
         }
-    } else if (DONE_STATUSES.includes(status)) {
-        stage = 'zavrseno';
-        withoutWorkOrder = true;
     } else {
+        // Bez ijednog naloga proizvod nije završen u smislu profita (nema evidentiranog rada),
+        // ni kad mu je status ručno postavljen na gotov — to se samo označava za provjeru.
         stage = 'nije_zapoceto';
+        withoutWorkOrder = DONE_STATUSES.includes(status);
     }
 
     // Proizvodne stavke nose prihod/materijal/rad; rad montaže i otkazanih naloga se dodaje.
-    let fin = sumItemFinance(production.map(p => p.fin));
+    const fin = sumItemFinance(production.map(p => p.fin));
     const sources = new Set(production.map(p => p.fin.revenueSource));
-    let revenueSource: RevenueSource = production.length > 0
+    const revenueSource: RevenueSource = production.length > 0
         ? (sources.has('nalog') ? 'nalog' : sources.has('racun') ? 'racun' : sources.has('korekcija') ? 'korekcija' : 'ponuda')
         : (line ? 'ponuda' : 'nalog');
-
-    if (withoutWorkOrder) {
-        // Gotov bez naloga (npr. kupljena roba): cijela količina, živa sastavnica, rad ako ga ima.
-        const materialBom = r2((pb?.unitMaterial || 0) * quantity);
-        const materialExtras = r2(line ? line.unitExtras * quantity : 0);
-        const revenue = line ? r2(line.unitPrice * quantity) : 0;
-        const b = profitFromTotals({ revenue, material: materialBom + materialExtras, labor: 0, services: 0, transport: 0 });
-        fin = {
-            ...b, missingPrice: revenue <= 0, missingMaterial: materialBom + materialExtras <= 0,
-            materialBom, materialExtras,
-            plannedMaterial: line ? r2((line.unitMaterialPlan + line.unitExtras) * quantity) : 0,
-            plannedLabor: line ? r2(line.unitLaborPlan * quantity) : 0,
-        };
-        revenueSource = line ? 'ponuda' : 'nalog';
-    }
 
     const laborTotal = r2(fin.labor + acc.otherLabor);
     const profitB = profitFromTotals({ revenue: fin.revenue, material: fin.material, labor: laborTotal, services: 0, transport: 0, other: fin.other });
@@ -716,13 +702,13 @@ function productRow(acc: ProductAcc, basis: FinanceBasis): ProductFinanceRow {
     const plannedProfit = r2(fin.revenue - fin.plannedMaterial - fin.plannedLabor);
     const rep = production.find(p => p.item.Status !== 'Završeno') || production[0];
     const started = stage !== 'nije_zapoceto';
-    const madeQty = withoutWorkOrder ? quantity : producedQty;
+    const madeQty = producedQty;
     const flags: ProductFlags = {
         ...ZERO_FLAGS,
         noOffer: started && !line && revenueSource === 'nalog',
         noPrice: started && fin.revenue <= 0,
         noMaterial: started && fin.material <= 0,
-        noLabor: stage === 'zavrseno' && !withoutWorkOrder && laborTotal <= 0,
+        noLabor: stage === 'zavrseno' && laborTotal <= 0,
         withoutWorkOrder,
         // Količina proizvoda (ili proizvedeno, ako je više) ≠ količina u prihvaćenoj ponudi.
         qtyMismatch: !!line && started && (Math.abs(quantity - line.quantity) > 1e-9 || madeQty - line.quantity > 1e-9),

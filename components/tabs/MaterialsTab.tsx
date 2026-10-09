@@ -9,6 +9,7 @@ import MaterialTemplatesModal from '@/components/ui/MaterialTemplatesModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
+import { downloadErpCatalog } from '@/components/SketchUpOfferImportModal';
 
 interface MaterialsTabProps {
     materials: Material[];
@@ -183,6 +184,15 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                 >
                     <span className="material-icons-round">bookmarks</span>
                     Templejti
+                </button>
+                <button
+                    className="btn btn-secondary"
+                    onClick={() => downloadErpCatalog(materials, appState.suppliers || [])}
+                    disabled={materials.length === 0 || !isTabLoaded('suppliers')}
+                    title="erp_katalog.json — sačuvaj ga pored Excel cjenovnika da SketchUp ponuda prepozna materijale iz baze"
+                >
+                    <span className="material-icons-round">view_in_ar</span>
+                    Katalog za SketchUp
                 </button>
                 <button className="btn btn-primary" onClick={() => openMaterialModal()}>
                     <span className="material-icons-round">add</span>

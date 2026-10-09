@@ -1,29 +1,32 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// KOMANDNI CENTAR — jedna strana, bez tabova
+// KOMANDNI CENTAR — pregled gore, radni prostor dolje
 //
-// Zašto ovako: „Pregled projekta" odgovara na pitanja o JEDNOM poslu i
-// dijeli ih na sedam tabova. Svakodnevno pitanje je drugačije — šta mi
-// gori preko SVIH poslova koje vodim. Zato ovdje nema tabova: sve stoji
-// na jednoj strani, a fokus se dobija lećom (puls) i širenjem, ne
-// prebacivanjem.
+// Svakodnevno pitanje je „šta mi gori preko SVIH poslova koje vodim".
+// Strana zato ide od opšteg ka konkretnom, uvijek istim redom:
+//   1. traka projekata  — sve ili samo jedan projekat (fokus)
+//   2. puls             — šest brojki koje su ujedno i filteri
+//   3. kalendar         — šta se kad dešava
+//   4. radni prostor    — DVIJE kartice s tabovima:
+//        Proizvodnja: Proizvodi · Radni nalozi
+//        Praćenje:    Narudžbe · Zadaci · Napomene
 //
-// Raspored se prilagođava RADU, ne obrnuto (lib/command/layout):
-//   • širina ide za onim što si zadnje otvorio — otvorena narudžba raširi
-//     desnu kolonu, a Proizvodi se suze i preslože sami (container queries)
-//   • svaka ploča se može sklopiti na zaglavlje sa sažetkom; sklopljena
-//     cijela kolona postane uska traka i drugoj prepusti mjesto
-//   • ⤢ drži ploču širokom dok je ne vratiš
-// Ploče se nikad ne premještaju — mijenja se samo koliko mjesta dobiju.
+// Ranije je svih pet ploča stajalo jedno ispod drugog, svaka sa svojim
+// zaglavljem, nadnaslovom, pretragom i dugmadima — strana je bila duga
+// skoro tri ekrana i „nabacana". Tabovi to rješavaju bez gubitka: broj na
+// tabu kaže gdje ima posla, a klik na puls sam otvori pravi tab.
+//
+// Širina i dalje ide za radom (lib/command/layout): otvorena narudžba
+// raširi desnu karticu, a Proizvodi se preslože sami (container queries).
 //
 // Kreiranje je dostupno odasvud: „Nalog" / „Narudžba" / „Zadatak" u
-// zaglavlju ekrana i ploča, traka odabira na dnu čim nešto označiš.
+// zaglavlju ekrana i u trakama alata, traka odabira na dnu čim nešto označiš.
 // ════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Eye, EyeOff, LayoutDashboard, Plus, RefreshCw, X } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, LayoutDashboard, Plus, RefreshCw } from 'lucide-react';
 import type { Order, PlanBlock, PlanScenario, Product, ProductNote, Project, Task, WorkOrder, Worker } from '@/lib/types';
 import { todayISO } from '@/lib/planning';
 import { shiftDate } from '@/lib/projectCommand';
@@ -31,10 +34,10 @@ import type { CommandBoardState } from '@/lib/command/board';
 import { addToBoard, boardProjects, EMPTY_BOARD, removeFromBoard, withCollapsedPanels } from '@/lib/command/board';
 import { buildScope, type BoardScope } from '@/lib/command/scope';
 import { commandMaterialRows, orderableIds, planFromSelection, suggestOrderName } from '@/lib/command/materialOrder';
-import { buildSignals, type LensId } from '@/lib/command/signals';
+import { buildSignals, type LensId, type LensSelection } from '@/lib/command/signals';
 import { buildTimeline, filterTimeline, planBlockProjects } from '@/lib/command/timeline';
 import {
-    boardSplit, columnSizing, dropFocus, panelColumn, pinnedPanel, pushFocus, toggleCollapsed,
+    boardSplit, columnSizing, dropFocus, MAIN_PANELS, panelColumn, pushFocus, toggleCollapsed,
     type FocusEntry, type PanelId,
 } from '@/lib/command/layout';
 import { getScenarios } from '@/lib/services/planning/scenarioService';
@@ -53,11 +56,47 @@ import PurchaseOrdersPanel from './PurchaseOrdersPanel';
 import TaskWall from './TaskWall';
 import NotesPanel from './NotesPanel';
 import SelectionDock from './SelectionDock';
-import { CreateMenu, plural, shortDate, type CreateMenuItem } from './parts';
+import { CreateMenu, KcTabCard, plural, shortDate, type CreateMenuItem, type KcTab } from './parts';
 import './CommandCenter.css';
 
 /** Stavka menija narudžbe koja nije projekat, nego cijela tabla. */
 const WHOLE_BOARD = '__tabla__';
+
+const MAIN_TABS: KcTab[] = [
+    { id: 'products', label: 'Proizvodi' },
+    { id: 'workorders', label: 'Radni nalozi' },
+];
+const RAIL_TABS: KcTab[] = [
+    { id: 'purchases', label: 'Narudžbe' },
+    { id: 'tasks', label: 'Zadaci' },
+    { id: 'notes', label: 'Napomene' },
+];
+
+/**
+ * Koji tab odgovara na pitanje leće. Tab se mijenja samo ako na njemu
+ * STVARNO ima nešto — „Kasni" bez zakašnjelih naloga ne smije sakriti
+ * proizvode i pokazati praznu listu.
+ */
+function tabsForLens(lens: LensId, sel: LensSelection): { main?: PanelId; rail?: PanelId } {
+    switch (lens) {
+        case 'late':
+            return {
+                main: sel.workOrderIds.size > 0 ? 'workorders' : undefined,
+                rail: sel.orderIds.size > 0 ? 'purchases' : sel.taskIds.size > 0 ? 'tasks' : undefined,
+            };
+        case 'blocked':
+        case 'toOrder':
+            return { main: 'products' };
+        case 'running':
+            return { main: 'workorders' };
+        case 'tasks':
+            return { rail: 'tasks' };
+        case 'awaiting':
+            return { rail: 'notes' };
+        default:
+            return {};
+    }
+}
 
 export interface CommandCenterScreenProps {
     projects: Project[];
@@ -143,10 +182,27 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
         return kept;
     }, [tasks, taskOverrides]);
 
-    const scope = useMemo(() => buildScope(onBoard, workOrders, orders, liveTasks), [onBoard, workOrders, orders, liveTasks]);
-    const materials = useMemo(() => commandMaterialRows(onBoard), [onBoard]);
+    // ── Fokus na jedan projekat ──────────────────────────────────────
+    // Traka projekata suzi CIJELU stranu na jedan projekat. Tabla se pri
+    // tome ne mijenja (ranije je „Prikaži samo ovaj projekat" iz kalendara
+    // izbacivao ostale projekte s table, pa ih je trebalo ponovo dodavati).
+    const [focusId, setFocusId] = useState<string | null>(null);
+    const focusLive = focusId !== null && onBoard.some(p => p.Project_ID === focusId) ? focusId : null;
+    const focused = useMemo(
+        () => (focusLive ? onBoard.filter(p => p.Project_ID === focusLive) : onBoard),
+        [onBoard, focusLive],
+    );
+
+    // Brojke na traci projekata uvijek gledaju CIJELU tablu — i dok je
+    // strana sužena, mora se vidjeti da u drugom projektu nešto kasni.
+    const boardScope = useMemo(() => buildScope(onBoard, workOrders, orders, liveTasks), [onBoard, workOrders, orders, liveTasks]);
+    const scope = useMemo(
+        () => (focusLive ? buildScope(focused, workOrders, orders, liveTasks) : boardScope),
+        [focusLive, focused, workOrders, orders, liveTasks, boardScope],
+    );
+    const materials = useMemo(() => commandMaterialRows(focused), [focused]);
     const { signals, selection } = useMemo(() => buildSignals(scope, materials, today), [scope, materials, today]);
-    const chipCounts = useMemo(() => boardChipCounts(scope, today), [scope, today]);
+    const chipCounts = useMemo(() => boardChipCounts(boardScope, today), [boardScope, today]);
 
     // Planovi s Platna — samo čitanje. Scenarija zna biti više, pa se ne miješaju:
     // nudi se izbor, a crta se jedan, inače bi ista aktivnost bila na ekranu dvaput.
@@ -183,17 +239,20 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
     const toggleShowDone = () => onBoardChange({ ...board, Show_Done: !board.Show_Done });
 
     // ── Raspored ─────────────────────────────────────────────────────
-    // Sklopljene ploče se pamte s tablom; fokus (šta je otvoreno, šta je ⤢)
-    // traje samo dok je ekran otvoren.
+    // Sklapa se samo kalendar (pamti se s tablom); ploče radnog prostora su
+    // tabovi, pa im sklapanje više ne treba. Stare table mogu imati i druge
+    // sklopljene ploče — one se ovdje jednostavno ne gledaju.
     const collapsedList = useMemo(() => board.Collapsed_Panels || [], [board.Collapsed_Panels]);
-    const collapsed = useMemo(() => new Set<PanelId>(collapsedList), [collapsedList]);
+    const calendarCollapsed = collapsedList.includes('calendar');
     const [focus, setFocus] = useState<FocusEntry[]>([]);
     // Kolona u kojoj je korisnik zadnji put radio — ona mora ostati mirna
     // dok se druga preslaguje (vidi overflow-anchor u CSS-u).
     const [anchorColumn, setAnchorColumn] = useState<'main' | 'rail' | null>(null);
-    const split = boardSplit(collapsed, focus);
+    const split = boardSplit(new Set<PanelId>(), focus);
     const sizing = columnSizing(split);
-    const pinned = pinnedPanel(focus);
+
+    const [mainTab, setMainTab] = useState<PanelId>('products');
+    const [railTab, setRailTab] = useState<PanelId>('purchases');
 
     const reportOpen = useCallback((panel: PanelId, open: boolean) => {
         setFocus(prev => (open ? pushFocus(prev, { panel, source: 'auto' }) : dropFocus(prev, panel, 'auto')));
@@ -201,31 +260,25 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
         if (column !== 'top') setAnchorColumn(column);
     }, []);
 
-    const togglePin = (panel: PanelId) => {
-        setFocus(prev => (pinnedPanel(prev) === panel
-            ? dropFocus(prev, panel, 'pin')
-            : pushFocus(prev, { panel, source: 'pin' })));
+    /** Novi tab — širina koju je tražio sakriveni tab (npr. otvorena narudžba) se vraća. */
+    const selectTab = useCallback((panel: PanelId) => {
         const column = panelColumn(panel);
-        if (column !== 'top') setAnchorColumn(column);
+        if (column === 'main') setMainTab(panel); else setRailTab(panel);
+        setFocus(prev => prev.filter(f => panelColumn(f.panel) !== column || f.panel === panel));
+    }, []);
+
+    const toggleCalendar = () => {
+        onBoardChange(withCollapsedPanels(board, toggleCollapsed(collapsedList, 'calendar')));
     };
 
-    const toggleCollapse = (panel: PanelId) => {
-        const closing = !collapsed.has(panel);
-        onBoardChange(withCollapsedPanels(board, toggleCollapsed(collapsedList, panel)));
-        // ⤢ se skida sa sklopljene ploče. Automatski fokus ostaje: ono što je
-        // u njoj otvoreno ostaje otvoreno, pa čim se ploča vrati, vrati se i
-        // širina (boardSplit sklopljene ploče ionako preskače).
-        if (closing) setFocus(prev => dropFocus(prev, panel, 'pin'));
-        const column = panelColumn(panel);
-        if (column !== 'top') setAnchorColumn(column);
+    /** Leća sužava stranu i otvara tab na kojem je odgovor. */
+    const applyLens = (next: LensId | null) => {
+        setLens(next);
+        if (!next) return;
+        const target = tabsForLens(next, selection[next]);
+        if (target.main) selectTab(target.main);
+        if (target.rail) selectTab(target.rail);
     };
-
-    const panelLayout = (panel: PanelId) => ({
-        collapsed: collapsed.has(panel),
-        onCollapse: () => toggleCollapse(panel),
-        pinned: pinned === panel,
-        onPin: () => togglePin(panel),
-    });
 
     const setOpenWorkOrderId = useCallback((id: string | null) => {
         setOpenWorkOrderIdState(id);
@@ -371,7 +424,9 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
         return inOrder;
     }, [scope.workOrders]);
 
-    const workOrderItems: CreateMenuItem[] = onBoard.map(project => {
+    // Meniji nude projekte u FOKUSU — kad je strana sužena na jedan
+    // projekat, „+ Nalog" radi odmah, bez pitanja za koji projekat.
+    const workOrderItems: CreateMenuItem[] = focused.map(project => {
         const free = (project.products || []).filter(p => !productsInOrder.has(p.Product_ID)).length;
         return {
             id: project.Project_ID,
@@ -382,7 +437,7 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
     });
 
     const orderItems: CreateMenuItem[] = useMemo(() => {
-        const items: CreateMenuItem[] = onBoard.map(project => {
+        const items: CreateMenuItem[] = focused.map(project => {
             const missing = orderableIds(materials, { projectId: project.Project_ID }).length;
             return {
                 id: project.Project_ID,
@@ -393,13 +448,13 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
             };
         });
         const all = orderableIds(materials).length;
-        if (onBoard.length > 1) {
+        if (focused.length > 1) {
             items.push({ id: WHOLE_BOARD, label: 'Sve što fali na tabli', hint: `${all}`, disabled: all === 0, footer: true });
         }
         return items;
-    }, [onBoard, materials]);
+    }, [focused, materials]);
 
-    const taskItems: CreateMenuItem[] = onBoard.map(project => ({
+    const taskItems: CreateMenuItem[] = focused.map(project => ({
         id: project.Project_ID, label: projectLabel(project), projectId: project.Project_ID,
     }));
 
@@ -514,12 +569,12 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
     }, [guard, noteOverrides, organizationId, showToast]);
 
     // ── Kalendar → paneli ────────────────────────────────────────────
-    /** Ploča na koju vodi klik iz kalendara mora biti otvorena i na ekranu. */
+    /** Tab na koji vodi klik iz kalendara mora biti otvoren i na ekranu. */
     const reveal = (panel: PanelId) => {
-        if (collapsed.has(panel)) toggleCollapse(panel);
+        selectTab(panel);
         // block:'nearest' — 'start' je znao povuci i horizontalno, pa bi
         // zaglavlje strane iskliznulo ulijevo ispod sidebara.
-        setTimeout(() => document.querySelector(`[data-panel="${panel}"]`)
+        setTimeout(() => document.querySelector(`[data-card~="${panel}"]`)
             ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }), 0);
     };
     const timelineActions = {
@@ -528,7 +583,7 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
             reveal('workorders');
         },
         onOpenTask: () => reveal('tasks'),
-        onOpenProject: (id: string) => onBoardChange({ ...board, Project_IDs: [id] }),
+        onOpenProject: (id: string) => setFocusId(id),
     };
 
     const boardStyle = {
@@ -538,28 +593,47 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
         '--kc-rail-basis': `${sizing.railBasis}px`,
     } as CSSProperties;
 
+    const focusedProject = focusLive ? focused[0] : undefined;
+    const subtitle = onBoard.length === 0
+        ? 'Tabla je prazna'
+        : [
+            focusedProject ? projectLabel(focusedProject) : `${onBoard.length} ${plural(onBoard.length, 'projekat', 'projekta', 'projekata')}`,
+            `${scope.workOrders.length} ${plural(scope.workOrders.length, 'nalog', 'naloga', 'naloga')}`,
+            `${scope.tasks.length} ${plural(scope.tasks.length, 'zadatak', 'zadatka', 'zadataka')}`,
+        ].join(' · ');
+
     const body = (
         <div className="kc-root">
             <header className="kc-top">
-                <button type="button" className="kc-icon-btn" aria-label="Nazad na projekte" onClick={onClose}>
-                    <ArrowLeft size={17} />
+                <button type="button" className="kc-icon-btn ghost" aria-label="Nazad na projekte" title="Nazad na projekte" onClick={onClose}>
+                    <ArrowLeft size={18} />
                 </button>
                 <div className="kc-top-title">
                     <strong>Komandni centar</strong>
-                    <span>
-                        {onBoard.length === 0
-                            ? 'Tabla je prazna'
-                            : `${onBoard.length} ${plural(onBoard.length, 'projekat', 'projekta', 'projekata')} · ${scope.workOrders.length} naloga · ${scope.tasks.length} zadataka`}
-                    </span>
+                    <span>{subtitle}</span>
                 </div>
                 <div className="kc-top-spacer" />
-                {/* Kreiranje stoji u zaglavlju koje je UVIJEK na ekranu — ranije je
-                    „Novi nalog" bio na dnu duge strane, a narudžba je tražila da se
-                    prvo otvori proizvod i skrola do dna ploče. */}
+                <div className="kc-top-actions">
+                    <button
+                        type="button"
+                        className="kc-toggle"
+                        aria-pressed={board.Show_Done}
+                        title={board.Show_Done ? 'Sakrij završene naloge, primljene narudžbe i riješene napomene' : 'Prikaži i ono što je završeno'}
+                        onClick={toggleShowDone}
+                    >
+                        {board.Show_Done ? <Eye size={15} /> : <EyeOff size={15} />} <span>Završeno</span>
+                    </button>
+                    <button type="button" className="kc-icon-btn" aria-label="Osvježi podatke" title="Osvježi" onClick={() => onRefresh()}>
+                        <RefreshCw size={15} />
+                    </button>
+                </div>
+                {/* Kreiranje stoji u zaglavlju koje je UVIJEK na ekranu. Jedno
+                    dugme je glavno (nalog), druga dva su tiša — tri jednako
+                    plava dugmeta su se borila za pažnju. */}
                 {canCreate && onBoard.length > 0 && (
                     <div className="kc-top-create" role="group" aria-label="Novo">
                         {workOrderMenu('primary')}
-                        {orderMenu('primary')}
+                        {orderMenu()}
                         <CreateMenu
                             icon={<Plus size={14} strokeWidth={2.4} />}
                             label="Zadatak"
@@ -571,24 +645,6 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
                         />
                     </div>
                 )}
-                <div className="kc-top-actions">
-                    {lens && (
-                        <span className="kc-lens-pill">
-                            {signals.find(s => s.id === lens)?.label}
-                            <button type="button" aria-label="Ugasi filter" onClick={() => setLens(null)}><X size={13} /></button>
-                        </span>
-                    )}
-                    {pinned && (
-                        <button type="button" className="kc-btn sm" onClick={() => togglePin(pinned)}>Vrati raspored</button>
-                    )}
-                    <button type="button" className="kc-toggle" aria-pressed={board.Show_Done} onClick={toggleShowDone}>
-                        {board.Show_Done ? <Eye size={15} /> : <EyeOff size={15} />} <span>Završeno</span>
-                    </button>
-                    <button type="button" className="kc-icon-btn" aria-label="Osvježi podatke" title="Osvježi" onClick={() => onRefresh()}>
-                        <RefreshCw size={15} />
-                    </button>
-                    <button type="button" className="kc-icon-btn" aria-label="Zatvori komandni centar" onClick={onClose}><X size={17} /></button>
-                </div>
             </header>
 
             <div className={`kc-scroll${hasSelection ? ' has-dock' : ''}`}>
@@ -597,6 +653,8 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
                     projects={projects}
                     boardIds={board.Project_IDs}
                     counts={chipCounts}
+                    focusId={focusLive}
+                    onFocus={setFocusId}
                     onAdd={addProjects}
                     onRemove={removeProject}
                 />
@@ -607,12 +665,12 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
                         <h2>Tabla je prazna</h2>
                         <p>
                             Dodaj projekte koje trenutno voziš. Njihovi proizvodi, materijali, nalozi,
-                            zadaci i napomene se skupe ovdje — na jednoj strani, bez tabova.
+                            zadaci i napomene se skupe ovdje, na jednom mjestu.
                         </p>
                     </div>
                 ) : (
                     <>
-                        <PulseStrip signals={signals} lens={lens} onLens={setLens} />
+                        <PulseStrip signals={signals} lens={lens} onLens={applyLens} />
 
                         <CommandTimeline
                             data={visibleTimeline}
@@ -620,86 +678,85 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
                             today={today}
                             actions={timelineActions}
                             plans={plans}
-                            collapsed={collapsed.has('calendar')}
-                            onCollapse={() => toggleCollapse('calendar')}
+                            collapsed={calendarCollapsed}
+                            onCollapse={toggleCalendar}
                         />
 
                         <div className="kc-board" data-split={split} data-anchor={anchorColumn || undefined} style={boardStyle}>
                             <div className="kc-col kc-col-main">
-                                <ProductsPanel
-                                    scope={scope}
-                                    materials={materials}
-                                    lens={lensSelection}
-                                    canCreate={canCreate}
-                                    selectedProducts={selectedProducts}
-                                    selectedMaterials={selectedMaterials}
-                                    onToggleProduct={toggleIn(setSelectedProducts)}
-                                    onToggleProductMany={toggleMany(setSelectedProducts)}
-                                    onToggleMaterial={toggleIn(setSelectedMaterials)}
-                                    onToggleMaterialMany={toggleMany(setSelectedMaterials)}
-                                    onCreateWorkOrderFor={createWorkOrderFor}
-                                    onOrder={openOrder}
-                                    onOpenChange={open => reportOpen('products', open)}
-                                    {...panelLayout('products')}
-                                />
-                                <WorkOrdersPanel
-                                    scope={scope}
-                                    workers={workers}
-                                    tasks={tasks}
-                                    today={today}
-                                    lens={lensSelection}
-                                    showDone={board.Show_Done}
-                                    actions={workOrderActions}
-                                    openId={openWorkOrderId}
-                                    onOpenChange={setOpenWorkOrderId}
-                                    create={canCreate ? workOrderMenu() : undefined}
-                                    {...panelLayout('workorders')}
-                                />
+                                <KcTabCard label="Proizvodnja" tabs={MAIN_TABS} active={mainTab} onSelect={selectTab}>
+                                    <ProductsPanel
+                                        scope={scope}
+                                        materials={materials}
+                                        lens={lensSelection}
+                                        canCreate={canCreate}
+                                        selectedProducts={selectedProducts}
+                                        selectedMaterials={selectedMaterials}
+                                        onToggleProduct={toggleIn(setSelectedProducts)}
+                                        onToggleProductMany={toggleMany(setSelectedProducts)}
+                                        onToggleMaterial={toggleIn(setSelectedMaterials)}
+                                        onToggleMaterialMany={toggleMany(setSelectedMaterials)}
+                                        onCreateWorkOrderFor={createWorkOrderFor}
+                                        onOrder={openOrder}
+                                        onOpenChange={open => reportOpen('products', open)}
+                                    />
+                                    <WorkOrdersPanel
+                                        scope={scope}
+                                        workers={workers}
+                                        tasks={tasks}
+                                        today={today}
+                                        lens={lensSelection}
+                                        showDone={board.Show_Done}
+                                        actions={workOrderActions}
+                                        openId={openWorkOrderId}
+                                        onOpenChange={setOpenWorkOrderId}
+                                        create={canCreate ? workOrderMenu() : undefined}
+                                    />
+                                </KcTabCard>
                             </div>
 
                             <aside className="kc-col kc-col-rail">
-                                <PurchaseOrdersPanel
-                                    scope={scope}
-                                    today={today}
-                                    lens={lensSelection}
-                                    showDone={board.Show_Done}
-                                    create={canCreate ? orderMenu() : undefined}
-                                    onOpenChange={open => reportOpen('purchases', open)}
-                                    {...panelLayout('purchases')}
-                                />
-                                <TaskWall
-                                    scope={scope}
-                                    lens={lensSelection}
-                                    showDone={board.Show_Done}
-                                    today={today}
-                                    canCreate={canCreate}
-                                    onToggleDone={toggleTaskDone}
-                                    onEdit={task => setTaskEditor({ mode: 'edit', task, projectId: projectOfTask(task, onBoard) })}
-                                    onToggleChecklist={toggleChecklist}
-                                    onNew={projectId => setTaskEditor({ mode: 'create', projectId })}
-                                    onOpenWorkOrder={timelineActions.onOpenWorkOrder}
-                                    create={canCreate ? (
-                                        <CreateMenu
-                                            icon={<Plus size={14} strokeWidth={2.4} />}
-                                            label="Zadatak"
-                                            ariaLabel="Novi zadatak"
-                                            heading="Zadatak za projekat"
-                                            items={taskItems}
-                                            onPick={projectId => setTaskEditor({ mode: 'create', projectId })}
-                                        />
-                                    ) : undefined}
-                                    {...panelLayout('tasks')}
-                                />
-                                <NotesPanel
-                                    scope={scope}
-                                    lens={lensSelection}
-                                    showDone={board.Show_Done}
-                                    canCreate={canCreate}
-                                    today={today}
-                                    onSave={saveNotes}
-                                    onOpenModal={(project, productId) => setNotesModal({ project, productId })}
-                                    {...panelLayout('notes')}
-                                />
+                                <KcTabCard label="Praćenje" tabs={RAIL_TABS} active={railTab} onSelect={selectTab}>
+                                    <PurchaseOrdersPanel
+                                        scope={scope}
+                                        today={today}
+                                        lens={lensSelection}
+                                        showDone={board.Show_Done}
+                                        create={canCreate ? orderMenu() : undefined}
+                                        onOpenChange={open => reportOpen('purchases', open)}
+                                    />
+                                    <TaskWall
+                                        scope={scope}
+                                        lens={lensSelection}
+                                        showDone={board.Show_Done}
+                                        today={today}
+                                        canCreate={canCreate}
+                                        onToggleDone={toggleTaskDone}
+                                        onEdit={task => setTaskEditor({ mode: 'edit', task, projectId: projectOfTask(task, onBoard) })}
+                                        onToggleChecklist={toggleChecklist}
+                                        onNew={projectId => setTaskEditor({ mode: 'create', projectId })}
+                                        onOpenWorkOrder={timelineActions.onOpenWorkOrder}
+                                        create={canCreate ? (
+                                            <CreateMenu
+                                                icon={<Plus size={14} strokeWidth={2.4} />}
+                                                label="Zadatak"
+                                                ariaLabel="Novi zadatak"
+                                                heading="Zadatak za projekat"
+                                                items={taskItems}
+                                                onPick={projectId => setTaskEditor({ mode: 'create', projectId })}
+                                            />
+                                        ) : undefined}
+                                    />
+                                    <NotesPanel
+                                        scope={scope}
+                                        lens={lensSelection}
+                                        showDone={board.Show_Done}
+                                        canCreate={canCreate}
+                                        today={today}
+                                        onSave={saveNotes}
+                                        onOpenModal={(project, productId) => setNotesModal({ project, productId })}
+                                    />
+                                </KcTabCard>
                             </aside>
                         </div>
                     </>

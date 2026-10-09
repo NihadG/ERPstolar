@@ -1,15 +1,19 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// TABLA PROJEKATA — čipovi + birač
+// TABLA PROJEKATA — traka projekata + birač
 //
-// Tabla je lična i mijenja se često, pa čip mora reći dovoljno da se
-// odluči hoće li ostati: koliko proizvoda, koliko otvorenih naloga,
-// koliko zadataka i — najvažnije — koliko toga kasni.
+// Traka je ujedno i FOKUS: „Svi projekti" pokazuje cijelu tablu, klik na
+// projekat suzi cijelu stranu (puls, kalendar, ploče, kreiranje) samo na
+// njega. Ranije su čipovi nosili po četiri brojke („3 pr 2 nal 2 zad")
+// i nisu radili ništa — sada nose samo ono što traži reakciju (koliko
+// kasni), a ostale brojke su u opisu (title).
+//
+// Uklanjanje (×) skida projekat SAMO s table, projekat ostaje netaknut.
 // ════════════════════════════════════════════════════════════════════
 
 import { useMemo, useState } from 'react';
-import { Plus, Search, X } from 'lucide-react';
+import { LayoutGrid, Plus, Search, X } from 'lucide-react';
 import type { Project } from '@/lib/types';
 import Modal from '../Modal';
 import { hue } from './parts';
@@ -46,12 +50,15 @@ export function boardChipCounts(scope: BoardScope, today: string): Map<string, C
 }
 
 export default function BoardBar({
-    projects, boardIds, counts, onAdd, onRemove,
+    projects, boardIds, counts, focusId, onFocus, onAdd, onRemove,
 }: {
     /** Svi projekti organizacije — izvor za birač. */
     projects: Project[];
     boardIds: string[];
     counts: Map<string, ChipCounts>;
+    /** Projekat na koji je strana sužena; null = svi projekti s table. */
+    focusId: string | null;
+    onFocus: (projectId: string | null) => void;
     onAdd: (ids: string[]) => void;
     onRemove: (id: string) => void;
 }) {
@@ -60,39 +67,58 @@ export default function BoardBar({
         const index = new Map(projects.map(p => [p.Project_ID, p]));
         return boardIds.map(id => index.get(id)).filter((p): p is Project => !!p);
     }, [projects, boardIds]);
+    const totalLate = onBoard.reduce((sum, p) => sum + (counts.get(p.Project_ID)?.late || 0), 0);
 
     return (
-        <div className="kc-boardbar">
+        <div className="kc-scope" role="group" aria-label="Projekti na tabli — klik suzi stranu na projekat">
+            {onBoard.length > 0 && (
+                <button
+                    type="button"
+                    className="kc-scope-all"
+                    aria-pressed={focusId === null}
+                    onClick={() => onFocus(null)}
+                >
+                    <LayoutGrid size={14} aria-hidden />
+                    Svi projekti
+                    <span className="kc-scope-n">{onBoard.length}</span>
+                    {totalLate > 0 && focusId !== null && <span className="kc-scope-late" title="Kasni na cijeloj tabli">{totalLate}</span>}
+                </button>
+            )}
             {onBoard.map(project => {
                 const c = counts.get(project.Project_ID);
+                const name = project.Name || project.Client_Name || 'Projekat';
+                const on = focusId === project.Project_ID;
+                const info = [
+                    project.Name ? project.Client_Name : null,
+                    c ? `${c.products} proizvoda · ${c.workOrders} otvorenih naloga · ${c.tasks} zadataka` : null,
+                ].filter(Boolean).join(' · ');
                 return (
-                    <div className="kc-chip" key={project.Project_ID} style={hue(project.Project_ID)}>
-                        <span className="kc-chip-text">
-                            <strong>{project.Name || project.Client_Name}</strong>
-                            <span>{project.Name ? project.Client_Name : 'Projekat'}</span>
-                        </span>
-                        {c && (
-                            <span className="kc-chip-counts">
-                                <span title="Proizvoda"><b>{c.products}</b> pr</span>
-                                <span title="Otvorenih naloga"><b>{c.workOrders}</b> nal</span>
-                                <span title="Otvorenih zadataka"><b>{c.tasks}</b> zad</span>
-                                {c.late > 0 && <span className="late" title="Kasni">{c.late} kasni</span>}
-                            </span>
-                        )}
+                    <div className={`kc-scope-item${on ? ' on' : ''}`} key={project.Project_ID} style={hue(project.Project_ID)}>
                         <button
                             type="button"
-                            className="kc-chip-x"
-                            aria-label={`Ukloni s table: ${project.Name || project.Client_Name}`}
+                            className="kc-scope-btn"
+                            aria-pressed={on}
+                            title={on ? `${info} — klik vraća sve projekte` : `${info} — klik prikazuje samo ovaj projekat`}
+                            onClick={() => onFocus(on ? null : project.Project_ID)}
+                        >
+                            <span className="kc-scope-dot" aria-hidden />
+                            <span className="kc-scope-name">{name}</span>
+                            {c && c.late > 0 && <span className="kc-scope-late" title={`${c.late} kasni`}>{c.late}</span>}
+                        </button>
+                        <button
+                            type="button"
+                            className="kc-scope-x"
+                            aria-label={`Ukloni s table: ${name}`}
                             title="Ukloni s table (projekat ostaje netaknut)"
                             onClick={() => onRemove(project.Project_ID)}
                         >
-                            <X size={15} />
+                            <X size={13} />
                         </button>
                     </div>
                 );
             })}
-            <button type="button" className="kc-chip-add" onClick={() => setPickerOpen(true)}>
-                <Plus size={15} /> Dodaj projekat
+            <button type="button" className="kc-scope-add" onClick={() => setPickerOpen(true)}>
+                <Plus size={14} /> Dodaj projekat
             </button>
 
             <ProjectPicker

@@ -68,6 +68,7 @@ const ISSUE_LABEL: Record<IssueKind, string> = {
     noMaterial: 'bez materijala',
     noLabor: 'završen bez ijedne dnevnice',
     qtyMismatch: 'količina se ne slaže s ponudom',
+    doneWithoutWorkOrder: 'označen kao gotov, a nema nalog (nije u profitu)',
 };
 
 /** Jednostavna horizontalna traka (width ∝ value/max). */
@@ -488,7 +489,7 @@ function productIssueText(p: AnalyticsProduct): string {
     if (f.noMaterial) return 'bez materijala';
     if (f.noLabor) return 'završen bez dnevnica';
     if (f.qtyMismatch) return `količina: proizvod ${p.quantity}, ponuda ${p.offerQty}`;
-    if (f.withoutWorkOrder) return 'gotov bez naloga';
+    if (f.withoutWorkOrder) return 'status gotov, a nema nalog — nije u profitu';
     return '';
 }
 

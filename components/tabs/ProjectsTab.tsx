@@ -47,7 +47,7 @@ import MobileMaterialEditModal from './mobile/MobileMaterialEditModal';
 import MobileProjectModal from './mobile/MobileProjectModal';
 import MobileProductModal from './mobile/MobileProductModal';
 import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
-import SketchUpImportModal from '@/components/SketchUpImportModal';
+import SketchUpOfferImportModal from '@/components/SketchUpOfferImportModal';
 import CutlistModal from '@/components/ui/CutlistModal';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
@@ -139,7 +139,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [materialModal, setMaterialModal] = useState(false);
     const [glassModal, setGlassModal] = useState(false);
     const [aluDoorModal, setAluDoorModal] = useState(false);
-    const [sketchUpImportProductId, setSketchUpImportProductId] = useState<string | null>(null);
+    // Uvoz cijele SketchUp ponude (više proizvoda + sastavnice) u projekat
+    const [suOfferProjectId, setSuOfferProjectId] = useState<string | null>(null);
     // Krojenje ploča — samo ID; proizvod se svaki render izvodi svjež iz `projects`
     // (spremanje/brisanje liste → onRefresh mora odmah ažurirati modal).
     const [cutlistProductId, setCutlistProductId] = useState<string | null>(null);
@@ -1730,6 +1731,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                     {sortedProducts.every(p => selectedForWorkOrder.has(p.Product_ID)) ? 'Poništi odabir' : 'Odaberi sve'}
                                                                 </button>
                                                             )}
+                                                            <button
+                                                                className="btn-add-item"
+                                                                onClick={() => setSuOfferProjectId(project.Project_ID)}
+                                                                title="Uvezi proizvode s materijalima i okovom iz SketchUp ponude"
+                                                            >
+                                                                <span className="material-icons-round">view_in_ar</span>
+                                                                Iz SketchUpa
+                                                            </button>
                                                             <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>
                                                                 <span className="material-icons-round">add</span>
                                                                 Dodaj proizvod
@@ -1842,12 +1851,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                 <h5>Materijali ({productMats.length})</h5>
                                                                             </div>
                                                                             <div className="materials-header-actions">
-                                                                                <button className="btn-add-item" onClick={() => {
-                                                                                    setSketchUpImportProductId(product.Product_ID);
-                                                                                }}>
-                                                                                    <span className="material-icons-round">upload_file</span>
-                                                                                    SketchUp
-                                                                                </button>
                                                                                 <button
                                                                                     className="btn-add-item"
                                                                                     onClick={() => setCutlistProductId(product.Product_ID)}
@@ -3008,14 +3011,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 }
             `}</style>
 
-            {/* SketchUp Import Modal */}
-            <SketchUpImportModal
-                isOpen={!!sketchUpImportProductId}
-                onClose={() => setSketchUpImportProductId(null)}
-                productId={sketchUpImportProductId || ''}
+            {/* Uvoz SketchUp ponude u projekat */}
+            <SketchUpOfferImportModal
+                isOpen={!!suOfferProjectId}
+                onClose={() => setSuOfferProjectId(null)}
+                project={projects.find(p => p.Project_ID === suOfferProjectId) || null}
                 organizationId={organizationId || ''}
-                materials={materials}
-                onImportComplete={() => onRefresh('projects')}
+                onImported={() => onRefresh('projects', 'materials', 'suppliers')}
                 showToast={showToast}
             />
 

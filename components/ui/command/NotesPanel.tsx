@@ -127,29 +127,31 @@ export default function NotesPanel({
                     <Plus size={14} /> <span>Nova</span>
                 </button>
             )}
+            actions={
+                <>
+                    <label className="kc-search">
+                        <Search size={14} />
+                        <input
+                            aria-label="Pretraži napomene"
+                            placeholder="Nađi napomenu…"
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                        />
+                        {query && <button type="button" aria-label="Očisti pretragu" onClick={() => setQuery('')}><X size={13} /></button>}
+                    </label>
+                    <div className="kc-seg" role="group" aria-label="Grupisanje napomena">
+                        <button type="button" aria-pressed={by === 'audience'} onClick={() => setBy('audience')}>Primalac</button>
+                        <button type="button" aria-pressed={by === 'project'} onClick={() => setBy('project')}>Projekat</button>
+                        <button type="button" aria-pressed={by === 'product'} onClick={() => setBy('product')}>Pozicija</button>
+                    </div>
+                    <select className="kc-select sm" aria-label="Sortiranje napomena" value={sort} onChange={e => setSort(e.target.value as NoteSort)}>
+                        <option value="oldest">Najduže čeka</option>
+                        <option value="newest">Najnovije</option>
+                        <option value="alpha">Abecedno</option>
+                    </select>
+                </>
+            }
         >
-            <div className="kc-qa-tools">
-                <label className="kc-search">
-                    <Search size={14} />
-                    <input
-                        aria-label="Pretraži napomene"
-                        placeholder="Nađi napomenu…"
-                        value={query}
-                        onChange={e => setQuery(e.target.value)}
-                    />
-                    {query && <button type="button" aria-label="Očisti pretragu" onClick={() => setQuery('')}><X size={13} /></button>}
-                </label>
-                <div className="kc-seg" role="group" aria-label="Grupisanje napomena">
-                    <button type="button" aria-pressed={by === 'audience'} onClick={() => setBy('audience')}>Primalac</button>
-                    <button type="button" aria-pressed={by === 'project'} onClick={() => setBy('project')}>Projekat</button>
-                    <button type="button" aria-pressed={by === 'product'} onClick={() => setBy('product')}>Pozicija</button>
-                </div>
-                <select className="kc-select sm" aria-label="Sortiranje napomena" value={sort} onChange={e => setSort(e.target.value as NoteSort)}>
-                    <option value="oldest">Najduže čeka</option>
-                    <option value="newest">Najnovije</option>
-                    <option value="alpha">Abecedno</option>
-                </select>
-            </div>
 
             {canCreate && adding && (
                 <div className="kc-qa-new">

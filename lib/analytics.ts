@@ -105,7 +105,7 @@ export interface PvARow { projectId: string; projectName: string; count: number;
 
 export interface WeekBucket { weekStart: string; labor: number }
 
-export type IssueKind = 'noOffer' | 'noPrice' | 'noMaterial' | 'noLabor' | 'qtyMismatch';
+export type IssueKind = 'noOffer' | 'noPrice' | 'noMaterial' | 'noLabor' | 'qtyMismatch' | 'doneWithoutWorkOrder';
 export interface AnalyticsIssue {
     kind: IssueKind;
     projectId: string;
@@ -175,6 +175,7 @@ function issuesOf(p: ProductFinanceRow, projectName: string): AnalyticsIssue[] {
     if (p.flags.noMaterial) out.push({ ...base, kind: 'noMaterial', detail: 'Sastavnica prazna i nema dodataka — materijal 0' });
     if (p.flags.noLabor) out.push({ ...base, kind: 'noLabor', detail: 'Završen, a nema nijedne dnevnice' });
     if (p.flags.qtyMismatch) out.push({ ...base, kind: 'qtyMismatch', detail: `Količina: proizvod ${p.quantity}, proizvedeno ${p.producedQty}, ponuda ${p.offerQty}` });
+    if (p.flags.withoutWorkOrder) out.push({ ...base, kind: 'doneWithoutWorkOrder', detail: `Status „${p.status}", a nema nijedan nalog — nije u profitu (ako je rađen, napravi nalog i proknjiži rad)` });
     return out;
 }
 
@@ -380,7 +381,7 @@ export function computeAnalytics(input: AnalyticsInput, opts: { from?: string; t
             inPeriod: p.stage === 'zavrseno' ? (!periodOn || inRange(p.completedAt, range)) : true,
         }));
         productRows.push(...rows);
-        for (const p of rows) if (p.stage !== 'nije_zapoceto' && hasFlag(p.flags)) issues.push(...issuesOf(p, label));
+        for (const p of rows) if ((p.stage !== 'nije_zapoceto' || p.flags.withoutWorkOrder) && hasFlag(p.flags)) issues.push(...issuesOf(p, label));
 
         const realized = sumStage(rows.filter(p => p.stage === 'zavrseno' && p.inPeriod));
         const razniProfit = periodOn ? 0 : f.razni.profit;

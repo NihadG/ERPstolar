@@ -123,7 +123,7 @@ describe('computeProjectsFinance — profit = završeni proizvodi', () => {
         product('A', { bom: 300 }),                       // završen
         product('B', { bom: 100 }),                       // u izradi
         product('C', { bom: 50 }),                        // nije započet
-        product('D', { bom: 40, Status: 'Spremno' }),     // gotov bez naloga (kupljena roba)
+        product('D', { bom: 40, Status: 'Spremno' }),     // status gotov, a bez naloga → NIJE u profitu
     ];
     const offers = [offer('O1', [
         { pid: 'A', sell: 1000, mat: 250, labor: [1, 2, 100] },
@@ -154,8 +154,10 @@ describe('computeProjectsFinance — profit = završeni proizvodi', () => {
         expect(row('A').completedAt).toBe('2026-09-10');
         expect(row('B').stage).toBe('u_izradi');
         expect(row('C').stage).toBe('nije_zapoceto');
-        expect(row('D').stage).toBe('zavrseno');
+        // Profit samo iz završenih NALOGA: ručno „gotov" bez naloga nije završen, nego za provjeru.
+        expect(row('D').stage).toBe('nije_zapoceto');
         expect(row('D').flags.withoutWorkOrder).toBe(true);
+        expect(fin.flagged).toBeGreaterThanOrEqual(1);
     });
 
     test('proizvod A: ponuda − živa sastavnica − SAV rad (proizvodnja + montaža + otkazani)', () => {
@@ -170,14 +172,14 @@ describe('computeProjectsFinance — profit = završeni proizvodi', () => {
     });
 
     test('profit projekta = samo završeni proizvodi; u izradi se prati odvojeno', () => {
-        expect(fin.realized.count).toBe(2);
-        expect(fin.realized.revenue).toBe(1200);
-        expect(fin.profit).toBe(row('A').profit + row('D').profit);
+        expect(fin.realized.count).toBe(1);
+        expect(fin.realized.revenue).toBe(1000);
+        expect(fin.profit).toBe(row('A').profit);
         expect(fin.inProgress.count).toBe(1);
         expect(fin.inProgress.revenue).toBe(800);
         expect(fin.inProgress.material).toBe(160);   // 100 sastavnica + 60 dodaci
         expect(fin.inProgress.labor).toBe(70);
-        expect(fin.notStarted).toEqual({ count: 1, contracted: 400, labor: 0 });
+        expect(fin.notStarted).toEqual({ count: 2, contracted: 600, labor: 0 });   // C + D (ugovoreni, bez naloga)
         expect(fin.contracted).toBe(2400);
     });
 

@@ -1,12 +1,12 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// ZADACI — zid ceduljica
+// ZADACI — zid kartica
 //
-// Ceduljica je namjerno papirna: boja papira nosi HITNOST (crveno-narančasto-
-// žuto-sivo), traka na vrhu nosi PROJEKAT, a jedva primjetan nagib daje
-// osjećaj hrpe na stolu. Nagib nestaje čim se ceduljica otvori — tada je
-// bitna čitljivost, ne atmosfera.
+// Kartica je bijela, kao sve ostalo na ekranu: traka na vrhu nosi PROJEKAT,
+// a HITNOST nosi oznaka (Hitno / Visok) i crveni rok kad kasni. Ranije je
+// boja papira (crvena-narančasta-žuta) nosila hitnost, uz nagib „hrpe na
+// stolu“ — izgledalo je šareno i nabacano pored mirnih tabela.
 //
 // Dva poretka, jer se zadaci gledaju na dva načina:
 //   • HITNOST — „šta prvo danas" (kasni → hitnost → rok), preko svih projekata
@@ -132,7 +132,7 @@ export default function TaskWall({
                             <span>{group.tasks.length}</span>
                             {canCreate && (
                                 <div className="kc-group-actions">
-                                    <button type="button" className="kc-link" onClick={() => onNew(group.id)}>+ ceduljica</button>
+                                    <button type="button" className="kc-link" onClick={() => onNew(group.id)}>+ zadatak</button>
                                 </div>
                             )}
                         </div>
@@ -174,7 +174,7 @@ export default function TaskWall({
                             onClick={() => (scope.projects.length === 1 ? onNew(scope.projects[0].Project_ID) : setAdding(true))}
                             disabled={scope.projects.length === 0}
                         >
-                            <Plus size={16} /> Nova ceduljica
+                            <Plus size={16} /> Novi zadatak
                         </button>
                     )}
                 </div>

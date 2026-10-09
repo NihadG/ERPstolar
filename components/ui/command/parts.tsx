@@ -9,7 +9,10 @@
 // izgleda isto u kalendaru, u listi proizvoda i na zidu zadataka.
 // ════════════════════════════════════════════════════════════════════
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+    createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
+    type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
 import { projectColors } from '@/lib/canvas/palette';
@@ -21,20 +24,107 @@ export function hue(projectId: string | undefined | null): CSSProperties {
     return { '--kc-ink': colors.ink, '--kc-bar': colors.bar, '--kc-txt': colors.txt } as CSSProperties;
 }
 
+// ── Kartica s tabovima ──────────────────────────────────────────────
+// Pet ploča jedna ispod druge, svaka sa svojim zaglavljem, pretragom i
+// dugmadima, bilo je „nabacano": oko nije znalo gdje da stane. Sada su
+// ploče složene u DVIJE kartice — lijevo ono što se pravi (proizvodi,
+// nalozi), desno ono što se prati (narudžbe, zadaci, napomene) — i u
+// svakoj se vidi jedna ploča. Broj na tabu kaže gdje ima posla, pa se ne
+// mora otvarati svaki tab da bi se to saznalo.
+//
+// Brojeve računa SAMA ploča (ista leća, isti filteri kao lista), a ne
+// kartica — inače bi broj na tabu i dužina liste znali da se ne slože.
+// Ploča ih javlja kroz kontekst; neaktivna ploča i dalje računa, samo se
+// ne crta.
+
+interface PaneMeta { count?: number; tone?: 'alert' }
+
+interface TabHost {
+    active: PanelId;
+    report: (id: PanelId, meta: PaneMeta) => void;
+    /** Desni kraj trake s tabovima — tu aktivna ploča stavlja „+ Novo". */
+    slot: HTMLElement | null;
+}
+
+const TabHostContext = createContext<TabHost | null>(null);
+
+export interface KcTab { id: PanelId; label: string }
+
+export function KcTabCard({
+    label, tabs, active, onSelect, children,
+}: {
+    /** Ime grupe za čitače ekrana, npr. „Proizvodnja". */
+    label: string;
+    tabs: KcTab[];
+    active: PanelId;
+    onSelect: (id: PanelId) => void;
+    children: ReactNode;
+}) {
+    const [meta, setMeta] = useState<Partial<Record<PanelId, PaneMeta>>>({});
+    const report = useCallback((id: PanelId, next: PaneMeta) => setMeta(prev => {
+        const old = prev[id];
+        if (old && old.count === next.count && old.tone === next.tone) return prev;
+        return { ...prev, [id]: next };
+    }), []);
+    const [slot, setSlot] = useState<HTMLElement | null>(null);
+    const host = useMemo(() => ({ active, report, slot }), [active, report, slot]);
+
+    // Strelice lijevo/desno idu kroz tabove, kao u svakom tablistu.
+    const onKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const index = tabs.findIndex(t => t.id === active);
+        const next = tabs[(index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+        onSelect(next.id);
+        document.getElementById(`kc-tab-${next.id}`)?.focus();
+    };
+
+    return (
+        <div className="kc-card kc-tabcard" data-card={tabs.map(t => t.id).join(' ')}>
+            <div className="kc-tabbar">
+                <div className="kc-tabs" role="tablist" aria-label={label} onKeyDown={onKey}>
+                    {tabs.map(tab => {
+                        const info = meta[tab.id];
+                        const selected = tab.id === active;
+                        return (
+                            <button
+                                type="button"
+                                key={tab.id}
+                                id={`kc-tab-${tab.id}`}
+                                role="tab"
+                                className="kc-tab"
+                                aria-selected={selected}
+                                aria-controls={`kc-pane-${tab.id}`}
+                                tabIndex={selected ? 0 : -1}
+                                onClick={() => onSelect(tab.id)}
+                            >
+                                {tab.label}
+                                {typeof info?.count === 'number' && (
+                                    <span className={`kc-tab-count${info.tone === 'alert' ? ' alert' : ''}`}>{info.count}</span>
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="kc-tabs-end" ref={setSlot} />
+            </div>
+            <TabHostContext.Provider value={host}>{children}</TabHostContext.Provider>
+        </div>
+    );
+}
+
 /**
- * Ploča table. Ima tri veličine, kao prozor:
- *   sklopljena — samo zaglavlje sa SAŽETKOM (npr. „1 kasni · 2 poslano"),
- *                da i sklopljena kaže da li treba pažnju
- *   normalna
- *   raširena   — ⤢; njena kolona dobije veći dio širine (lib/command/layout)
- * Dugme za kreiranje (`create`) ostaje vidljivo i kad je ploča sklopljena —
- * nalog i narudžba se prave odasvud, ne tek kad se ploča otvori.
+ * Ploča table. Stoji ili sama (kalendar — kartica sa zaglavljem koje se
+ * može sklopiti, i tada pokazuje SAŽETAK, npr. „1 kasni · 2 danas"), ili
+ * kao tab u kartici (KcTabCard) — tada nema svoje zaglavlje: kreiranje ide
+ * u desni kraj trake s tabovima, a pretraga i prekidači u red ispod nje.
  */
 export function KcPanel({
-    id, eyebrow, title, count, countTone, actions, create, summary, children,
+    id, title, count, countTone, actions, create, summary, children,
     collapsed, onCollapse, pinned, onPin,
 }: {
     id: PanelId;
+    /** Zastarjelo — nadnaslovi su uklonjeni; prop ostaje da pozivi ne pucaju. */
     eyebrow?: string;
     title: string;
     count?: number;
@@ -51,10 +141,35 @@ export function KcPanel({
     pinned?: boolean;
     onPin?: () => void;
 }) {
+    const host = useContext(TabHostContext);
+    const tone = countTone === 'alert' && (count ?? 0) > 0 ? 'alert' as const : undefined;
+    useLayoutEffect(() => {
+        host?.report(id, { count, tone });
+    }, [host, id, count, tone]);
+
+    if (host) {
+        if (host.active !== id) return null;
+        // Sažetak ide samo uz alate (pretraga, prekidači). Ploča bez alata
+        // ionako grupiše po stanju („Kasni 1", „Poslano 2"), pa bi sažetak
+        // u posebnom redu samo ponovio ono što piše ispod njega.
+        return (
+            <section className="kc-pane" id={`kc-pane-${id}`} role="tabpanel" aria-label={title} data-panel={id}>
+                {create && host.slot && createPortal(<div className="kc-pane-create">{create}</div>, host.slot)}
+                {actions && (
+                    <div className="kc-pane-tools">
+                        {actions}
+                        {summary && <div className="kc-pane-summary">{summary}</div>}
+                    </div>
+                )}
+                <div className="kc-panel-content">{children}</div>
+            </section>
+        );
+    }
+
     const bodyId = `kc-panel-${id}`;
     return (
         <section
-            className="kc-panel"
+            className="kc-panel kc-card"
             data-panel={id}
             data-collapsed={collapsed ? 'true' : undefined}
             data-pinned={pinned ? 'true' : undefined}
@@ -62,7 +177,6 @@ export function KcPanel({
         >
             <div className="kc-panel-head">
                 <div className="kc-panel-titles">
-                    {eyebrow && <span className="kc-eyebrow">{eyebrow}</span>}
                     <h2>
                         {onCollapse ? (
                             <button

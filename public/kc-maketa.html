@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="bs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Komandni centar — maketa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── Sistem ─────────────────────────────────────────────────────────
+   Jedan font, šest veličina, tri debljine. Jedna kolona sadržaja s istim
+   lijevim i desnim rubom za svaki blok. Svaka lista je tabela s
+   kolonama, pa se sve poravnava vertikalno.
+     12 / 500  zaglavlja kolona, sitni podaci
+     13 / 400  sekundarni tekst u redu
+     14 / 500  glavni tekst reda
+     15 / 600  naslovi kartica, tabovi
+     20 / 600  naslov strane
+     28 / 600  brojke pulsa
+   ──────────────────────────────────────────────────────────────── */
+:root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --line: #e8e8ed;
+    --line-strong: #d2d2d7;
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --accent: #0071e3;
+    --accent-soft: #e8f1fd;
+    --red: #c4161c;
+    --red-soft: #fdecec;
+    --amber: #9a5800;
+    --amber-soft: #fff3df;
+    --green: #1d7a3a;
+    --green-soft: #e7f5ec;
+    --blue: #0a5fb4;
+    --blue-soft: #e8f1fd;
+    --gray-soft: #f0f0f3;
+    --radius: 12px;
+    --pad: 20px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: Inter, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'tnum' 1, 'cv11' 1;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* ── Zaglavlje ── */
+.top {
+    position: sticky; top: 0; z-index: 10;
+    height: 64px;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+}
+.wrap { max-width: 1440px; margin: 0 auto; padding: 0 32px; }
+.top .wrap { height: 100%; display: flex; align-items: center; gap: 12px; }
+.back { width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; display: grid; place-items: center; margin-left: -8px; }
+.back:hover { background: var(--gray-soft); }
+.title { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.spacer { flex: 1; }
+.btn {
+    height: 36px; padding: 0 14px;
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    background: var(--card); font-size: 14px; font-weight: 500;
+}
+.btn:hover { background: var(--gray-soft); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #0066cc; }
+.btn.icon { width: 36px; padding: 0; justify-content: center; }
+.btn svg { flex: none; }
+.divider { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
+
+/* ── Strana ── */
+.page { padding: 24px 0 64px; }
+.page .wrap { display: flex; flex-direction: column; gap: 24px; }
+
+/* Projekti: jedna segmentirana kontrola, ne razbacane pilule. */
+.scope { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.seg {
+    display: inline-flex; padding: 3px; gap: 2px;
+    background: #e9e9ee; border-radius: 10px;
+}
+.seg button {
+    height: 32px; padding: 0 14px;
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 0; border-radius: 8px; background: none;
+    font-size: 14px; font-weight: 500; color: var(--text-2);
+    white-space: nowrap;
+}
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.04); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.link { border: 0; background: none; color: var(--accent); font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+.link:hover { text-decoration: underline; }
+
+/* Puls: šest jednakih ćelija u JEDNOJ kartici, odvojene linijom. */
+.pulse {
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+}
+.pulse button {
+    border: 0; background: none; text-align: left;
+    padding: 16px var(--pad) 18px;
+    display: flex; flex-direction: column; gap: 6px;
+    border-left: 1px solid var(--line);
+    position: relative;
+}
+.pulse button:first-child { border-left: 0; }
+.pulse button:hover { background: #fafafc; }
+.pulse .label { font-size: 13px; line-height: 18px; color: var(--text-2); font-weight: 500; }
+.pulse .num { font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; }
+.pulse .num.red { color: var(--red); }
+.pulse .num.zero { color: var(--text-3); }
+.pulse button.on { background: #fafafc; }
+.pulse button.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--text); }
+
+/* Kartica */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.card-head {
+    height: 56px; padding: 0 var(--pad);
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--line);
+}
+.card-title { font-size: 15px; line-height: 20px; font-weight: 600; }
+.mini-seg { display: inline-flex; padding: 2px; gap: 2px; background: #efeff3; border-radius: 8px; }
+.mini-seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: none; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.mini-seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.nav { display: inline-flex; align-items: center; gap: 4px; }
+.nav .range { width: 128px; text-align: center; font-size: 13px; font-weight: 500; }
+.sq { width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); display: grid; place-items: center; }
+.btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+
+/* ── Kalendar ── */
+.cal { --label: 220px; position: relative; }
+.cal-head, .cal-row { display: grid; grid-template-columns: var(--label) 1fr; }
+.cal-head { height: 40px; border-bottom: 1px solid var(--line); }
+.cal-head .weeks { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); }
+.cal-head .weeks span { font-size: 12px; line-height: 40px; font-weight: 500; color: var(--text-2); padding-left: 8px; border-left: 1px solid var(--line); }
+.cal-row { border-bottom: 1px solid var(--line); }
+.cal-row:last-child { border-bottom: 0; }
+.cal-name { padding: 14px var(--pad); display: flex; align-items: flex-start; gap: 10px; font-size: 14px; font-weight: 500; }
+.cal-name .dot { margin-top: 6px; }
+.lanes { position: relative; padding: 10px 0; background-image: linear-gradient(to right, var(--line) 1px, transparent 1px); background-size: calc(100% / 8) 100%; }
+.lane { position: relative; height: 32px; }
+.bar {
+    position: absolute; top: 4px; height: 24px;
+    border-radius: 6px; padding: 0 8px;
+    font-size: 12px; line-height: 24px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bar.order { background: var(--tint); color: var(--ink); }
+.bar.purchase { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.bar.plan { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); border: 0; background-image: repeating-linear-gradient(135deg, var(--tint) 0 6px, transparent 6px 12px); }
+.bar.late { box-shadow: inset 0 0 0 1.5px var(--red); color: var(--red); }
+.after { position: absolute; top: 4px; font-size: 12px; line-height: 24px; color: var(--text-2); white-space: nowrap; }
+.mark { position: absolute; top: 9px; width: 14px; height: 14px; transform: translateX(-7px) rotate(45deg); border-radius: 2px; background: var(--ink); }
+.mark.late { background: var(--red); }
+.pin { position: absolute; top: 10px; width: 12px; height: 12px; transform: translateX(-6px); border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 2.5px var(--ink); }
+.today { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); opacity: .55; z-index: 2; }
+.today-tag { position: absolute; top: 10px; transform: translateX(-50%); background: var(--accent); color: #fff; font-style: normal; font-size: 12px; font-weight: 500; line-height: 20px; padding: 0 8px; border-radius: 6px; white-space: nowrap; }
+.after.red { color: var(--red); font-weight: 500; }
+.cal-foot { height: 44px; padding: 0 var(--pad); display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-2); }
+.legend { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 20px; height: 12px; border-radius: 3px; }
+
+/* ── Radni prostor ── */
+.tabs { display: flex; align-items: stretch; gap: 24px; height: 56px; padding: 0 var(--pad); border-bottom: 1px solid var(--line); }
+.tab { border: 0; background: none; display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--text-2); position: relative; }
+.tab:hover { color: var(--text); }
+.tab .n { font-size: 13px; font-weight: 500; color: var(--text-3); }
+.tab.on { color: var(--text); }
+.tab.on .n { color: var(--text-2); }
+.tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); border-radius: 2px; }
+.tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.search { width: 260px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text-3); font-size: 14px; }
+
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th {
+    height: 40px; padding: 0 12px; text-align: left;
+    font-size: 12px; font-weight: 500; color: var(--text-2);
+    border-bottom: 1px solid var(--line); background: #fbfbfd;
+    white-space: nowrap;
+}
+td { height: 52px; padding: 0 12px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tr:last-child td { border-bottom: 0; }
+tbody tr:not(.group):hover td { background: #fafafc; }
+th:first-child, td:first-child { padding-left: var(--pad); }
+th:last-child, td:last-child { padding-right: var(--pad); }
+.r { text-align: right; }
+.main { font-size: 14px; font-weight: 500; }
+.sub { font-size: 13px; color: var(--text-2); }
+.muted { color: var(--text-3); }
+.proj { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); max-width: 100%; }
+.proj span { overflow: hidden; text-overflow: ellipsis; }
+tr.group td { height: 40px; background: #fbfbfd; font-size: 13px; font-weight: 600; }
+tr.group td .sub { font-weight: 400; margin-left: 8px; }
+
+.check { width: 18px; height: 18px; border: 1.5px solid var(--line-strong); border-radius: 5px; background: #fff; display: inline-block; vertical-align: middle; }
+.circle { width: 18px; height: 18px; border: 1.5px solid var(--line-strong); border-radius: 50%; display: inline-block; vertical-align: middle; }
+
+.meter { display: flex; align-items: center; gap: 10px; }
+.track { flex: 1; height: 6px; border-radius: 3px; background: #ececf0; overflow: hidden; max-width: 96px; }
+.track i { display: block; height: 100%; background: var(--text-2); border-radius: 3px; }
+.meter b { font-size: 13px; font-weight: 500; color: var(--text-2); min-width: 28px; }
+
+.pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+.pill.red { background: var(--red-soft); color: var(--red); }
+.pill.amber { background: var(--amber-soft); color: var(--amber); }
+.pill.green { background: var(--green-soft); color: var(--green); }
+.pill.blue { background: var(--blue-soft); color: var(--blue); }
+.pill.gray { background: var(--gray-soft); color: var(--text-2); }
+.date.red { color: var(--red); font-weight: 500; }
+.chev { color: var(--text-3); }
+.ghost { height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; font-size: 13px; font-weight: 500; }
+.ghost:hover { background: var(--gray-soft); }
+.more td { height: 44px; text-align: center; color: var(--accent); font-size: 13px; font-weight: 500; background: #fff; }
+</style>
+</head>
+<body>
+
+<header class="top">
+    <div class="wrap">
+        <button class="back" aria-label="Nazad na projekte">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="title">Komandni centar</div>
+        <div class="spacer"></div>
+        <button class="btn" aria-pressed="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            Prikaži završeno
+        </button>
+        <button class="btn icon" aria-label="Osvježi">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+        <div class="divider"></div>
+        <button class="btn">Zadatak</button>
+        <button class="btn">Narudžba</button>
+        <button class="btn primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Novi nalog
+        </button>
+    </div>
+</header>
+
+<main class="page">
+    <div class="wrap">
+
+        <div class="scope">
+            <div class="seg" id="scope"></div>
+            <button class="link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Dodaj projekat
+            </button>
+        </div>
+
+        <div class="pulse" id="pulse"></div>
+
+        <section class="card">
+            <div class="card-head">
+                <div class="card-title">Kalendar</div>
+                <div class="mini-seg"><button class="on">Traka</button><button>Agenda</button><button>Mjesec</button></div>
+                <div class="spacer"></div>
+                <div class="nav">
+                    <button class="sq" aria-label="Nazad"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                    <span class="range">28. sep – 22. nov</span>
+                    <button class="sq" aria-label="Naprijed"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+                </div>
+                <button class="btn sm">Danas</button>
+                <div class="mini-seg"><button>4 sedm.</button><button class="on">8 sedm.</button><button>12 sedm.</button></div>
+            </div>
+            <div class="cal" id="cal"></div>
+            <div class="cal-foot">
+                <span class="legend"><span class="sw" style="background:#e9e4f7"></span>Nalog</span>
+                <span class="legend"><span class="sw" style="box-shadow: inset 0 0 0 1px #6b4fbb"></span>Narudžba</span>
+                <span class="legend"><span class="sw" style="box-shadow: inset 0 0 0 1px #6b4fbb; background-image: repeating-linear-gradient(135deg,#e9e4f7 0 4px,transparent 4px 8px)"></span>Plan s Platna</span>
+                <span class="legend"><span class="sw" style="width:10px;height:10px;transform:rotate(45deg);background:#6b4fbb;border-radius:2px"></span>Rok projekta</span>
+                <span class="legend"><span class="sw" style="width:10px;height:10px;border-radius:50%;box-shadow: inset 0 0 0 2px #6b4fbb"></span>Zadatak</span>
+                <span class="spacer"></span>
+                <span>2 stavke bez roka</span>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="tabs" id="tabs"></div>
+            <div id="table"></div>
+        </section>
+
+    </div>
+</main>
+
+<script>
+const P = {
+    aam: { name: 'Aamanns 1921', ink: '#b5541b', tint: '#f8e6da' },
+    mel: { name: 'Melihin stan — A5', ink: '#b8326e', tint: '#f7e1eb' },
+    jer: { name: 'Jerko Čorluka — Kuća', ink: '#3d6fb6', tint: '#e2ebf7' },
+};
+const ORDER = ['aam', 'mel', 'jer'];
+const state = { focus: null, tab: 'products', lens: null };
+
+const STATUS = {
+    blocked: ['red', 'Blokirano'],
+    toOrder: ['amber', 'Za naručiti'],
+    ordered: ['blue', 'Naručeno'],
+    ready: ['green', 'Spremno'],
+};
+
+const products = [
+    { p: 'aam', name: 'L-Shaped Bench (Klupa u obliku slova L)', dims: '2400 × 450 × 900', qty: 2, mat: [1, 2], wo: '#124', st: 'ordered' },
+    { p: 'aam', name: 'Storage Benches (Klupe sa spremištem)', dims: '1800 × 450 × 600', qty: 4, mat: [1, 4], wo: '#124', st: 'blocked' },
+    { p: 'aam', name: 'Tables (Pravougaoni stolovi)', dims: '1600 × 750 × 800', qty: 6, mat: [0, 2], wo: '#126', st: 'blocked' },
+    { p: 'mel', name: 'Kuhinjski donji elementi', dims: '3200 × 850 × 600', qty: 5, mat: [0, 2], wo: '#125', st: 'toOrder' },
+    { p: 'mel', name: 'Poz 7 — Vrata soba desno', dims: '900 × 2100 × 40', qty: 3, mat: [1, 2], wo: '#125', st: 'blocked' },
+    { p: 'jer', name: 'DO1 — Drvena obloga zida', dims: '4200 × 2600 × 30', qty: 1, mat: [1, 2], wo: '#127', st: 'blocked' },
+    ...['T1.A', 'T1.B', 'T1.C', 'T1.D', 'T2.A', 'T2.B'].map((code, i) => ({
+        p: 'jer', name: code + ' Ormar i elementi u gospodarstvu', dims: (1000 + i * 10) + ' × 2600 × 600', qty: 1, mat: [1, 2], wo: '', st: 'toOrder',
+    })),
+];
+const extraJerko = 20;
+
+const workOrders = [
+    { no: '124', name: 'Klupe — korpus i tapaciranje', p: 'aam', items: [1, 2], start: '23. sep', due: '30. sep', st: ['red', 'Kasni'], late: true },
+    { no: '125', name: 'Vrata i kuhinja', p: 'mel', items: [0, 2], start: '2. okt', due: '14. okt', st: ['gray', 'Pauzirano'] },
+    { no: '126', name: 'Stolovi — priprema', p: 'aam', items: [0, 1], start: '12. okt', due: '19. okt', st: ['gray', 'Na čekanju'] },
+    { no: '127', name: 'Montaža obloge', p: 'jer', items: [0, 1], start: '', due: '', st: ['gray', 'Na čekanju'] },
+];
+
+const orders = [
+    { no: '2026-041', supplier: 'Frischeis', p: 'aam', items: [0, 3], ordered: '24. sep', due: '2. okt', st: ['red', 'Kasni'], late: true },
+    { no: '2026-042', supplier: 'Egger', p: 'mel', items: [0, 1], ordered: '1. okt', due: '8. okt', st: ['blue', 'Poslano'] },
+];
+
+const tasks = [
+    { title: 'Zvati Igora za tkaninu', p: 'aam', ctx: 'Storage Benches', who: 'Adnan', due: '2. okt', late: true, pri: ['red', 'Hitno'] },
+    { title: 'Naručiti šarke Blum', p: 'aam', ctx: 'Storage Benches', who: '', due: '5. okt', pri: ['amber', 'Visok'] },
+    { title: 'Izmjeriti otvore na licu mjesta', p: 'mel', ctx: '', who: 'Samir', due: '7. okt', pri: ['gray', 'Srednji'] },
+    { title: 'Provjeriti prispjeće radne ploče', p: 'mel', ctx: 'Nalog 125', who: '', due: '8. okt', pri: ['gray', 'Srednji'] },
+    { title: 'Dogovoriti transport za montažu', p: 'jer', ctx: 'DO1 obloga', who: '', due: '14. okt', pri: ['amber', 'Visok'] },
+    { title: 'Poslati ponudu za obloge', p: 'jer', ctx: '', who: '', due: '', pri: ['gray', 'Nizak'] },
+];
+
+const notes = [
+    { text: 'Rubove kantovati 2 mm, ne 1 mm — klijent tražio jače ivice', who: 'Kolega', p: 'aam', ctx: 'L-Shaped Bench', age: 1 },
+    { text: 'Kvaka — mesing ili crna?', who: 'Klijent', p: 'mel', ctx: 'Poz 7 — Vrata', age: 10 },
+    { text: 'Pripremiti tapaciranje — koja tkanina?', who: 'Klijent', p: 'aam', ctx: 'Storage Benches', age: 6 },
+    { text: 'Da li ide utor za kablove?', who: 'Klijent', p: 'aam', ctx: 'L-Shaped Bench', age: 3 },
+    { text: 'Poslati uzorak boje prije naručivanja', who: 'Dobavljač', p: 'jer', ctx: 'DO1 — Drvena obloga', age: 1 },
+];
+
+const inFocus = row => !state.focus || row.p === state.focus;
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const proj = key => `<span class="proj"><i class="dot" style="background:${P[key].ink}"></i><span>${esc(P[key].name)}</span></span>`;
+const pill = ([tone, text]) => `<span class="pill ${tone}">${esc(text)}</span>`;
+const meter = ([a, b]) => `<div class="meter"><div class="track"><i style="width:${b ? (a / b) * 100 : 0}%"></i></div><b>${a}/${b}</b></div>`;
+const chev = `<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`;
+
+function renderScope() {
+    const items = [{ key: null, label: 'Svi projekti' }, ...ORDER.map(k => ({ key: k, label: P[k].name }))];
+    document.getElementById('scope').innerHTML = items.map(it => `
+        <button class="${state.focus === it.key ? 'on' : ''}" data-focus="${it.key ?? ''}">
+            ${it.key ? `<i class="dot" style="background:${P[it.key].ink}"></i>` : ''}${esc(it.label)}
+        </button>`).join('');
+}
+
+function renderPulse() {
+    const f = state.focus;
+    const count = (all, by) => (f ? (by[f] ?? 0) : all);
+    const cells = [
+        { id: 'late', label: 'Kasni', n: count(3, { aam: 3, mel: 0, jer: 0 }), red: true, tab: 'workorders' },
+        { id: 'blocked', label: 'Blokirano materijalom', n: count(4, { aam: 2, mel: 1, jer: 1 }), red: true, tab: 'products' },
+        { id: 'toOrder', label: 'Za naručiti', n: count(33, { aam: 4, mel: 2, jer: 27 }), tab: 'products' },
+        { id: 'running', label: 'Nalozi u toku', n: count(1, { aam: 1, mel: 0, jer: 0 }), tab: 'workorders' },
+        { id: 'tasks', label: 'Otvoreni zadaci', n: count(6, { aam: 2, mel: 2, jer: 2 }), tab: 'tasks' },
+        { id: 'awaiting', label: 'Čeka odgovor', n: count(5, { aam: 3, mel: 1, jer: 1 }), tab: 'notes' },
+    ];
+    document.getElementById('pulse').innerHTML = cells.map(c => `
+        <button class="${state.lens === c.id ? 'on' : ''}" data-lens="${c.id}" data-tab="${c.tab}">
+            <span class="label">${c.label}</span>
+            <span class="num ${c.n === 0 ? 'zero' : c.red ? 'red' : ''}">${c.n}</span>
+        </button>`).join('');
+}
+
+/* Kalendar: 8 sedmica od 28. sep; dan 0 = 28. sep, danas = dan 5 (3. okt). */
+const DAYS = 56;
+const x = d => `${(d / DAYS) * 100}%`;
+const w = (a, b) => `${((b - a + 1) / DAYS) * 100}%`;
+/* Svaka stavka ima mjesta za svoj naziv — ništa se ne ispisuje preko drugog. */
+const calRows = {
+    aam: [
+        [{ kind: 'order late', a: 0, b: 2, t: '', after: '#124 Klupe — kasni', late: true }, { kind: 'order', a: 14, b: 26, t: '#126 Stolovi — priprema' }],
+        [{ kind: 'purchase late', a: 0, b: 4, t: 'Frischeis' }, { kind: 'plan', a: 6, b: 9, t: '', after: 'Lakiranje klupa' }, { mark: 23, label: 'Rok projekta' }],
+    ],
+    mel: [
+        [{ kind: 'order', a: 4, b: 11, t: '#125 Vrata i kuhinja' }, { kind: 'plan', a: 17, b: 20, t: '', after: 'Montaža kuhinje' }],
+        [{ kind: 'purchase', a: 3, b: 10, t: 'Egger' }],
+        [{ mark: 3, late: true, label: 'Rok prošao', red: true }, { pin: 9, label: 'Izmjeriti otvore' }],
+    ],
+    jer: [
+        [{ kind: 'plan', a: 12, b: 14, t: '', after: 'Isporuka furnira' }, { mark: 50, label: 'Rok projekta' }],
+        [{ pin: 16, label: 'Dogovoriti transport' }],
+    ],
+};
+function renderCal() {
+    const weeks = ['28. sep', '5. okt', '12. okt', '19. okt', '26. okt', '2. nov', '9. nov', '16. nov'];
+    const rows = ORDER.filter(k => !state.focus || state.focus === k).map(k => {
+        const c = P[k];
+        const lanes = calRows[k].map(lane => `<div class="lane">${lane.map(it => {
+            if (it.mark !== undefined) return `<i class="mark${it.late ? ' late' : ''}" style="left:${x(it.mark + 0.5)}"></i>${it.label ? `<span class="after${it.red ? ' red' : ''}" style="left:calc(${x(it.mark + 0.5)} + 14px)">${it.label}</span>` : ''}`;
+            if (it.pin !== undefined) return `<i class="pin" style="left:${x(it.pin + 0.5)}"></i><span class="after" style="left:calc(${x(it.pin + 0.5)} + 12px)">${it.label}</span>`;
+            return `<span class="bar ${it.kind}" style="left:${x(it.a)};width:${w(it.a, it.b)}">${esc(it.t)}</span>${it.after ? `<span class="after${it.late ? ' red' : ''}" style="left:calc(${x(it.b + 1)} + 8px)">${it.after}</span>` : ''}`;
+        }).join('')}</div>`).join('');
+        return `<div class="cal-row" style="--ink:${c.ink};--tint:${c.tint}">
+            <div class="cal-name"><i class="dot" style="background:${c.ink}"></i>${esc(c.name)}</div>
+            <div class="lanes">${lanes}</div>
+        </div>`;
+    }).join('');
+    // „Danas" stoji u zaglavlju sedmica, a kroz redove ide samo tanka linija
+    // — oznaka ne smije pokrivati trake.
+    document.getElementById('cal').innerHTML = `
+        <div class="cal-head"><div></div><div class="weeks">${weeks.map(wk => `<span>${wk}</span>`).join('')}<i class="today-tag" style="left:${x(5.5)}">Danas</i></div></div>
+        <div style="position:relative">
+            ${rows}
+            <div style="position:absolute;top:0;bottom:0;left:var(--label);right:0;pointer-events:none">
+                <div class="today" style="left:${x(5.5)}"></div>
+            </div>
+        </div>`;
+}
+
+const TABS = [
+    { id: 'products', label: 'Proizvodi', n: () => products.filter(inFocus).length + (inFocus({ p: 'jer' }) ? extraJerko : 0), action: 'Naruči materijal' },
+    { id: 'workorders', label: 'Radni nalozi', n: () => workOrders.filter(inFocus).length, action: 'Novi nalog' },
+    { id: 'orders', label: 'Narudžbe', n: () => orders.filter(inFocus).length, action: 'Nova narudžba' },
+    { id: 'tasks', label: 'Zadaci', n: () => tasks.filter(inFocus).length, action: 'Novi zadatak' },
+    { id: 'notes', label: 'Napomene', n: () => notes.filter(inFocus).length, action: 'Nova napomena' },
+];
+
+function renderTabs() {
+    const tab = TABS.find(t => t.id === state.tab);
+    document.getElementById('tabs').innerHTML = TABS.map(t => `
+        <button class="tab ${state.tab === t.id ? 'on' : ''}" data-tab="${t.id}">${t.label}<span class="n">${t.n()}</span></button>`).join('') + `
+        <div class="tools">
+            <div class="search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                Pretraži
+            </div>
+            <button class="btn">${tab.action}</button>
+        </div>`;
+}
+
+function renderTable() {
+    let html = '';
+    if (state.tab === 'products') {
+        html = `<table><colgroup><col style="width:52px"><col><col style="width:200px"><col style="width:64px"><col style="width:180px"><col style="width:96px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th></th><th>Pozicija</th><th>Dimenzije</th><th class="r">Kol.</th><th>Materijal spreman</th><th>Nalog</th><th>Stanje</th><th></th></tr></thead><tbody>`;
+        for (const key of ORDER) {
+            if (state.focus && state.focus !== key) continue;
+            const rows = products.filter(r => r.p === key);
+            const total = rows.length + (key === 'jer' ? extraJerko : 0);
+            html += `<tr class="group"><td><span class="check"></span></td><td colspan="7"><span class="proj" style="font-weight:600;font-size:13px"><i class="dot" style="background:${P[key].ink}"></i>${esc(P[key].name)}</span><span class="sub">${total} pozicija</span></td></tr>`;
+            html += rows.map(r => `<tr>
+                <td><span class="check"></span></td>
+                <td class="main">${esc(r.name)}</td>
+                <td class="sub">${r.dims}</td>
+                <td class="r sub">${r.qty}</td>
+                <td>${meter(r.mat)}</td>
+                <td class="sub">${r.wo || '<span class="muted">—</span>'}</td>
+                <td>${pill(STATUS[r.st])}</td>
+                <td class="r">${chev}</td>
+            </tr>`).join('');
+            if (key === 'jer') html += `<tr class="more"><td colspan="8">Prikaži još ${extraJerko} pozicija</td></tr>`;
+        }
+        html += '</tbody></table>';
+    }
+    if (state.tab === 'workorders') {
+        html = `<table><colgroup><col><col style="width:240px"><col style="width:180px"><col style="width:120px"><col style="width:120px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th>Nalog</th><th>Projekat</th><th>Stavke gotove</th><th>Početak</th><th>Rok</th><th>Stanje</th><th></th></tr></thead><tbody>`;
+        html += workOrders.filter(inFocus).map(r => `<tr>
+            <td><span class="main">${esc(r.name)}</span> <span class="sub">&nbsp;#${r.no}</span></td>
+            <td>${proj(r.p)}</td>
+            <td>${meter(r.items)}</td>
+            <td class="sub">${r.start || '<span class="muted">—</span>'}</td>
+            <td class="sub date ${r.late ? 'red' : ''}">${r.due || '<span class="muted">—</span>'}</td>
+            <td>${pill(r.st)}</td>
+            <td class="r">${chev}</td>
+        </tr>`).join('');
+        html += '</tbody></table>';
+    }
+    if (state.tab === 'orders') {
+        html = `<table><colgroup><col><col style="width:240px"><col style="width:180px"><col style="width:120px"><col style="width:120px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th>Narudžba</th><th>Projekat</th><th>Primljeno</th><th>Naručeno</th><th>Isporuka</th><th>Stanje</th><th></th></tr></thead><tbody>`;
+        html += orders.filter(inFocus).map(r => `<tr>
+            <td><span class="main">${esc(r.supplier)}</span> <span class="sub">&nbsp;#${r.no}</span></td>
+            <td>${proj(r.p)}</td>
+            <td>${meter(r.items)}</td>
+            <td class="sub">${r.ordered}</td>
+            <td class="sub date ${r.late ? 'red' : ''}">${r.due}</td>
+            <td>${pill(r.st)}</td>
+            <td class="r">${chev}</td>
+        </tr>`).join('');
+        html += '</tbody></table>';
+    }
+    if (state.tab === 'tasks') {
+        html = `<table><colgroup><col style="width:52px"><col><col style="width:240px"><col style="width:180px"><col style="width:120px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th></th><th>Zadatak</th><th>Projekat</th><th>Izvršilac</th><th>Rok</th><th>Prioritet</th><th></th></tr></thead><tbody>`;
+        html += tasks.filter(inFocus).map(r => `<tr>
+            <td><span class="circle"></span></td>
+            <td><span class="main">${esc(r.title)}</span>${r.ctx ? `<span class="sub">&nbsp;&nbsp;${esc(r.ctx)}</span>` : ''}</td>
+            <td>${proj(r.p)}</td>
+            <td class="sub">${r.who || '<span class="muted">—</span>'}</td>
+            <td class="sub date ${r.late ? 'red' : ''}">${r.due || '<span class="muted">—</span>'}</td>
+            <td>${pill(r.pri)}</td>
+            <td class="r">${chev}</td>
+        </tr>`).join('');
+        html += '</tbody></table>';
+    }
+    if (state.tab === 'notes') {
+        html = `<table><colgroup><col><col style="width:240px"><col style="width:180px"><col style="width:120px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th>Pitanje</th><th>Projekat</th><th>Pozicija</th><th>Čeka</th><th>Kome</th><th></th></tr></thead><tbody>`;
+        html += notes.filter(inFocus).map(r => `<tr>
+            <td class="main">${esc(r.text)}</td>
+            <td>${proj(r.p)}</td>
+            <td class="sub">${esc(r.ctx)}</td>
+            <td class="sub date ${r.age > 7 ? 'red' : ''}">${r.age} ${r.age === 1 ? 'dan' : 'dana'}</td>
+            <td>${pill(['gray', r.who])}</td>
+            <td class="r">${chev}</td>
+        </tr>`).join('');
+        html += '</tbody></table>';
+    }
+    document.getElementById('table').innerHTML = html;
+}
+
+function render() { renderScope(); renderPulse(); renderCal(); renderTabs(); renderTable(); }
+
+document.addEventListener('click', e => {
+    const focus = e.target.closest('[data-focus]');
+    if (focus) { state.focus = focus.dataset.focus || null; render(); return; }
+    const lens = e.target.closest('[data-lens]');
+    if (lens) { state.lens = state.lens === lens.dataset.lens ? null : lens.dataset.lens; if (state.lens) state.tab = lens.dataset.tab; render(); return; }
+    const tab = e.target.closest('.tab[data-tab]');
+    if (tab) { state.tab = tab.dataset.tab; render(); }
+});
+render();
+</script>
+</body>
+</html>

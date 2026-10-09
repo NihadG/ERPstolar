@@ -149,6 +149,8 @@ export interface ProductMaterial {
     On_Stock?: number;
     Ordered_Quantity?: number;
     Received_Quantity?: number;
+    /** Stavka je došla uvozom iz SketchUpa — ponovni uvoz zamjenjuje samo ovakve (vidi lib/sketchupImport.ts). */
+    Import_Source?: 'sketchup';
     glassItems?: GlassItem[];
     aluDoorItems?: AluDoorItem[];
 }

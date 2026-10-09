@@ -614,6 +614,72 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>, organ
     }
 }
 
+/**
+ * Cijela sastavnica proizvoda u jednom batchu (uvoz iz SketchUpa). Za razliku
+ * od addMaterialToProduct trošak i auto-plan procesa se preračunaju JEDNOM,
+ * a ne po stavci.
+ */
+export async function addMaterialsToProductBatch(productId: string, items: Partial<ProductMaterial>[], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    if (items.length === 0) return { success: true, message: 'Nema stavki' };
+
+    try {
+        // Firestore batch prima najviše 500 upisa.
+        for (let i = 0; i < items.length; i += 400) {
+            const batch = writeBatch(db);
+            for (const item of items.slice(i, i + 400)) {
+                const quantity = item.Quantity || 0;
+                const unitPrice = item.Unit_Price || 0;
+                const data: Partial<ProductMaterial> = {
+                    ...item,
+                    ID: item.ID || generateUUID(),
+                    Organization_ID: organizationId,
+                    Product_ID: productId,
+                    Status: item.Status || 'Nije naručeno',
+                    Total_Price: Math.round(quantity * unitPrice * 100) / 100,
+                };
+                Object.keys(data).forEach(k => (data as Record<string, unknown>)[k] === undefined && delete (data as Record<string, unknown>)[k]);
+                batch.set(doc(collection(db, COLLECTIONS.PRODUCT_MATERIALS)), data);
+            }
+            await batch.commit();
+        }
+
+        await recalculateProductCost(productId, organizationId);
+        applyAutoProcessPlan(productId, organizationId).catch(err =>
+            console.warn('Background applyAutoProcessPlan error (non-critical):', err)
+        );
+
+        return { success: true, message: `Dodano ${items.length} stavki` };
+    } catch (error) {
+        console.error('addMaterialsToProductBatch error:', error);
+        return { success: false, message: 'Greška pri dodavanju materijala' };
+    }
+}
+
+/**
+ * Ponovni uvoz iz SketchUpa: obriši SAMO ranije uvezene stavke koje još nisu
+ * naručene. Ručno dodane stavke i sve što je u narudžbi ostaje.
+ */
+export async function deleteImportedProductMaterials(productId: string, organizationId: string): Promise<void> {
+    if (!organizationId) return;
+    const snapshot = await getDocs(query(
+        collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    ));
+    const batch = writeBatch(db);
+    let n = 0;
+    snapshot.docs.forEach(d => {
+        const m = d.data() as ProductMaterial;
+        if (m.Import_Source !== 'sketchup' || m.Order_ID || (m.Status && m.Status !== 'Nije naručeno')) return;
+        batch.delete(d.ref);
+        n++;
+    });
+    if (n > 0) await batch.commit();
+}
+
 // Helper: extract material IDs from an order item (handles both single and grouped)
 function extractMaterialIds(item: OrderItem): string[] {
     return item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);

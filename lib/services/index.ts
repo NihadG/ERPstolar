@@ -81,7 +81,7 @@ export { getProjects, getProject, saveProject, deleteProject, updateProjectStatu
 
 // Product
 export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost, updateProductNotes, updateProductCutLists } from './product/productService';
-export { addMaterialToProduct, deleteProductMaterial, updateProductMaterial, addGlassMaterialToProduct, updateGlassMaterial, addAluDoorMaterialToProduct, updateAluDoorMaterial, generateUUID } from '../database';
+export { addMaterialToProduct, addMaterialsToProductBatch, deleteImportedProductMaterials, deleteProductMaterial, updateProductMaterial, addGlassMaterialToProduct, updateGlassMaterial, addAluDoorMaterialToProduct, updateAluDoorMaterial, generateUUID } from '../database';
 
 // Worker
 export { getWorkers, saveWorker, deleteWorker } from './resource/workerService';

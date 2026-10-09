@@ -70,31 +70,82 @@ const renderScreen = (over: Partial<React.ComponentProps<typeof CommandCenterScr
 test('prazna tabla nudi dodavanje umjesto praznih kontejnera', () => {
     renderScreen({ board: { Project_IDs: [], Show_Done: false } });
     expect(screen.getByRole('heading', { name: 'Tabla je prazna' })).toBeInTheDocument();
-    expect(screen.queryByLabelText('Proizvodi')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
 });
 
-test('svi kontejneri stoje na jednoj strani, bez tabova', () => {
+// Ploče radnog prostora su tabovi u dvije kartice — vidi se jedna po kartici.
+const pane = (name: string) => screen.getByRole('tabpanel', { name });
+const openTab = (name: RegExp) => fireEvent.click(screen.getByRole('tab', { name }));
+// Traka projekata (fokus) — kalendar ima redove s istim nazivima projekata.
+const scopeBar = () => screen.getByRole('group', { name: /Projekti na tabli/ });
+
+test('radni prostor su dvije kartice s tabovima, a broj na tabu kaže gdje ima posla', () => {
     renderScreen();
-    for (const name of ['Kalendar projekata', 'Proizvodi', 'Radni nalozi', 'Zadaci', 'Napomene']) {
-        expect(screen.getByRole('region', { name })).toBeInTheDocument();
-    }
-    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Kalendar projekata' })).toBeInTheDocument();
+
+    const making = screen.getByRole('tablist', { name: 'Proizvodnja' });
+    const tracking = screen.getByRole('tablist', { name: 'Praćenje' });
+    expect(within(making).getAllByRole('tab').map(t => t.textContent)).toEqual(['Proizvodi2', 'Radni nalozi2']);
+    expect(within(tracking).getAllByRole('tab').map(t => t.textContent)).toEqual(['Narudžbe0', 'Zadaci2', 'Napomene1']);
+
+    // Po kartici je otvoren jedan tab.
+    expect(pane('Proizvodi')).toBeInTheDocument();
+    expect(pane('Narudžbe')).toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel', { name: 'Zadaci' })).not.toBeInTheDocument();
+
+    openTab(/^Zadaci/);
+    expect(within(pane('Zadaci')).getByText('Miran zadatak')).toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel', { name: 'Narudžbe' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^Zadaci/ })).toHaveAttribute('aria-selected', 'true');
 });
 
-test('leća iz pulsa sužava SVE kontejnere na isto pitanje', () => {
+test('leća iz pulsa sužava SVE kontejnere na isto pitanje i otvara tab s odgovorom', () => {
     renderScreen();
-    expect(within(screen.getByRole('region', { name: 'Radni nalozi' })).getByText('Uredan nalog')).toBeInTheDocument();
-    const wall = () => screen.getByRole('region', { name: 'Zadaci' });
-    expect(within(wall()).getByText('Miran zadatak')).toBeInTheDocument();
+    openTab(/^Radni nalozi/);
+    expect(within(pane('Radni nalozi')).getByText('Uredan nalog')).toBeInTheDocument();
+    openTab(/^Zadaci/);
+    expect(within(pane('Zadaci')).getByText('Miran zadatak')).toBeInTheDocument();
+    openTab(/^Proizvodi/);
 
     fireEvent.click(within(screen.getByRole('group', { name: /Puls projekata/ })).getByRole('button', { name: /^Kasni/ }));
 
-    expect(within(screen.getByRole('region', { name: 'Radni nalozi' })).queryByText('Uredan nalog')).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Radni nalozi' })).getByText('Kasni nalog')).toBeInTheDocument();
-    expect(within(wall()).queryByText('Miran zadatak')).not.toBeInTheDocument();
-    expect(within(wall()).getByText('Hitan zadatak')).toBeInTheDocument();
+    // Zakašnjeli nalog postoji → Proizvodnja sama prelazi na naloge.
+    expect(within(pane('Radni nalozi')).queryByText('Uredan nalog')).not.toBeInTheDocument();
+    expect(within(pane('Radni nalozi')).getByText('Kasni nalog')).toBeInTheDocument();
+    expect(within(pane('Zadaci')).queryByText('Miran zadatak')).not.toBeInTheDocument();
+    expect(within(pane('Zadaci')).getByText('Hitan zadatak')).toBeInTheDocument();
     // Napomene nemaju veze s kašnjenjem — pod ovom lećom ih nema.
-    expect(within(screen.getByRole('region', { name: 'Napomene' })).queryByText('Koja boja?')).not.toBeInTheDocument();
+    openTab(/^Napomene/);
+    expect(within(pane('Napomene')).queryByText('Koja boja?')).not.toBeInTheDocument();
+});
+
+test('„Čeka odgovor" otvara napomene, i to pitanje je na vrhu', () => {
+    renderScreen();
+    fireEvent.click(within(screen.getByRole('group', { name: /Puls projekata/ })).getByRole('button', { name: /^Čeka odgovor/ }));
+    expect(within(pane('Napomene')).getByText('Koja boja?')).toBeInTheDocument();
+});
+
+test('klik na projekat suzi cijelu stranu, a tabla ostaje netaknuta', () => {
+    const { onBoardChange } = renderScreen();
+    expect(within(pane('Proizvodi')).getByText('Klupa')).toBeInTheDocument();
+
+    fireEvent.click(within(scopeBar()).getByRole('button', { name: 'Melihin stan' }));
+
+    expect(within(scopeBar()).getByRole('button', { name: 'Melihin stan' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(pane('Proizvodi')).queryByText('Klupa')).not.toBeInTheDocument();
+    expect(within(pane('Proizvodi')).getByText('Vrata')).toBeInTheDocument();
+    expect(onBoardChange).not.toHaveBeenCalled();
+
+    fireEvent.click(within(scopeBar()).getByRole('button', { name: /^Svi projekti/ }));
+    expect(within(pane('Proizvodi')).getByText('Klupa')).toBeInTheDocument();
+});
+
+test('sa suženom stranom „+ Nalog" ne pita za projekat', () => {
+    renderScreen();
+    fireEvent.click(within(scopeBar()).getByRole('button', { name: 'Melihin stan' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Novo' })).getByRole('button', { name: 'Novi radni nalog' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByTestId('wizard')).toBeInTheDocument();
 });
 
 // Traka odabira lebdi na dnu EKRANA, ne na dnu ploče Proizvodi — do stare
@@ -110,7 +161,7 @@ test('odabir proizvoda otvara plutajuću traku s nalogom i narudžbom', () => {
     // Samo proizvod označen → nudi se sve što na njemu fali.
     expect(within(dock()).getByRole('button', { name: /Naruči što fali \(1\)/ })).toBeEnabled();
     // Traka nije dio ploče Proizvodi.
-    expect(within(screen.getByRole('region', { name: 'Proizvodi' })).queryByText(/Označeno:/)).not.toBeInTheDocument();
+    expect(within(pane('Proizvodi')).queryByText(/Označeno:/)).not.toBeInTheDocument();
     fireEvent.click(within(dock()).getByRole('button', { name: 'Očisti' }));
     expect(screen.queryByRole('region', { name: 'Označeno' })).not.toBeInTheDocument();
 });
@@ -129,7 +180,7 @@ test('narudžba dobija naziv iz projekta i pozicije — nikad „Komandni centar
     renderScreen();
     fireEvent.click(screen.getAllByRole('button', { name: 'Prikaži materijale' })[0]);
     // „Naruči što fali" stoji uz tabelu materijala, ne na dnu ploče.
-    fireEvent.click(within(screen.getByRole('region', { name: 'Proizvodi' })).getByRole('button', { name: /Naruči što fali \(1\)/ }));
+    fireEvent.click(within(pane('Proizvodi')).getByRole('button', { name: /Naruči što fali \(1\)/ }));
 
     const name = await screen.findByLabelText('Naziv narudžbe');
     expect(name).toHaveValue('Aamanns — Klupa');
@@ -162,19 +213,33 @@ test('nalog, narudžba i zadatak se prave iz zaglavlja, uz izbor projekta', () =
 
 // ── Raspored ────────────────────────────────────────────────────────
 
-test('sklopljena ploča ostaje zaglavlje sa sažetkom i pamti se na tabli', () => {
+test('kalendar se sklapa na zaglavlje sa sažetkom i to se pamti na tabli', () => {
     const { onBoardChange } = renderScreen();
-    const tasksPanel = screen.getByRole('region', { name: 'Zadaci' });
-    fireEvent.click(within(tasksPanel).getByRole('button', { name: 'Zadaci' }));
-    expect(onBoardChange).toHaveBeenCalledWith({ Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['tasks'] });
+    fireEvent.click(within(calendar()).getByRole('button', { name: 'Kalendar projekata' }));
+    expect(onBoardChange).toHaveBeenCalledWith({ Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['calendar'] });
 });
 
-test('sklopljena ploča pokazuje sažetak umjesto sadržaja, a kreiranje ostaje', () => {
+test('sklopljeni kalendar pokazuje sažetak umjesto trake', () => {
+    renderScreen({ board: { Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['calendar'] } });
+    expect(within(calendar()).queryByRole('button', { name: 'Traka' })).not.toBeInTheDocument();
+    expect(within(calendar()).getByText(/kasni/)).toBeInTheDocument();
+});
+
+test('tabla koja je ranije imala sklopljene ploče i dalje pokazuje njihov sadržaj', () => {
     renderScreen({ board: { Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['tasks'] } });
-    const tasksPanel = screen.getByRole('region', { name: 'Zadaci' });
-    expect(within(tasksPanel).queryByText('Miran zadatak')).not.toBeInTheDocument();
-    expect(within(tasksPanel).getByText('1 kasni')).toBeInTheDocument();
-    expect(within(tasksPanel).getByRole('button', { name: 'Novi zadatak' })).toBeInTheDocument();
+    openTab(/^Zadaci/);
+    expect(within(pane('Zadaci')).getByText('Miran zadatak')).toBeInTheDocument();
+});
+
+test('kreiranje stoji na traci s tabovima i mijenja se s tabom', () => {
+    renderScreen();
+    // Zaglavlje ekrana uvijek nudi zadatak; na traci se pojavi tek uz tab Zadaci.
+    const railEnd = () => screen.getByRole('tablist', { name: 'Praćenje' }).parentElement!.querySelector<HTMLElement>('.kc-tabs-end')!;
+    expect(within(railEnd()).getByRole('button', { name: /narudžba/i })).toBeInTheDocument();
+    expect(within(railEnd()).queryByRole('button', { name: 'Novi zadatak' })).not.toBeInTheDocument();
+    openTab(/^Zadaci/);
+    expect(within(railEnd()).getByRole('button', { name: 'Novi zadatak' })).toBeInTheDocument();
+    expect(within(railEnd()).queryByRole('button', { name: /narudžba/i })).not.toBeInTheDocument();
 });
 
 test('otvorena narudžba raširi desnu kolonu, zatvorena je vraća', () => {
@@ -187,11 +252,16 @@ test('otvorena narudžba raširi desnu kolonu, zatvorena je vraća', () => {
     const board = () => container.querySelector('.kc-board')!;
     expect(board()).toHaveAttribute('data-split', 'balanced');
 
-    const purchases = screen.getByRole('region', { name: 'Narudžbe' });
+    const purchases = pane('Narudžbe');
     fireEvent.click(within(purchases).getByRole('button', { name: 'Otvori narudžbu' }));
     expect(board()).toHaveAttribute('data-split', 'rail-wide');
 
     fireEvent.click(within(purchases).getByRole('button', { name: 'Sklopi narudžbu' }));
+    expect(board()).toHaveAttribute('data-split', 'balanced');
+
+    // Prelazak na drugi tab vraća širinu, iako narudžba ostane otvorena.
+    fireEvent.click(within(pane('Narudžbe')).getByRole('button', { name: 'Otvori narudžbu' }));
+    openTab(/^Zadaci/);
     expect(board()).toHaveAttribute('data-split', 'balanced');
 });
 
@@ -207,7 +277,8 @@ test('napomene za kolegu uvijek stoje prve', () => {
         }],
     }, projects[1]] as unknown as Project[];
     renderScreen({ projects: withColleague });
-    const notes = screen.getByRole('region', { name: 'Napomene' });
+    openTab(/^Napomene/);
+    const notes = pane('Napomene');
     const texts = within(notes).getAllByText(/Koja boja\?|Sokl je sada 65mm/).map(e => e.textContent);
     expect(texts).toEqual(['Sokl je sada 65mm', 'Koja boja?']);
 });
@@ -232,7 +303,7 @@ test('duga lista se ne izlije u zid teksta — grupa pokaže dio pa „Prikaži 
     }] as unknown as Project[];
     renderScreen({ projects: many, board: { Project_IDs: ['p1'], Show_Done: false } });
 
-    const panel = screen.getByRole('region', { name: 'Proizvodi' });
+    const panel = pane('Proizvodi');
     expect(within(panel).getAllByRole('checkbox').length).toBe(12);
     fireEvent.click(within(panel).getByRole('button', { name: /Prikaži još 8/ }));
     expect(within(panel).getAllByRole('checkbox').length).toBe(20);
@@ -240,7 +311,7 @@ test('duga lista se ne izlije u zid teksta — grupa pokaže dio pa „Prikaži 
 
 test('grupa projekta se može sklopiti da duga lista ne guši ostatak strane', () => {
     renderScreen();
-    const panel = screen.getByRole('region', { name: 'Proizvodi' });
+    const panel = pane('Proizvodi');
     const toggle = within(panel).getByRole('button', { name: /Aamanns/ });
     expect(within(panel).getAllByRole('checkbox').length).toBeGreaterThan(0);
     fireEvent.click(toggle);
@@ -253,7 +324,8 @@ test('grupa projekta se može sklopiti da duga lista ne guši ostatak strane', (
 test('kvačica na zadatku se vidi odmah, bez ponovnog učitavanja baze', () => {
     const onRefresh = jest.fn();
     renderScreen({ onRefresh });
-    const wall = () => screen.getByRole('region', { name: 'Zadaci' });
+    openTab(/^Zadaci/);
+    const wall = () => pane('Zadaci');
 
     expect(within(wall()).getByText('Hitan zadatak')).toBeInTheDocument();
 
@@ -267,7 +339,8 @@ test('kvačica na zadatku se vidi odmah, bez ponovnog učitavanja baze', () => {
 test('riješena napomena odmah nestaje iz liste otvorenih', () => {
     const onRefresh = jest.fn();
     renderScreen({ onRefresh });
-    const notes = () => screen.getByRole('region', { name: 'Napomene' });
+    openTab(/^Napomene/);
+    const notes = () => pane('Napomene');
     expect(within(notes()).getByText('Koja boja?')).toBeInTheDocument();
 
     fireEvent.click(within(notes()).getByRole('button', { name: 'Označi kao riješeno: Koja boja?' }));
@@ -278,10 +351,11 @@ test('riješena napomena odmah nestaje iz liste otvorenih', () => {
 
 test('napomene se mogu pretražiti, grupisati i sortirati', () => {
     renderScreen();
-    const notes = () => screen.getByRole('region', { name: 'Napomene' });
+    openTab(/^Napomene/);
+    const notes = () => pane('Napomene');
 
-    // Dugme za novu napomenu stoji u zaglavlju, ne na dnu liste.
-    expect(within(notes()).getByRole('button', { name: /Nova/ })).toBeInTheDocument();
+    // Dugme za novu napomenu stoji na traci s tabovima, ne na dnu liste.
+    expect(screen.getByRole('button', { name: 'Nova' })).toBeInTheDocument();
 
     fireEvent.click(within(notes()).getByRole('button', { name: 'Pozicija' }));
     expect(within(notes()).getAllByText('Klupa').length).toBeGreaterThan(0);
