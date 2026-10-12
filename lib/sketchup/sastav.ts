@@ -13,14 +13,17 @@
 //   furnir   MDF {d−2}; od 38 mm 2× MDF 18    lice P×1,4 + KK naličje P×1,4   Lakiranje: lice+KK P×1,4×1,2     ne — ivice se lakiraju
 //                                             (obostrano: lice 2×P×1,4)       obostrano P×1,4×2×1,1
 //   hpl      MDF {d−2}; jezgro ≥36 → 2×      HPL lice P×1,2 + HPL KK P×1,2   —                                da
+//   masiv    Masiv / {dekor}: V×1,3 m³        —                               —                                ne
+//   solid    sam materijal (Kerrock / Corian: cijele ploče, spojevi se lijepe)                                 ne
 //
 // P = neto površina komada (m², jedna strana, samo vanjski slojevi).
+// V = neto zapremina svih komada (m³) — masivno drvo se kupuje po m³, uz otpad.
 // Ploče jezgra = kupljene ploče iz optimizacije (Component Manager).
 // ════════════════════════════════════════════════════════════════════
 
 import { normName, type MatchKind } from './match';
 
-export type PlocaTip = 'iveral' | 'mdf' | 'furnir' | 'hpl';
+export type PlocaTip = 'iveral' | 'mdf' | 'furnir' | 'hpl' | 'masiv' | 'solid';
 
 export const KOEF = {
     FURNIR_OTPAD: 1.4,      // m² furnira po m² komada (po strani)
@@ -29,6 +32,7 @@ export const KOEF = {
     HPL_OTPAD: 1.2,         // m² HPL-a po m² komada (po strani)
     FARBA_OBJE: 2,          // MDF vidljiv s obje strane
     FARBA_JEDNA: 1.3,       // naličje dobije malo farbe
+    MASIV_OTPAD: 1.3,       // m³ masiva po m³ komada (krojenje, blanjanje, greške drveta)
 };
 
 /** HPL se kupuje u pločama 2800 × 1310 — za preračun m² ↔ komad. */
@@ -47,13 +51,20 @@ function cap(s: string): string {
     return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
 }
 
-/** Vrsta ploče iz naziva SketchUp materijala. Sve što nije MDF/furnir/HPL računa se kao iveral. */
+/**
+ * Vrsta ploče iz naziva SketchUp materijala. Kerrock / Corian je „solid"
+ * (lijepi se iz više komada), „masiv" u nazivu je masivno drvo; sve što nije
+ * MDF / furnir / HPL računa se kao iveral. Sama vrsta drveta („Hrast",
+ * „Jela/smreka") ostaje iveral — u ponudi se po potrebi prebaci na masiv.
+ */
 export function profilMaterijala(naziv: string): Profil {
     const n = normName(naziv);
-    const clean = (re: RegExp) => cap(naziv.replace(re, ' ').replace(/[/\\·–—-]+/g, ' ').replace(/\b\d{1,2}\s*mm\b/gi, ''));
+    const clean = (re: RegExp) => cap(naziv.replace(re, ' ').replace(/[/\\·–—_-]+/g, ' ').replace(/\b\d{1,2}\s*mm\b/gi, ''));
+    if (/kerrock|corian/.test(n)) return { tip: 'solid', dekor: clean(/kerrock|corian/gi) || cap(naziv) };
     if (/\bhpl\b/.test(n)) return { tip: 'hpl', dekor: clean(/\bhpl\b(\s*kk\b)?/gi) || 'HPL' };
     if (/\bfurnir\w*/.test(n)) return { tip: 'furnir', dekor: clean(/\bfurnir\w*(\s*kk\b)?/gi) || 'Furnir' };
     if (/\bmdf\b/.test(n)) return { tip: 'mdf', dekor: clean(/\bmdf\b/gi) };
+    if (/masiv/.test(n)) return { tip: 'masiv', dekor: clean(/masiv\w*|\bdrvo\b/gi) || 'Masiv' };
     return { tip: 'iveral', dekor: naziv.trim() };
 }
 
@@ -68,6 +79,10 @@ export interface SastavUlaz {
     ploce: number;
     furnirObostrano?: boolean;
     farbanje?: Farbanje;
+    /** Masiv: neto zapremina SVIH komada (i lijepljenih slojeva), m³. Bez nje P × debljina. */
+    zapremina?: number;
+    /** Masiv: m³ za kupiti po m³ komada (otpad); podrazumijevano KOEF.MASIV_OTPAD. */
+    masivKoef?: number;
 }
 
 export interface SastavStavka {
@@ -78,7 +93,7 @@ export interface SastavStavka {
     kind: MatchKind;
     /** Naziv u obliku ERP kataloga („MDF 18", „Furnir KK / Hrast", „Lakiranje"). */
     naziv: string;
-    jm: 'ploča' | 'm²';
+    jm: 'ploča' | 'm²' | 'm³';
     kolicina: number;
     debljina?: number;
     /** Za preračun m² ↔ ploča u ERP-u (HPL se vodi po ploči). */
@@ -86,13 +101,14 @@ export interface SastavStavka {
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 function jezgro(d: number, ploce: number): SastavStavka[] {
     const t = Math.max(3, Math.round(d));
     return [{ uloga: 'jezgro', vrsta: 'ploca', kind: 'ploca', naziv: `MDF ${t}`, jm: 'ploča', kolicina: ploce, debljina: t }];
 }
 
-/** Stavke sastava za jednu SketchUp grupu (MDF / furnir / HPL); iveral nema sastav. */
+/** Stavke sastava za jednu SketchUp grupu (MDF / furnir / HPL / masiv); iveral i solid nemaju sastav. */
 export function sastav(u: SastavUlaz): SastavStavka[] {
     const P = Math.max(0, u.povrsina);
     const out: SastavStavka[] = [];
@@ -126,11 +142,18 @@ export function sastav(u: SastavUlaz): SastavStavka[] {
         const strana = r2(P * KOEF.HPL_OTPAD);
         out.push({ uloga: 'lice', vrsta: 'obloga', kind: 'ploca', naziv: `HPL / ${v}`, jm: 'm²', kolicina: strana, povrsinaPloce: HPL_PLOCA_M2 });
         out.push({ uloga: 'nalicje', vrsta: 'obloga', kind: 'ploca', naziv: `HPL KK / ${v}`, jm: 'm²', kolicina: strana, povrsinaPloce: HPL_PLOCA_M2 });
+    } else if (u.tip === 'masiv') {
+        const neto = u.zapremina != null ? u.zapremina : P * u.debljina / 1000;
+        const koef = u.masivKoef != null && u.masivKoef > 0 ? u.masivKoef : KOEF.MASIV_OTPAD;
+        out.push({
+            uloga: 'jezgro', vrsta: 'ploca', kind: 'ploca', naziv: `Masiv / ${u.dekor || 'Masiv'}`, jm: 'm³',
+            kolicina: r3(Math.max(0, neto) * koef), debljina: Math.round(u.debljina),
+        });
     }
     return out;
 }
 
-/** Kant traka: MDF se farba, furnir lakira — trake nema. */
+/** Kant traka: MDF se farba, furnir lakira, masiv i Kerrock su puni materijal — trake nema. */
 export function imaKant(tip: PlocaTip): boolean {
     return tip === 'iveral' || tip === 'hpl';
 }

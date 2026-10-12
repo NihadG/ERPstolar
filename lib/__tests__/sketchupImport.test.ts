@@ -167,6 +167,8 @@ describe('količine, jedinice i dobavljači', () => {
         expect(suppliersToCreate(plan, defaultChoices(plan), CATALOG, SUPPLIERS)).toEqual(['Penny']);
         expect(isRealSupplier('Okov (srednji)')).toBe(false);
         expect(isRealSupplier('ručno')).toBe(false);
+        expect(isRealSupplier('Ostali')).toBe(false);
+        expect(isRealSupplier('Drvodom')).toBe(true);
     });
 
     it('sažetak broji povezane i nove materijale i ukupan trošak', () => {
@@ -179,6 +181,11 @@ describe('količine, jedinice i dobavljači', () => {
     it('nekompatibilna jedinica ostaje u jedinici ponude i označi se', () => {
         expect(convertToUnit({ jm: 'kom', kolicina: 2, cijena: 10 }, 'm')).toMatchObject({ compatible: false, unit: 'kom', quantity: 2 });
         expect(convertToUnit({ jm: 'par', kolicina: 3, cijena: 13 }, 'Kom')).toMatchObject({ compatible: true, quantity: 3, unitPrice: 13 });
+    });
+
+    it('masiv u m³ ide na materijal u m3, a ne na komad', () => {
+        expect(convertToUnit({ jm: 'm³', kolicina: 0.104, cijena: 3000 }, 'm3')).toMatchObject({ compatible: true, quantity: 0.104, unitPrice: 3000 });
+        expect(convertToUnit({ jm: 'm³', kolicina: 0.104, cijena: 3000 }, 'Kom')).toMatchObject({ compatible: false, unit: 'm³' });
     });
 });
 

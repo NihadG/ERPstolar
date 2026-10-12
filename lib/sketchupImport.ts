@@ -258,10 +258,12 @@ export function conventionalName(l: SuLine): string {
 
 // ─── jedinice ────────────────────────────────────────────────────────
 
-type UnitClass = 'area' | 'length' | 'count';
+type UnitClass = 'area' | 'volume' | 'length' | 'count';
 function unitClass(u: string): UnitClass {
     const n = normName(u);
     if (/^m(2|²)$|^m\^2$/.test(n.replace(/\s/g, ''))) return 'area';
+    // masivno drvo se vodi po m³ — nije „komad", pa se ne veže za materijal u Kom
+    if (/^m(3|³)$|^m\^3$/.test(n.replace(/\s/g, ''))) return 'volume';
     if (n === 'm' || n === 'dm' || n === 'm1') return 'length';
     return 'count';
 }
@@ -290,11 +292,11 @@ export function convertToUnit(line: Pick<SuLine, 'jm' | 'kolicina' | 'cijena' | 
 
 // ─── dobavljači ──────────────────────────────────────────────────────
 
-/** „Okov (srednji)", „ručno", „#N/A" — cijena nije od stvarnog dobavljača. */
+/** „Okov (srednji)", „ručno", „Ostali", „#N/A" — cijena nije od stvarnog dobavljača. */
 export function isRealSupplier(name?: string): boolean {
     const n = normName(name || '');
     if (!n || n === '#n/a' || n === 'n/a') return false;
-    if (/^rucno|^okov\b|^procjena/.test(n)) return false;
+    if (/^rucno|^okov\b|^procjena|^ostali$/.test(n)) return false;
     return true;
 }
 

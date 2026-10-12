@@ -10,6 +10,11 @@ describe('profil materijala iz SketchUpa', () => {
         ['MDF farbani', 'mdf', 'Farbani'],
         ['Egger U156 ST9', 'iveral', 'Egger U156 ST9'],
         ['Iveral Bijeli za korpus', 'iveral', 'Iveral Bijeli za korpus'],
+        ['Kerrock Arctic White', 'solid', 'Arctic White'],
+        ['Corian_Glacier', 'solid', 'Glacier'],
+        ['Masiv / Hrast', 'masiv', 'Hrast'],
+        ['Hrast masivno drvo 40mm', 'masiv', 'Hrast'],
+        ['Hrast', 'iveral', 'Hrast'],
     ])('%s → %s / %s', (naziv, tip, dekor) => {
         expect(profilMaterijala(naziv)).toEqual({ tip, dekor });
     });
@@ -50,5 +55,15 @@ describe('sastav — pravila starog uvoza', () => {
     it('iveral nema sastav; kant samo iveral i HPL', () => {
         expect(sastav({ tip: 'iveral', dekor: 'U156', debljina: 18, povrsina: 1, ploce: 1 })).toEqual([]);
         expect([imaKant('iveral'), imaKant('hpl'), imaKant('mdf'), imaKant('furnir')]).toEqual([true, true, false, false]);
+    });
+
+    it('masiv po m³: neto zapremina × 1,3 (ili zadani koeficijent), bez kanta; Kerrock bez sastava', () => {
+        // 2 m² × 40 mm = 0,08 m³ neto
+        expect(pick(sastav({ tip: 'masiv', dekor: 'Hrast', debljina: 40, povrsina: 2, ploce: 1 }))).toEqual([['Masiv / Hrast', 'm³', 0.104]]);
+        // lijepljeni slojevi: zapremina dolazi izvana (svi komadi)
+        expect(pick(sastav({ tip: 'masiv', dekor: 'Jela/smreka', debljina: 18, povrsina: 1, ploce: 1, zapremina: 0.036, masivKoef: 1 })))
+            .toEqual([['Masiv / Jela/smreka', 'm³', 0.036]]);
+        expect(sastav({ tip: 'solid', dekor: 'Bijeli', debljina: 12, povrsina: 1, ploce: 1 })).toEqual([]);
+        expect([imaKant('masiv'), imaKant('solid')]).toEqual([false, false]);
     });
 });
