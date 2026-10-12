@@ -15,11 +15,11 @@ import { SearchableSelect } from './ui/SearchableSelect';
 import type { Material, Project, Supplier } from '@/lib/types';
 import {
     getMaterialsCatalog, getSuppliers, saveMaterial, saveSupplier, saveProduct,
-    addMaterialsToProductBatch, deleteImportedProductMaterials,
+    addMaterialsToProductBatch, deleteImportedProductMaterials, deleteReplaceableProductMaterials,
 } from '@/lib/services';
 import {
     parseSketchUpExport, buildImportPlan, defaultChoices, summarizePlan, resolveProductLines, runImport,
-    buildErpCatalog, type ImportPlan, type ImportChoices, type ImportResult, type MatchHow,
+    buildErpCatalog, targetOf, existingInfo, type ImportPlan, type ImportChoices, type ImportResult, type MatchHow,
     type PlannedMaterial, type PlannedProduct, type ProductAction, type SuExport,
 } from '@/lib/sketchupImport';
 import { formatCurrency } from '@/lib/utils';
@@ -174,6 +174,9 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
     const setProductChoice = (key: string, value: ProductAction) => {
         setChoices(c => ({ ...c, products: { ...c.products, [key]: value } }));
     };
+    const setProductTarget = (key: string, productId: string) => {
+        setChoices(c => ({ ...c, targets: { ...(c.targets || {}), [key]: productId } }));
+    };
 
     // Opcije za izbor: novi materijal, prijedlozi, pa ostatak kataloga iste kategorije prvo.
     const optionsFor = useCallback((m: PlannedMaterial) => {
@@ -216,12 +219,14 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                 saveProduct: d => fake('Product_ID').then(r => (d.Product_ID ? { ...r, data: { Product_ID: d.Product_ID } } : r)),
                 addProductMaterials: async () => ({ success: true, message: '' }),
                 deleteImportedProductMaterials: async () => undefined,
+                deleteReplaceableProductMaterials: async () => ({ deleted: 0, kept: 0 }),
             } : {
                 saveSupplier: d => saveSupplier(d, organizationId),
                 saveMaterial: d => saveMaterial(d, organizationId),
                 saveProduct: d => saveProduct(d, organizationId),
                 addProductMaterials: (pid, items) => addMaterialsToProductBatch(pid, items, organizationId),
                 deleteImportedProductMaterials: pid => deleteImportedProductMaterials(pid, organizationId),
+                deleteReplaceableProductMaterials: pid => deleteReplaceableProductMaterials(pid, organizationId),
             }, (label, done, total) => setProgress({ label, done, total }));
             setResult(res);
             setStep('done');
@@ -469,6 +474,8 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                             </div>
                             {plan.products.map(p => {
                                 const action = choices.products[p.key] || 'new';
+                                const target = targetOf(p, plan, choices);
+                                const info = target ? existingInfo(target) : null;
                                 const lines = resolveProductLines(p, plan, choices, catalog);
                                 const perUnit = lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
                                 return (
@@ -479,28 +486,43 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                                             <span className="sui-prod-dims">{fmtDims(p)}</span>
                                             <span className="sui-prod-lines num">{lines.length}</span>
                                             <span className="sui-prod-cost num">{formatCurrency(perUnit)}</span>
-                                            {p.existing ? (
+                                            {(p.existing || plan.projectProducts.length > 0) ? (
                                                 <select
                                                     className="sui-action"
                                                     value={action}
                                                     onClick={e => e.stopPropagation()}
                                                     onChange={e => setProductChoice(p.key, e.target.value as ProductAction)}
                                                 >
-                                                    <option value="replace" disabled={!p.canReplace}>
-                                                        {p.existingImported ? 'Zamijeni uvezenu sastavnicu' : 'Dopuni postojeći'}
-                                                    </option>
                                                     <option value="new">Napravi novi proizvod</option>
+                                                    <option value="replaceAll">Zamijeni sav materijal</option>
+                                                    <option value="replace" disabled={!!info && !info.canReplace}>
+                                                        {info && info.imported ? 'Zamijeni uvezenu sastavnicu' : 'Dopuni postojeći'}
+                                                    </option>
                                                     <option value="skip">Preskoči</option>
                                                 </select>
                                             ) : <span className="sui-cell-status"><span className="sui-badge tone-new">novi proizvod</span></span>}
                                         </summary>
-                                        {p.existing && (
-                                            <p className="sui-exists">
-                                                U projektu već postoji „{p.existing.Name}" ({p.existingImported} uvezenih, {p.existingManual} ručnih stavki).{' '}
-                                                {p.canReplace
-                                                    ? 'Zamjena briše samo ranije uvezene stavke; ručno dodane ostaju.'
-                                                    : 'Dio uvezene sastavnice je već naručen — zamjena nije moguća.'}
-                                            </p>
+                                        {(action === 'replace' || action === 'replaceAll') && (
+                                            <div className="sui-exists">
+                                                <label className="sui-target">
+                                                    <span>U proizvod projekta</span>
+                                                    <select value={target?.Product_ID || ''} onChange={e => setProductTarget(p.key, e.target.value)}>
+                                                        <option value="" disabled>— izaberi proizvod —</option>
+                                                        {plan.projectProducts.map(x => (
+                                                            <option key={x.Product_ID} value={x.Product_ID}>
+                                                                {x.Name} ({(x.materials || []).length} stavki)
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                {!target ? ' Izaberi postojeći proizvod u koji ide uvezeni materijal.'
+                                                    : action === 'replaceAll'
+                                                        ? <> Briše se sav nenaručeni materijal „{target.Name}" ({(target.materials || []).length - (info?.locked.length || 0)} stavki) i upisuje uvezeni.
+                                                            {info && info.locked.length > 0 && <> Naručeno / primljeno ostaje ({info.locked.length}) — uvezena količina istog materijala se za to umanji.</>}</>
+                                                        : info?.canReplace
+                                                            ? <> „{target.Name}": {info.imported} uvezenih, {info.manual} ručnih stavki — briše se samo ranije uvezeno, ručno dodano ostaje.</>
+                                                            : ' Dio uvezene sastavnice je već naručen — dopuna nije moguća.'}
+                                            </div>
                                         )}
                                         <table className="sui-lines">
                                             <thead>
@@ -510,7 +532,7 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                                                 {lines.map((l, i) => (
                                                     <tr key={i} className={l.unitMismatch ? 'mismatch' : ''}>
                                                         <td>{newNames[l.materialKey]?.trim() && !l.materialId ? newNames[l.materialKey] : l.materialName}{!l.materialId && <span className="sui-tag-new">novi</span>}</td>
-                                                        <td>{fmtQty(l.quantity)} {l.unit}{l.unitMismatch && <span className="material-icons-round sui-warn-ico" title="Jedinica ponude se razlikuje od kataloške">warning</span>}</td>
+                                                        <td>{fmtQty(l.quantity)} {l.unit}{l.lockedQuantity ? <span className="sui-tag-new" title="Već naručeno / primljeno — ostaje u sastavnici">+{fmtQty(l.lockedQuantity)} naručeno</span> : null}{l.unitMismatch && <span className="material-icons-round sui-warn-ico" title="Jedinica ponude se razlikuje od kataloške">warning</span>}</td>
                                                         <td>{formatCurrency(l.unitPrice)}</td>
                                                         <td>{l.supplier || '—'}</td>
                                                         <td>{formatCurrency(l.quantity * l.unitPrice)}</td>
@@ -542,6 +564,7 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                     <ul className="sui-done-list">
                         <li><b>{result.productsCreated}</b> {plural(result.productsCreated, 'novi proizvod', 'nova proizvoda', 'novih proizvoda')}{result.productsReplaced ? <>, <b>{result.productsReplaced}</b> dopunjeno</> : null}</li>
                         <li><b>{result.linesWritten}</b> {plural(result.linesWritten, 'stavka', 'stavke', 'stavki')} sastavnice</li>
+                        {result.linesKept ? <li><b>{result.linesKept}</b> {plural(result.linesKept, 'naručena stavka je ostala', 'naručene stavke su ostale', 'naručenih stavki je ostalo')} u sastavnici</li> : null}
                         <li><b>{result.materialsCreated}</b> {plural(result.materialsCreated, 'novi materijal', 'nova materijala', 'novih materijala')} u katalogu</li>
                         <li><b>{result.suppliersCreated}</b> {plural(result.suppliersCreated, 'novi dobavljač', 'nova dobavljača', 'novih dobavljača')}</li>
                     </ul>

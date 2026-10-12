@@ -363,6 +363,8 @@ export interface ImportPlan {
     materials: PlannedMaterial[];
     skippedServices: number;
     skippedEmpty: number;
+    /** Proizvodi projekta — cilj dopune / zamjene (ne mora imati isti naziv). */
+    projectProducts: Product[];
 }
 
 function lineKey(l: SuLine, catalogById: Map<string, Material>): string {
@@ -374,6 +376,29 @@ function lineKey(l: SuLine, catalogById: Map<string, Material>): string {
 
 const unordered = (m: ProductMaterial) => !m.Order_ID && (!m.Status || m.Status === 'Nije naručeno');
 const importedOf = (p: Product) => (p.materials || []).filter(m => m.Import_Source === 'sketchup');
+
+/**
+ * Stavka sastavnice koja se pri zamjeni NE smije brisati: naručena / poslana /
+ * primljena, u narudžbi ili uzeta sa stanja. Isto pravilo koristi brisanje u
+ * bazi (deleteReplaceableProductMaterials).
+ */
+export function isLockedMaterial(m: Pick<ProductMaterial, 'Order_ID' | 'Status' | 'On_Stock' | 'Ordered_Quantity'>): boolean {
+    return !!m.Order_ID || (!!m.Status && m.Status !== 'Nije naručeno') || (m.On_Stock || 0) > 0 || (m.Ordered_Quantity || 0) > 0;
+}
+
+/** Stanje postojećeg proizvoda za izbor dopune / zamjene. */
+export function existingInfo(p: Product): { imported: number; manual: number; locked: ProductMaterial[]; canReplace: boolean } {
+    const all = p.materials || [];
+    const imp = importedOf(p);
+    return { imported: imp.length, manual: all.length - imp.length, locked: all.filter(isLockedMaterial), canReplace: imp.every(unordered) };
+}
+
+/** Proizvod projekta u koji ide uvoz: ručni izbor, pa proizvod istog naziva. */
+export function targetOf(p: PlannedProduct, plan: ImportPlan, choices: ImportChoices): Product | null {
+    const id = choices.targets?.[p.key];
+    if (id) return (plan.projectProducts || []).find(x => x.Product_ID === id) || null;
+    return p.existing;
+}
 
 export function buildImportPlan(exp: SuExport, catalog: Material[], suppliers: Supplier[], projectProducts: Product[] = []): ImportPlan {
     const byId = new Map(catalog.map(m => [m.Material_ID, m] as const));
@@ -467,17 +492,28 @@ export function buildImportPlan(exp: SuExport, catalog: Material[], suppliers: S
         materials: Array.from(materials.values()),
         skippedServices,
         skippedEmpty,
+        projectProducts,
     };
 }
 
 // ─── izbori korisnika i rezolucija ───────────────────────────────────
 
-export type ProductAction = 'new' | 'skip' | 'replace';
+/**
+ * new        — novi proizvod u projektu
+ * replace    — u postojeći: obriši ranije UVEZENE stavke, ručne ostaju (dopuna)
+ * replaceAll — u postojeći: obriši SAV nenaručeni materijal i upiši uvezeni;
+ *              naručeno / primljeno / sa stanja ostaje, a uvezena količina istog
+ *              materijala se umanji za to (bez dupliranja)
+ * skip       — preskoči
+ */
+export type ProductAction = 'new' | 'skip' | 'replace' | 'replaceAll';
 
 export interface ImportChoices {
     /** key materijala → Material_ID postojećeg ili 'new'. */
     materials: Record<string, string>;
     products: Record<string, ProductAction>;
+    /** key proizvoda → Product_ID postojećeg proizvoda u koji ide uvoz (dopuna / zamjena). */
+    targets?: Record<string, string>;
 }
 
 export function defaultChoices(plan: ImportPlan): ImportChoices {
@@ -490,7 +526,9 @@ export function defaultChoices(plan: ImportPlan): ImportChoices {
         products[p.key] = !p.existing ? 'new'
             : p.canReplace && (p.existingImported > 0 || p.existingManual === 0) ? 'replace' : 'skip';
     }
-    return { materials, products };
+    const targets: Record<string, string> = {};
+    for (const p of plan.products) if (p.existing) targets[p.key] = p.existing.Product_ID;
+    return { materials, products, targets };
 }
 
 export interface ResolvedLine {
@@ -503,6 +541,8 @@ export interface ResolvedLine {
     unitPrice: number;
     supplier: string;
     unitMismatch: boolean;
+    /** Zamjena svega: dio količine koji je već naručen / primljen (ostaje u sastavnici). */
+    lockedQuantity?: number;
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -540,6 +580,27 @@ export function resolveProductLines(product: PlannedProduct, plan: ImportPlan, c
             && o.supplier === line.supplier && Math.abs(o.unitPrice - line.unitPrice) < 0.0001);
         if (same) same.quantity = round3(same.quantity + line.quantity);
         else out.push(line);
+    }
+    // Zamjena svega: naručeno / primljeno ostaje u sastavnici, pa se uvezena
+    // količina istog materijala (ista jedinica) umanji za to — zbir je kao u ponudi.
+    const target = choices.products[product.key] === 'replaceAll' ? targetOf(product, plan, choices) : null;
+    if (target) {
+        const kept = new Map<string, number>();
+        for (const m of (target.materials || []).filter(isLockedMaterial)) {
+            const k = `${m.Material_ID}|${normName(m.Unit || '')}`;
+            kept.set(k, (kept.get(k) || 0) + (m.Quantity || 0));
+        }
+        for (const l of out) {
+            if (!l.materialId) continue;
+            const k = `${l.materialId}|${normName(l.unit)}`;
+            const have = kept.get(k) || 0;
+            if (have <= 0) continue;
+            const used = Math.min(have, l.quantity);
+            l.lockedQuantity = round3(used);
+            l.quantity = round3(l.quantity - used);
+            kept.set(k, have - used);
+        }
+        return out.filter(l => l.quantity > 0.0005);
     }
     return out;
 }
@@ -586,7 +647,7 @@ export function summarizePlan(plan: ImportPlan, choices: ImportChoices, catalog:
     for (const p of plan.products) {
         const a = choices.products[p.key] || 'new';
         if (a === 'skip') { productsSkip++; continue; }
-        if (a === 'replace') productsReplace++; else productsNew++;
+        if (a === 'replace' || a === 'replaceAll') productsReplace++; else productsNew++;
         for (const l of resolveProductLines(p, plan, choices, catalog)) {
             lines++;
             usedKeys.add(l.materialKey);
@@ -619,6 +680,8 @@ export interface ImportDeps {
     addProductMaterials: (productId: string, items: Partial<ProductMaterial>[]) => Promise<{ success: boolean; message: string }>;
     /** Obriše ranije uvezene (Import_Source = 'sketchup'), nenaručene stavke proizvoda. */
     deleteImportedProductMaterials: (productId: string) => Promise<void>;
+    /** Obriše SAV nenaručeni materijal proizvoda (i staklo / alu stavke uz njega). */
+    deleteReplaceableProductMaterials?: (productId: string) => Promise<{ deleted: number; kept: number }>;
 }
 
 export interface ImportResult {
@@ -627,6 +690,8 @@ export interface ImportResult {
     productsCreated: number;
     productsReplaced: number;
     linesWritten: number;
+    /** Zamjena svega: stavke koje su ostale jer su naručene / primljene / sa stanja. */
+    linesKept?: number;
     errors: string[];
 }
 
@@ -675,13 +740,31 @@ export async function runImport(
         onProgress?.('Proizvodi', i, active.length);
         const action = choices.products[p.key] || 'new';
         let productId: string | undefined;
-        if (action === 'replace' && p.existing && p.canReplace) {
-            productId = p.existing.Product_ID;
+        const target = action === 'replace' || action === 'replaceAll' ? targetOf(p, plan, choices) : null;
+        if ((action === 'replace' || action === 'replaceAll') && !target) {
+            res.errors.push(`Proizvod „${p.name}": nije izabran postojeći proizvod.`);
+            continue;
+        }
+        if (target) {
+            if (action === 'replace' && !existingInfo(target).canReplace) {
+                res.errors.push(`Proizvod „${target.Name}": dio uvezene sastavnice je naručen — dopuna nije moguća.`);
+                continue;
+            }
+            if (action === 'replaceAll' && !deps.deleteReplaceableProductMaterials) {
+                res.errors.push(`Proizvod „${target.Name}": zamjena svega nije dostupna.`);
+                continue;
+            }
+            productId = target.Product_ID;
             const r = await deps.saveProduct({
                 Product_ID: productId, Width: p.width, Height: p.height, Depth: p.depth, Quantity: p.quantity,
             });
-            if (!r.success) { res.errors.push(`Proizvod „${p.name}": ${r.message}`); continue; }
-            await deps.deleteImportedProductMaterials(productId);
+            if (!r.success) { res.errors.push(`Proizvod „${target.Name}": ${r.message}`); continue; }
+            if (action === 'replaceAll') {
+                const d = await deps.deleteReplaceableProductMaterials!(productId);
+                res.linesKept = (res.linesKept || 0) + d.kept;
+            } else {
+                await deps.deleteImportedProductMaterials(productId);
+            }
             res.productsReplaced++;
         } else {
             const r = await deps.saveProduct({

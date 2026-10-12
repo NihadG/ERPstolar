@@ -564,3 +564,24 @@
     .sui-footer .btn { flex: 1; }
     .sui-done-list { grid-template-columns: 1fr; }
 }
+
+/* Izbor postojećeg proizvoda za dopunu / zamjenu sastavnice */
+.sui-target {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+.sui-target select {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border, #d0d5dd);
+    border-radius: var(--radius-sm);
+    background: var(--surface, #fff);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 400;
+}

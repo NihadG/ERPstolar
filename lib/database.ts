@@ -13,6 +13,7 @@ import {
     writeBatch,
 } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
+import { isLockedMaterial } from './sketchupImport';
 import type {
     Project,
     Product,
@@ -678,6 +679,46 @@ export async function deleteImportedProductMaterials(productId: string, organiza
         n++;
     });
     if (n > 0) await batch.commit();
+}
+
+/**
+ * Uvoz iz SketchUpa — "Zamijeni sav materijal": obriši SAV materijal proizvoda
+ * (uvezen i ručno dodan) osim onoga što je naručeno / primljeno / uzeto sa
+ * stanja ili se nalazi u nekoj stavci narudžbe. Uz obrisanu stavku idu i
+ * njene stavke stakla / alu vrata. Trošak proizvoda se preračuna.
+ */
+export async function deleteReplaceableProductMaterials(productId: string, organizationId: string): Promise<{ deleted: number; kept: number }> {
+    if (!organizationId) return { deleted: 0, kept: 0 };
+    const [pmSnap, oiSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+            where('Product_ID', '==', productId), where('Organization_ID', '==', organizationId))),
+        getDocs(query(collection(db, COLLECTIONS.ORDER_ITEMS),
+            where('Product_ID', '==', productId), where('Organization_ID', '==', organizationId))),
+    ]);
+    // Materijal koji je u bilo kojoj stavci narudžbe ostaje, i kad mu status nije ažuriran.
+    const uNarudzbi = new Set<string>();
+    oiSnap.docs.forEach(d => extractMaterialIds(d.data() as OrderItem).forEach(id => uNarudzbi.add(id)));
+
+    const brisi = pmSnap.docs.filter(d => {
+        const m = d.data() as ProductMaterial;
+        return !isLockedMaterial(m) && !uNarudzbi.has(m.ID);
+    });
+    const kept = pmSnap.docs.length - brisi.length;
+
+    for (let i = 0; i < brisi.length; i += 400) {
+        const batch = writeBatch(db);
+        brisi.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+    }
+    // Staklo / alu vrata imaju svoje stavke vezane za stavku sastavnice.
+    for (const d of brisi) {
+        const id = (d.data() as ProductMaterial).ID;
+        if (!id) continue;
+        await deleteGlassItemsByMaterial(id);
+        await deleteAluDoorItemsByMaterial(id);
+    }
+    if (brisi.length) await recalculateProductCost(productId, organizationId);
+    return { deleted: brisi.length, kept };
 }
 
 // Helper: extract material IDs from an order item (handles both single and grouped)

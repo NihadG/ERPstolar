@@ -223,6 +223,33 @@ describe('postojeći proizvodi', () => {
         expect(plan.products[0].canReplace).toBe(false);
         expect(defaultChoices(plan).products.D).toBe('skip');
     });
+
+    it('zamijeni sav materijal: drugi naziv proizvoda, naručeno se oduzme od uvezene količine', async () => {
+        const exp2 = exportOf([{ kljuc: 'S', naziv: 'Svedski sto 4', kolicina: 1, stavke: [
+            line({ vrsta: 'okov', naziv: 'Baglama', erp: 'Baglama ravna (sa ublazivacem)', kolicina: 5, cijena: 6 }),
+            line({ vrsta: 'okov', naziv: 'Nosači', erp: 'Nosaci gornjih elemenata', kolicina: 2, cijena: 3 }),
+        ] }]);
+        const ordered = { ...pm('Naručeno', 'o1', false), Material_ID: 'bag-r', Quantity: 2, Unit: 'Kom' };
+        const target = { ...existing([ordered, pm('Nije naručeno', '', false)]), Product_ID: 'poz4', Name: 'Poz 4 - Svedski sto' };
+        const plan = buildImportPlan(exp2, CATALOG, SUPPLIERS, [target]);
+        expect(plan.products[0].existing).toBeNull();
+        const ch = defaultChoices(plan);
+        ch.products.S = 'replaceAll';
+        ch.targets = { S: 'poz4' };
+        const lines = resolveProductLines(plan.products[0], plan, ch, CATALOG);
+        expect(lines.find(l => l.materialId === 'bag-r')).toMatchObject({ quantity: 3, lockedQuantity: 2 });
+        const calls: string[] = [];
+        const res = await runImport(plan, ch, { projectId: 'pr', catalog: CATALOG, suppliers: SUPPLIERS }, {
+            saveSupplier: async () => ({ success: true, data: { Supplier_ID: 's' }, message: '' }),
+            saveMaterial: async () => ({ success: true, data: { Material_ID: 'm' }, message: '' }),
+            saveProduct: async d => { calls.push(`product:${d.Product_ID || 'novi'}`); return { success: true, data: { Product_ID: d.Product_ID || 'x' }, message: '' }; },
+            addProductMaterials: async (pid, items) => { calls.push(`pm:${pid}:${items.map(i => `${i.Material_Name}=${i.Quantity}`).join(',')}`); return { success: true, message: '' }; },
+            deleteImportedProductMaterials: async () => { calls.push('delete-imported'); },
+            deleteReplaceableProductMaterials: async pid => { calls.push(`delete-all:${pid}`); return { deleted: 1, kept: 1 }; },
+        });
+        expect(calls).toEqual(['product:poz4', 'delete-all:poz4', 'pm:poz4:Baglama ravna (sa ublazivacem)=3,Nosaci gornjih elemenata=2']);
+        expect(res).toMatchObject({ productsReplaced: 1, linesKept: 1, errors: [] });
+    });
 });
 
 describe('runImport', () => {
