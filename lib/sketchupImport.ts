@@ -321,6 +321,10 @@ export interface PlannedMaterial {
     lines: number;
     /** Nazivi iz ponude koji vode na ovaj materijal (za prikaz). */
     sources: string[];
+    /** Isti SketchUp materijal i debljina (ploča / kant / obloga) — za usklađenost unutar uvoza. */
+    ident: string;
+    /** Materijal koji projekt već koristi za ovu stavku (vidi consistencyIssues). */
+    project: { material: Material; how: 'ranije' | 'projekt'; usedIn: string[] } | null;
 }
 
 export interface PlannedLine {
@@ -400,8 +404,36 @@ export function targetOf(p: PlannedProduct, plan: ImportPlan, choices: ImportCho
     return p.existing;
 }
 
+/** Šta projekt već koristi: materijal → proizvodi, i ključ ranijeg uvoza → materijal. */
+function projectUse(projectProducts: Product[], byId: Map<string, Material>) {
+    const usedIn = new Map<string, string[]>();
+    const byKey = new Map<string, Map<string, number>>();
+    for (const p of projectProducts) {
+        for (const m of p.materials || []) {
+            if (!m.Material_ID || !byId.has(m.Material_ID)) continue;
+            const names = usedIn.get(m.Material_ID) || [];
+            if (!names.includes(p.Name)) names.push(p.Name);
+            usedIn.set(m.Material_ID, names);
+            if (m.Import_Key) {
+                const c = byKey.get(m.Import_Key) || new Map<string, number>();
+                c.set(m.Material_ID, (c.get(m.Material_ID) || 0) + 1);
+                byKey.set(m.Import_Key, c);
+            }
+        }
+    }
+    const described = describeMaterials(Array.from(usedIn.keys()).map(id => byId.get(id)!));
+    return { usedIn, byKey, described };
+}
+
+/** Identitet stavke iz modela: isti SketchUp materijal i debljina = ista stvar. */
+function lineIdent(l: SuLine): string {
+    if (!(l.vrsta === 'ploca' || l.vrsta === 'kant' || l.vrsta === 'obloga') || !l.materijal) return '';
+    return `${l.vrsta}|${looseKey(l.materijal)}|${l.debljina ?? ''}`;
+}
+
 export function buildImportPlan(exp: SuExport, catalog: Material[], suppliers: Supplier[], projectProducts: Product[] = []): ImportPlan {
     const byId = new Map(catalog.map(m => [m.Material_ID, m] as const));
+    const use = projectUse(projectProducts, byId);
     const byName = new Map<string, Material>();
     for (const m of catalog) {
         const k = looseKey(m.Name);
@@ -443,6 +475,21 @@ export function buildImportPlan(exp: SuExport, catalog: Material[], suppliers: S
                 if (match && !candidates.some(c => c.Material_ID === match!.Material_ID)) candidates = [match, ...candidates];
                 const suggestion = !match && r.best && r.best.score >= SUGGEST_SCORE ? r.best.item.m : null;
                 const unit = conventionalUnit(l, described);
+                // Projekt već ima ovu stavku: isti ključ iz ranijeg uvoza, ili materijal
+                // projekta koji prepoznavanje drži za istu stvar (isti dekor, isti okov).
+                let project: PlannedMaterial['project'] = null;
+                const earlier = use.byKey.get(key);
+                if (earlier && earlier.size) {
+                    let id = '', n = 0;
+                    earlier.forEach((c, k) => { if (c > n) { id = k; n = c; } });
+                    project = { material: byId.get(id)!, how: 'ranije', usedIn: use.usedIn.get(id) || [] };
+                } else if (!(match && use.usedIn.has(match.Material_ID)) && use.described.length) {
+                    const pr = matchLine(l, use.described);
+                    if (pr.best && (pr.auto || pr.best.score >= SUGGEST_SCORE)) {
+                        const pmat = pr.best.item.m;
+                        project = { material: pmat, how: 'projekt', usedIn: use.usedIn.get(pmat.Material_ID) || [] };
+                    }
+                }
                 pm = {
                     key, vrsta: l.vrsta,
                     name: conventionalName(l),
@@ -452,7 +499,11 @@ export function buildImportPlan(exp: SuExport, catalog: Material[], suppliers: S
                     // kataloška cijena novog materijala u njegovoj jedinici (ploča → Kom, HPL m² → Kom)
                     unitPrice: round4(convertToUnit(l, unit).unitPrice),
                     match, how, candidates, suggestion, score: r.best?.score ?? 0, lines: 0, sources: [],
+                    ident: lineIdent(l), project,
                 };
+                if (project && !candidates.some(c => c.Material_ID === project!.material.Material_ID)) {
+                    pm.candidates = [...candidates, project.material];
+                }
                 materials.set(key, pm);
             }
             pm.lines++;
@@ -514,6 +565,68 @@ export interface ImportChoices {
     products: Record<string, ProductAction>;
     /** key proizvoda → Product_ID postojećeg proizvoda u koji ide uvoz (dopuna / zamjena). */
     targets?: Record<string, string>;
+    /** key materijala → 'keep': odstupanje od projekta je potvrđeno (ostaje prijedlog). */
+    consistency?: Record<string, 'keep'>;
+}
+
+// ─── usklađenost s projektom ─────────────────────────────────────────
+// Ista stvar u projektu mora biti isti materijal: ako uvoz za stavku
+// predlaže drugo od onoga što projekt već koristi (ranije uvezeno, isti
+// dekor / okov u drugom proizvodu) ili od iste stavke u drugom proizvodu
+// ovog uvoza, korisnik bira — isto kao u projektu ili ostaje prijedlog.
+
+export interface ConsistencyIssue {
+    key: string;
+    /** S čim treba biti isto. */
+    target: Material;
+    /** ranije = isti naziv iz ranijeg uvoza; projekt = isti artikl u projektu; uvoz = ista stavka u drugom proizvodu uvoza. */
+    reason: 'ranije' | 'projekt' | 'uvoz';
+    /** Proizvodi gdje se target već koristi. */
+    usedIn: string[];
+}
+
+export function consistencyIssues(plan: ImportPlan, choices: ImportChoices, catalog: Material[]): ConsistencyIssue[] {
+    const byId = new Map(catalog.map(m => [m.Material_ID, m] as const));
+    const choiceOf = (k: string) => choices.materials[k] || 'new';
+    // samo materijali proizvoda koji se uvoze
+    const active = new Map<string, Set<string>>();
+    for (const p of plan.products) {
+        if ((choices.products[p.key] || 'new') === 'skip') continue;
+        for (const l of p.lines) {
+            const s = active.get(l.materialKey) || new Set<string>();
+            s.add(p.name);
+            active.set(l.materialKey, s);
+        }
+    }
+    const mats = plan.materials.filter(m => active.has(m.key));
+    const out: ConsistencyIssue[] = [];
+    for (const m of mats) {
+        if (choices.consistency?.[m.key] === 'keep') continue;
+        const t = m.project;
+        if (t) {
+            if (choiceOf(m.key) !== t.material.Material_ID && byId.has(t.material.Material_ID)) {
+                out.push({ key: m.key, target: t.material, reason: t.how, usedIn: t.usedIn });
+            }
+            continue;
+        }
+        if (!m.ident) continue;
+        // Ista stavka u više proizvoda ovog uvoza (npr. drugi naziv kod drugog
+        // dobavljača): većina odlučuje, ostali se pitaju.
+        const peers = mats.filter(x => x.ident === m.ident);
+        const votes = new Map<string, number>();
+        for (const x of peers) {
+            const c = choiceOf(x.key);
+            if (c !== 'new') votes.set(c, (votes.get(c) || 0) + x.lines);
+        }
+        let best = '', n = 0;
+        votes.forEach((c, id) => { if (c > n) { best = id; n = c; } });
+        if (best && best !== choiceOf(m.key) && byId.has(best)) {
+            const names = new Set<string>();
+            peers.filter(x => choiceOf(x.key) === best).forEach(x => active.get(x.key)!.forEach(nm => names.add(nm)));
+            out.push({ key: m.key, target: byId.get(best)!, reason: 'uvoz', usedIn: Array.from(names) });
+        }
+    }
+    return out;
 }
 
 export function defaultChoices(plan: ImportPlan): ImportChoices {
@@ -797,6 +910,7 @@ export async function runImport(
                 Status: 'Nije naručeno',
                 Order_ID: '',
                 Import_Source: 'sketchup',
+                Import_Key: l.materialKey,
             });
         }
         if (items.length) {

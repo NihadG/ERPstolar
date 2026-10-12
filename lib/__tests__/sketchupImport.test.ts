@@ -1,6 +1,6 @@
 import {
     parseSketchUpExport, buildImportPlan, defaultChoices, resolveProductLines, suppliersToCreate,
-    summarizePlan, runImport, normName, convertToUnit, buildErpCatalog, isRealSupplier,
+    summarizePlan, runImport, normName, convertToUnit, buildErpCatalog, isRealSupplier, consistencyIssues,
     SU_EXPORT_FORMAT, type SuExport, type SuLine, type ImportDeps,
 } from '../sketchupImport';
 import type { Material, Product, Supplier } from '../types';
@@ -353,5 +353,72 @@ describe('sastav i konvencije baze', () => {
         const plan = buildImportPlan(exp, cat, SUPPLIERS);
         const lines = resolveProductLines(plan.products[0], plan, defaultChoices(plan), cat);
         expect(lines.find(l => l.materialName === 'HPL KK / U999')).toMatchObject({ quantity: 1, unit: 'Kom', unitPrice: 36.68 });
+    });
+});
+
+describe('usklađenost s projektom', () => {
+    // Isti dekor dva puta u katalogu (drugi dobavljač) — klasičan izvor odstupanja.
+    const CAT = [...CATALOG, mat('iv-u156-k', 'Iveral / U156 ST9 Kronospan', 'Ploče i trake', 'Kom', 175, 'Elgrad')];
+    const prod = (id: string, Name: string, mats: { Material_ID: string; Import_Key?: string }[]): Product => ({
+        Product_ID: id, Organization_ID: 'org', Project_ID: 'pr', Name, Height: 0, Width: 0, Depth: 0,
+        Quantity: 1, Status: 'Na čekanju', Material_Cost: 0, Notes: '',
+        materials: mats.map((m, i) => ({
+            ID: `${id}-${i}`, Organization_ID: 'org', Product_ID: id, Material_ID: m.Material_ID, Material_Name: m.Material_ID,
+            Quantity: 1, Unit: 'Kom', Unit_Price: 1, Total_Price: 1, Status: 'Nije naručeno', Supplier: '', Order_ID: '',
+            ...(m.Import_Key ? { Import_Source: 'sketchup' as const, Import_Key: m.Import_Key } : {}),
+        })),
+    });
+    const u156 = (erp: string, naziv = 'Egger U156 ST9 · 18 mm') =>
+        line({ vrsta: 'ploca', naziv, erp, materijal: 'Egger U156 ST9', debljina: 18, jm: 'ploča', kolicina: 1, cijena: 200 });
+
+    it('isti dekor u projektu je drugi materijal → pita; „isto kao u projektu" ga uklanja', () => {
+        const plan = buildImportPlan(exportOf([{ kljuc: 'N', naziv: 'Novi element', kolicina: 1, stavke: [u156('Iveral / U156 ST9 Kronospan')] }]),
+            CAT, SUPPLIERS, [prod('p1', 'Donji 80', [{ Material_ID: 'iv-u156' }])]);
+        const ch = defaultChoices(plan);
+        expect(ch.materials[plan.materials[0].key]).toBe('iv-u156-k');
+        const is = consistencyIssues(plan, ch, CAT);
+        expect(is).toHaveLength(1);
+        expect(is[0]).toMatchObject({ reason: 'projekt', usedIn: ['Donji 80'] });
+        expect(is[0].target.Material_ID).toBe('iv-u156');
+        ch.materials[plan.materials[0].key] = 'iv-u156';
+        expect(consistencyIssues(plan, ch, CAT)).toHaveLength(0);
+    });
+
+    it('ranije uvezen isti naziv → predlaže isti materijal kao prošli put; potvrđen prijedlog se više ne pita', () => {
+        const exp = exportOf([{ kljuc: 'N', naziv: 'Novi', kolicina: 1, stavke: [line({ vrsta: 'okov', naziv: 'Baglama', erp: 'Baglama ravna (sa ublazivacem)' })] }]);
+        const key = buildImportPlan(exp, CAT, SUPPLIERS).materials[0].key;
+        const plan = buildImportPlan(exp, CAT, SUPPLIERS, [prod('p1', 'Gornji 60', [{ Material_ID: 'bag-r-bez', Import_Key: key }])]);
+        const ch = defaultChoices(plan);
+        const is = consistencyIssues(plan, ch, CAT);
+        expect(is).toHaveLength(1);
+        expect(is[0]).toMatchObject({ reason: 'ranije' });
+        expect(is[0].target.Material_ID).toBe('bag-r-bez');
+        ch.consistency = { [key]: 'keep' };
+        expect(consistencyIssues(plan, ch, CAT)).toHaveLength(0);
+    });
+
+    it('više proizvoda u uvozu: isti SketchUp materijal pod drugim nazivom → pita da bude isto', () => {
+        const plan = buildImportPlan(exportOf([
+            { kljuc: 'A', naziv: 'A', kolicina: 1, stavke: [u156('Iveral / U156 ST9')] },
+            { kljuc: 'B', naziv: 'B', kolicina: 1, stavke: [u156('Iveral / U156 ST9')] },
+            { kljuc: 'C', naziv: 'C', kolicina: 1, stavke: [u156('Iveral / U156 ST9 Kronospan', 'Kronospan U156 · 18 mm')] },
+        ]), CAT, SUPPLIERS);
+        const is = consistencyIssues(plan, defaultChoices(plan), CAT);
+        expect(is).toHaveLength(1);
+        expect(is[0]).toMatchObject({ reason: 'uvoz', usedIn: ['A', 'B'] });
+        expect(is[0].target.Material_ID).toBe('iv-u156');
+    });
+
+    it('uvoz upisuje ključ stavke (Import_Key) za sljedeći put', async () => {
+        const plan = buildImportPlan(exportOf([{ kljuc: 'N', naziv: 'N', kolicina: 1, stavke: [u156('Iveral / U156 ST9')] }]), CAT, SUPPLIERS);
+        let keys: (string | undefined)[] = [];
+        await runImport(plan, defaultChoices(plan), { projectId: 'pr', catalog: CAT, suppliers: SUPPLIERS }, {
+            saveSupplier: async () => ({ success: true, data: { Supplier_ID: 's' }, message: '' }),
+            saveMaterial: async () => ({ success: true, data: { Material_ID: 'm' }, message: '' }),
+            saveProduct: async () => ({ success: true, data: { Product_ID: 'x' }, message: '' }),
+            addProductMaterials: async (_p, items) => { keys = items.map(i => i.Import_Key); return { success: true, message: '' }; },
+            deleteImportedProductMaterials: async () => undefined,
+        });
+        expect(keys).toEqual([plan.materials[0].key]);
     });
 });

@@ -585,3 +585,31 @@
     font: inherit;
     font-weight: 400;
 }
+
+/* ---------- usklađenost s projektom ---------- */
+.sui-consist > header .sui-consist-all { margin-left: auto; height: 30px; }
+.sui-consist-list {
+    border: 1px solid #f0d9a8;
+    border-radius: var(--radius-md);
+    background: var(--sui-warn-row);
+    overflow: hidden;
+}
+.sui-consist-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px var(--sui-pad-x);
+    border-top: 1px solid #f3e4c4;
+}
+.sui-consist-row:first-child { border-top: 0; }
+.sui-consist-proj { color: var(--sui-warn); }
+.sui-consist-proj b, .sui-consist-row .sui-line2 b { font-weight: 600; }
+.sui-consist-act { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.sui-consist-act .btn { height: 30px; white-space: nowrap; }
+.sui-footer-warn { color: var(--sui-warn); font-weight: 600; }
+@media (max-width: 720px) {
+    .sui-consist-row { grid-template-columns: minmax(0, 1fr); }
+    .sui-consist-row .sui-kind { justify-self: start; }
+    .sui-consist-act { justify-content: flex-start; }
+}

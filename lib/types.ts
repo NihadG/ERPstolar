@@ -151,6 +151,8 @@ export interface ProductMaterial {
     Received_Quantity?: number;
     /** Stavka je došla uvozom iz SketchUpa — ponovni uvoz zamjenjuje samo ovakve (vidi lib/sketchupImport.ts). */
     Import_Source?: 'sketchup';
+    /** Ključ stavke iz SketchUp ponude — sljedeći uvoz istog naziva predlaže isti materijal. */
+    Import_Key?: string;
     glassItems?: GlassItem[];
     aluDoorItems?: AluDoorItem[];
 }

@@ -19,7 +19,7 @@ import {
 } from '@/lib/services';
 import {
     parseSketchUpExport, buildImportPlan, defaultChoices, summarizePlan, resolveProductLines, runImport,
-    buildErpCatalog, targetOf, existingInfo, type ImportPlan, type ImportChoices, type ImportResult, type MatchHow,
+    buildErpCatalog, targetOf, existingInfo, consistencyIssues, type ImportPlan, type ImportChoices, type ImportResult, type MatchHow,
     type PlannedMaterial, type PlannedProduct, type ProductAction, type SuExport,
 } from '@/lib/sketchupImport';
 import { formatCurrency } from '@/lib/utils';
@@ -177,6 +177,10 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
     const setProductTarget = (key: string, productId: string) => {
         setChoices(c => ({ ...c, targets: { ...(c.targets || {}), [key]: productId } }));
     };
+    // Usklađenost: isto kao u projektu (izbor materijala) ili potvrdi prijedlog.
+    const keepProposal = (key: string) => {
+        setChoices(c => ({ ...c, consistency: { ...(c.consistency || {}), [key]: 'keep' } }));
+    };
 
     // Opcije za izbor: novi materijal, prijedlozi, pa ostatak kataloga iste kategorije prvo.
     const optionsFor = useCallback((m: PlannedMaterial) => {
@@ -241,6 +245,15 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
     }
 
     const activeCount = summary ? summary.productsNew + summary.productsReplace : 0;
+    const issues = useMemo(() => (plan ? consistencyIssues(plan, choices, catalog) : []), [plan, choices, catalog]);
+    const alignAll = () => {
+        setChoices(c => {
+            const materials = { ...c.materials };
+            for (const i of issues) materials[i.key] = i.target.Material_ID;
+            return { ...c, materials };
+        });
+        setTouched(t => { const n = new Set(t); issues.forEach(i => n.add(i.key)); return n; });
+    };
     const usedMaterialKeys = useMemo(() => {
         const s = new Set<string>();
         plan?.products.forEach(p => { if ((choices.products[p.key] || 'new') !== 'skip') p.lines.forEach(l => s.add(l.materialKey)); });
@@ -281,10 +294,11 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
         <div className="sui-footer">
             <span className="sui-footer-note">
                 {plan!.skippedServices > 0 && <>Usluge iz ponude se ne uvoze ({plan!.skippedServices} {plural(plan!.skippedServices, 'stavka', 'stavke', 'stavki')}). </>}
-                {summary.unitMismatches > 0 && <>{summary.unitMismatches} {plural(summary.unitMismatches, 'stavka ostaje', 'stavke ostaju', 'stavki ostaje')} u jedinici ponude.</>}
+                {summary.unitMismatches > 0 && <>{summary.unitMismatches} {plural(summary.unitMismatches, 'stavka ostaje', 'stavke ostaju', 'stavki ostaje')} u jedinici ponude. </>}
+                {issues.length > 0 && <b className="sui-footer-warn">Odgovori na {issues.length} {plural(issues.length, 'pitanje', 'pitanja', 'pitanja')} o usklađenosti s projektom.</b>}
             </span>
             <button className="btn btn-secondary" onClick={close}>Odustani</button>
-            <button className="btn btn-primary" onClick={doImport} disabled={activeCount === 0 || loadingDb}>
+            <button className="btn btn-primary" onClick={doImport} disabled={activeCount === 0 || loadingDb || issues.length > 0}>
                 <span className="material-icons-round">download_done</span>
                 {activeCount === 0 ? 'Ništa za uvoz' : `Uvezi ${activeCount} ${plural(activeCount, 'proizvod', 'proizvoda', 'proizvoda')}`}
             </button>
@@ -373,6 +387,43 @@ export default function SketchUpOfferImportModal({ isOpen, onClose, project, org
                             <span className="sui-stat-sub">po cijenama iz ponude</span>
                         </div>
                     </div>
+
+                    {issues.length > 0 && (
+                        <section className="sui-section sui-consist">
+                            <header>
+                                <h3>Usklađenost s projektom</h3>
+                                <span className="sui-hint">Ista stavka je u projektu već drugi materijal — izaberi šta važi, da sastavnice ostanu iste.</span>
+                                {issues.length > 1 && <button type="button" className="btn btn-secondary sui-consist-all" onClick={alignAll}>Sve isto kao u projektu</button>}
+                            </header>
+                            <div className="sui-consist-list">
+                                {issues.map(i => {
+                                    const m = plan.materials.find(x => x.key === i.key)!;
+                                    const ch = choices.materials[i.key] || 'new';
+                                    const cur = ch !== 'new' ? catalog.find(c => c.Material_ID === ch) : null;
+                                    const curName = cur ? cur.Name : `novi: ${newNames[i.key] ?? m.name}`;
+                                    const why = i.reason === 'ranije' ? 'Ranije uvezeno kao'
+                                        : i.reason === 'uvoz' ? 'U drugom proizvodu ovog uvoza' : 'U projektu se koristi';
+                                    return (
+                                        <div key={i.key} className="sui-consist-row">
+                                            <span className="sui-kind">{KIND_LABEL[m.vrsta] || m.vrsta}</span>
+                                            <div className="sui-two">
+                                                <span className="sui-line1" title={m.sources.join('\n')}>{m.sources[0]}</span>
+                                                <span className="sui-line2">Prijedlog uvoza: <b>{curName}</b></span>
+                                                <span className="sui-line2 sui-consist-proj">
+                                                    {why}: <b>{i.target.Name}</b>
+                                                    {i.usedIn.length > 0 && <> · {i.usedIn.slice(0, 3).join(', ')}{i.usedIn.length > 3 ? ` +${i.usedIn.length - 3}` : ''}</>}
+                                                </span>
+                                            </div>
+                                            <div className="sui-consist-act">
+                                                <button type="button" className="btn btn-primary" onClick={() => setMaterialChoice(i.key, i.target.Material_ID)}>Isto kao u projektu</button>
+                                                <button type="button" className="btn btn-secondary" onClick={() => keepProposal(i.key)}>Ostavi prijedlog</button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    )}
 
                     <section className="sui-section">
                         <header>
