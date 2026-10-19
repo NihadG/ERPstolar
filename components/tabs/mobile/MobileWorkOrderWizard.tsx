@@ -592,7 +592,7 @@ function CrewStep({ w, isMontaza, workers, tasks, onPicker, onCrewFor }: {
                     <div>
                         {noWorker && <p><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</p>}
                         {w.undefinedProducts.length > 0 && (
-                            <p><b>Nedefinisani proizvodi</b> (cijena/rok): {w.undefinedProducts.join(', ')} — rok i profit su potcijenjeni dok se ponuda ne dopuni.</p>
+                            <p><b>Nedefinisani proizvodi</b> (cijena/rok): {w.undefinedProducts.join(', ')} — nalog možeš pokrenuti; cijena i profit se povežu sami kad ponuda bude prihvaćena ili dopunjena.</p>
                         )}
                     </div>
                 </div>

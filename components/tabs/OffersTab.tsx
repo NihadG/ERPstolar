@@ -11,7 +11,9 @@ import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { offerPriceChanges, isOfferStale, flattenProjectProducts } from '@/lib/offerPricing';
 import { isRowLocked } from '@/lib/offerLocking';
+import type { OfferProductionLink } from '@/lib/offerProductionLink';
 import InvoiceModal from '@/components/ui/InvoiceModal';
+import OfferAcceptedModal from '@/components/ui/OfferAcceptedModal';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOffersView from './mobile/MobileOffersView';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
@@ -829,10 +831,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 setCurrentOffer(updated);
             }
             // Prihvaćena ponuda ≠ radni nalog (odvojen ručni korak u Proizvodnji) —
-            // ponudi konverziju odmah da korak ne bude zaboravljen.
-            if (status === 'Prihvaćeno' && onCreateWorkOrder) {
+            // ponudi konverziju odmah da korak ne bude zaboravljen. Proizvodi koji su već
+            // u proizvodnji (nalog pušten prije ponude) se samo povežu — za njih se ne nudi
+            // novi nalog, nego se pokaže da profit sada računa cijenu iz ponude.
+            if (status === 'Prihvaćeno' && (onCreateWorkOrder || result.production?.linked.length)) {
                 const accepted = await getOffer(offerId, organizationId!);
-                if (accepted) setCreateWOPrompt(accepted);
+                if (accepted) setCreateWOPrompt({ offer: accepted, production: result.production });
             }
         } else if (result.conflicts && result.conflicts.length > 0) {
             // Show conflict notification
@@ -912,8 +916,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         }
     }
 
-    // Upit "Kreiraj radni nalog?" nakon prihvatanja ponude.
-    const [createWOPrompt, setCreateWOPrompt] = useState<Offer | null>(null);
+    // Upit nakon prihvatanja ponude: veza s proizvodnjom + "Kreiraj radni nalog?" za ostatak.
+    const [createWOPrompt, setCreateWOPrompt] = useState<{ offer: Offer; production?: OfferProductionLink } | null>(null);
 
     // REVIZIJA: kopira ponudu u novu 'Nacrt' (broj -R2/-R3…), original ide u 'Revidirano'.
     // Izmjene se rade na reviziji — original ostaje kao trag šta je poslano klijentu.
@@ -1438,42 +1442,18 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 </div>
             )}
 
-            {/* Upit "Kreiraj radni nalog?" nakon prihvatanja ponude */}
+            {/* Ponuda prihvaćena: veza s proizvodnjom + "Kreiraj radni nalog?" za ostatak */}
             {createWOPrompt && (
-                <Modal
-                    isOpen={!!createWOPrompt}
+                <OfferAcceptedModal
+                    offer={createWOPrompt.offer}
+                    production={createWOPrompt.production}
                     onClose={() => setCreateWOPrompt(null)}
-                    title={`Ponuda prihvaćena: ${createWOPrompt.Name || createWOPrompt.Offer_Number}`}
-                    footer={
-                        <>
-                            <button className="btn btn-secondary" onClick={() => setCreateWOPrompt(null)}>Ne sada</button>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => {
-                                    const included = (createWOPrompt.products || []).filter(p => p.Included !== false);
-                                    const project = projects.find(pr => pr.Project_ID === createWOPrompt.Project_ID);
-                                    onCreateWorkOrder?.(
-                                        createWOPrompt.Project_ID,
-                                        project?.Client_Name || createWOPrompt.Client_Name || '',
-                                        included.map(p => ({ productId: p.Product_ID, productName: p.Product_Name, quantity: p.Quantity || 1 }))
-                                    );
-                                    setCreateWOPrompt(null);
-                                }}
-                            >
-                                Kreiraj radni nalog
-                            </button>
-                        </>
-                    }
-                >
-                    <p style={{ margin: '0 0 12px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
-                        Da li želiš odmah kreirati radni nalog za prihvaćene proizvode? Otvoriće se čarobnjak u Proizvodnji s predodabranim proizvodima.
-                    </p>
-                    <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--text-primary)', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        {(createWOPrompt.products || []).filter(p => p.Included !== false).map(p => (
-                            <li key={p.ID}>{p.Product_Name} × {p.Quantity || 1}</li>
-                        ))}
-                    </ul>
-                </Modal>
+                    onCreateWorkOrder={onCreateWorkOrder ? (products) => {
+                        const accepted = createWOPrompt.offer;
+                        const project = projects.find(pr => pr.Project_ID === accepted.Project_ID);
+                        onCreateWorkOrder(accepted.Project_ID, project?.Client_Name || accepted.Client_Name || '', products);
+                    } : undefined}
+                />
             )}
 
             {/* Završni račun */}

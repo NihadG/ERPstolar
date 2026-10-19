@@ -18,6 +18,7 @@ import { createWorkOrder, getAllAttendanceByMonth } from '@/lib/services';
 import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
 import { emptyTaskSelection, taskSelectionCount, taskProductIds, isTaskOpen, type TaskAttachSelection } from '@/lib/workOrderTasks';
+import { acceptedOfferProduct } from '@/lib/offerProductionLink';
 
 export type WizardMode = 'production' | 'montaza';
 
@@ -185,8 +186,7 @@ export function useWorkOrderWizard({
         if (mode === 'montaza') return 0;
         return selectedProducts.reduce((sum, p) => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
-            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-            const op = offer?.products?.find(x => x.Product_ID === p.Product_ID);
+            const op = acceptedOfferProduct(project?.offers, p.Product_ID);
             return sum + (op?.Labor_Days || 0);
         }, 0);
     }, [selectedProducts, projects, mode]);
@@ -241,8 +241,7 @@ export function useWorkOrderWizard({
         selectedProducts.forEach(p => {
             const project = projects.find(proj => proj.Project_ID === p.Project_ID);
             const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
-            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+            const offerProduct = acceptedOfferProduct(project?.offers, p.Product_ID);
             if (offerProduct?.Selling_Price) value += offerProduct.Selling_Price * p.Work_Order_Quantity;
             transport += offerProduct?.Transport_Share || 0;
             services += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
@@ -265,9 +264,8 @@ export function useWorkOrderWizard({
         if (mode === 'montaza' || selectedProducts.length === 0) return [];
         return selectedProducts.filter(p => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
-            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-            const op = offer?.products?.find(x => x.Product_ID === p.Product_ID);
-            return !op || !((op.Selling_Price || 0) > 0) || !((op.Labor_Days || 0) > 0);
+            const op = acceptedOfferProduct(project?.offers, p.Product_ID);
+            return !op ||!((op.Selling_Price || 0) > 0) || !((op.Labor_Days || 0) > 0);
         }).map(p => p.Product_Name);
     }, [mode, selectedProducts, projects]);
 
@@ -604,9 +602,8 @@ export function useWorkOrderWizard({
                 const project = projects.find(proj => proj.Project_ID === p.Project_ID);
                 const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
 
-                // Get offer product for selling price
-                const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-                const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+                // Stavka prihvaćene ponude (ona u kojoj je proizvod uključen, ako ih je više)
+                const offerProduct = acceptedOfferProduct(project?.offers, p.Product_ID);
 
                 // Prihod je UKUPAN (jedinična × količina naloga).
                 if (offerProduct?.Selling_Price) {
@@ -656,8 +653,7 @@ export function useWorkOrderWizard({
         const items = selectedProducts.map(p => {
             // Get offer product for Product_Value
             const project = projects.find(proj => proj.Project_ID === p.Project_ID);
-            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+            const offerProduct = acceptedOfferProduct(project?.offers, p.Product_ID);
             const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
             // Plan proizvoda; ako ga nema → auto-plan izveden gore iz materijala.
             const productStages = (() => {
@@ -747,11 +743,13 @@ export function useWorkOrderWizard({
             };
         });
 
-        // GAP-2: Warn if no offer pricing exists
-        if (totalValue === 0) {
-            showToast('⚠️ Nema prihvaćene ponude — cijena proizvoda nije poznata. Profit neće biti tačan dok ručno ne unesete cijenu.', 'error');
+        // Proizvod smije u nalog prije ponude (lib/offerProductionLink): kad klijent prihvati
+        // ponudu, cijena i profit se povežu sami — ručni unos cijene NIJE potreban.
+        // (Montaža nikad ne nosi prihod, pa za nju nema ovog obavještenja.)
+        if (!isMontazaMode && totalValue === 0) {
+            showToast('Nalog bez prihvaćene ponude — kad klijent prihvati ponudu, cijena i profit se povežu automatski.', 'info');
         } else if (!isMontazaMode && undefinedProducts.length > 0) {
-            showToast(`⚠️ Nedefinisani proizvodi (cijena/rok): ${undefinedProducts.join(', ')} — rok i profit će biti potcijenjeni dok se ponuda ne dopuni.`, 'error');
+            showToast(`Bez cijene/roka u ponudi: ${undefinedProducts.join(', ')} — povezaće se automatski kad ponuda bude prihvaćena ili dopunjena.`, 'info');
         }
 
         // Calculate initial profit — now includes Transport + Services (GAP-1 fix)

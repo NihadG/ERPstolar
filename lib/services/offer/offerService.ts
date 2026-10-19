@@ -26,6 +26,7 @@ import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
 import { generateOfferNumber as _generateOfferNumber } from '../shared/idGenerator';
 import type { Offer, OfferProduct, OfferExtra } from '../../types';
+import type { OfferProductionLink } from '../../offerProductionLink';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -485,7 +486,7 @@ export async function updateOfferStatus(
     offerId: string,
     status: string,
     organizationId: string
-): Promise<{ success: boolean; message: string; conflicts?: any[]; conflictingOfferNames?: string[] }> {
+): Promise<{ success: boolean; message: string; conflicts?: any[]; conflictingOfferNames?: string[]; production?: OfferProductionLink }> {
     const { updateOfferStatus: _updateStatus } = await import('../../database');
     return _updateStatus(offerId, status, organizationId);
 }

@@ -492,7 +492,7 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                                                                 <li><span className="b" /><span><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</span></li>
                                                             )}
                                                             {undefinedProducts.length > 0 && (
-                                                                <li><span className="b" /><span><b>Nedefinisani proizvodi</b> (cijena/rok): {undefinedProducts.join(', ')} — rok i profit su potcijenjeni dok se ponuda ne dopuni.</span></li>
+                                                                <li><span className="b" /><span><b>Nedefinisani proizvodi</b> (cijena/rok): {undefinedProducts.join(', ')} — nalog možeš pokrenuti; cijena i profit se povežu sami kad ponuda bude prihvaćena ili dopunjena.</span></li>
                                                             )}
                                                         </ul>
                                                     </div>

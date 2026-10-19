@@ -3559,10 +3559,12 @@ export async function recalculateWorkOrder(
             return;
         }
 
+        // Datumi iz stavki; stariji nalozi ih imaju samo na nalogu — preračun završenog naloga
+        // (npr. kad ponuda stigne poslije proizvodnje) ne smije ih obrisati.
         await updateDoc(doc(firestore, COLLECTIONS.WORK_ORDERS, docId), {
             Status: status,
-            Started_At: earliestStart?.toISOString() || null,
-            Completed_At: latestCompletion?.toISOString() || null,
+            Started_At: earliestStart?.toISOString() || (status !== 'Na čekanju' ? workOrder.Started_At || null : null),
+            Completed_At: latestCompletion?.toISOString() || (status === 'Završeno' ? workOrder.Completed_At || null : null),
             Total_Value: totalValue,
             Material_Cost: materialCost,
             Planned_Labor_Cost: plannedLaborCost,

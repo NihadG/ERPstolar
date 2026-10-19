@@ -1,0 +1,115 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Ponuda prihvaćena (OfferAcceptedModal)
+   Dvije sekcije: „Već u proizvodnji — povezano" i „Još nije u nalogu".
+   Redovi imaju fiksne kolone (naziv | količina | faza | nalog) pa se
+   poravnaju kroz listu. Skala iz --cm-* (globals.css).
+   ═══════════════════════════════════════════════════════════════════ */
+
+.modal.oacc-modal {
+    max-width: 600px;
+}
+
+.oacc-title { display: inline-flex; align-items: center; gap: 9px; }
+.oacc-title-icon { color: var(--success); flex-shrink: 0; }
+
+.oacc {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cm-sp-5);
+}
+
+.oacc-sec { display: flex; flex-direction: column; gap: var(--cm-sp-2); }
+
+.oacc-sec-head {
+    display: flex;
+    align-items: center;
+    gap: var(--cm-sp-2);
+    font-size: var(--cm-fs-md);
+    color: var(--text-primary);
+}
+.oacc-sec-head svg { color: var(--text-secondary); flex-shrink: 0; }
+.oacc-count {
+    margin-left: auto;
+    min-width: 22px;
+    padding: 1px 7px;
+    border-radius: var(--cm-r-pill);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: var(--cm-fs-micro);
+    font-weight: 600;
+    text-align: center;
+}
+
+.oacc-hint {
+    margin: 0;
+    font-size: var(--cm-fs-xs);
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.oacc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--cm-r-card);
+    overflow: hidden;
+}
+
+.oacc-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 52px auto;
+    grid-template-areas: "name qty stage" "wo wo wo";
+    align-items: center;
+    column-gap: var(--cm-sp-3);
+    padding: 9px var(--cm-sp-3);
+    font-size: var(--cm-fs-sm);
+}
+.oacc-row + .oacc-row { border-top: 1px solid var(--border-light); }
+
+.oacc-name {
+    grid-area: name;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+.oacc-qty {
+    grid-area: qty;
+    text-align: right;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.oacc-stage {
+    grid-area: stage;
+    justify-self: end;
+    padding: 2px 8px;
+    border-radius: var(--cm-r-pill);
+    font-size: var(--cm-fs-micro);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.oacc-stage.done { background: var(--success-bg); color: #1e7b34; }
+.oacc-stage.wip { background: var(--accent-light); color: var(--accent); }
+.oacc-wo {
+    grid-area: wo;
+    font-size: var(--cm-fs-xs);
+    color: var(--text-tertiary);
+}
+.oacc-wo:empty { display: none; }
+
+.oacc-done {
+    margin: 0;
+    padding: 10px var(--cm-sp-3);
+    border-radius: var(--cm-r-control);
+    background: var(--success-bg);
+    color: #1e7b34;
+    font-size: var(--cm-fs-sm);
+}
+
+/* Telefon: naziv je glavna informacija — prelama se umjesto da se siječe. */
+@media (max-width: 768px) {
+    .oacc-row { grid-template-columns: minmax(0, 1fr) 44px auto; }
+    .oacc-name { white-space: normal; overflow-wrap: anywhere; }
+}

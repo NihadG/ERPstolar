@@ -49,6 +49,7 @@ import type {
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
 import { mergeOfferProducts } from './offerLocking';
+import { linkOfferToProduction, projectStatusOnOfferAccepted, type OfferProductionLink } from './offerProductionLink';
 import { orderItemAllocations } from './orderMaterialAllocation';
 
 // Shared service modules (architecture upgrade)
@@ -1317,26 +1318,34 @@ export async function getOfferProducts(offerId: string, organizationId: string):
 
 /**
  * PROPAGACIJA CIJENE IZ PONUDE → NALOZI: kad se PRIHVAĆENA ponuda promijeni (izmjena
- * cijene/usluga/dana ili prihvatanje revizije), preračunaj AKTIVNE naloge projekta.
- * recalculateWorkOrder live-sinhronizuje prihod/usluge/planirani rad iz prihvaćene ponude,
- * pa se profit odmah osvježi. Otkazani i završeni nalozi se PRESKAČU (završene stavke su
- * ionako zamrznute; recalc ne smije oživjeti otkazani nalog jer status računa iz stavki).
+ * cijene/usluga/dana ili prihvatanje revizije), preračunaj naloge projekta.
+ * recalculateWorkOrder live-sinhronizuje prihod/usluge/planirani rad iz prihvaćene ponude.
+ *
+ * Proizvod smije u nalog PRIJE ponude (lib/offerProductionLink), pa se osvježavaju i
+ * ZAVRŠENI nalozi — bez sinhronizacije statusa proizvoda (završen nalog je već postavio
+ * svoje statuse). Otkazani se preskaču: recalc ne smije oživjeti otkazani nalog jer
+ * status računa iz stavki. Na kraju jedan syncProjectStatus — projekat koji je već u
+ * proizvodnji ili gotov dobija tačan status i kad je ponuda stigla tek poslije.
+ *
+ * Vraća stavke i naloge projekta (za vezu ponuda ↔ proizvodnja); null ako čitanje padne.
  */
-async function resyncWorkOrdersFromOffer(projectId: string, organizationId: string): Promise<void> {
+async function resyncWorkOrdersFromOffer(
+    projectId: string,
+    organizationId: string,
+): Promise<{ items: WorkOrderItem[]; workOrders: WorkOrder[] } | null> {
     try {
-        if (!projectId || !organizationId) return;
+        if (!projectId || !organizationId) return null;
         const itemsSnap = await getDocs(query(
             collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
             where('Project_ID', '==', projectId),
             where('Organization_ID', '==', organizationId),
         ));
-        const woIds = Array.from(new Set(
-            itemsSnap.docs.map(d => d.data().Work_Order_ID as string).filter(Boolean)
-        ));
-        if (woIds.length === 0) return;
+        const items = itemsSnap.docs.map(d => d.data() as WorkOrderItem);
+        const woIds = Array.from(new Set(items.map(it => it.Work_Order_ID).filter(Boolean)));
+        if (woIds.length === 0) return { items, workOrders: [] };
 
-        // Statusi naloga (chunk 'in', max 30) — recalc samo za aktivne (ne Otkazano/Završeno).
-        const activeWoIds: string[] = [];
+        // Statusi naloga (chunk 'in', max 30).
+        const workOrders: WorkOrder[] = [];
         for (let i = 0; i < woIds.length; i += 30) {
             const chunk = woIds.slice(i, i + 30);
             const woSnap = await getDocs(query(
@@ -1344,20 +1353,21 @@ async function resyncWorkOrdersFromOffer(projectId: string, organizationId: stri
                 where('Work_Order_ID', 'in', chunk),
                 where('Organization_ID', '==', organizationId),
             ));
-            woSnap.docs.forEach(d => {
-                const s = d.data().Status;
-                if (s !== 'Otkazano' && s !== 'Završeno') activeWoIds.push(d.data().Work_Order_ID);
-            });
+            woSnap.docs.forEach(d => workOrders.push(d.data() as WorkOrder));
         }
-        if (activeWoIds.length === 0) return;
 
-        const { recalculateWorkOrder } = await import('./attendance');
-        for (const woId of activeWoIds) {
-            try { await recalculateWorkOrder(woId, { skipSnapshot: true }); }
-            catch (e) { console.warn('resyncWorkOrdersFromOffer: recalc failed', woId, e); }
+        const { recalculateWorkOrder, syncProjectStatus } = await import('./attendance');
+        for (const wo of workOrders) {
+            if (wo.Status === 'Otkazano') continue;
+            const done = wo.Status === 'Završeno';
+            try { await recalculateWorkOrder(wo.Work_Order_ID, { skipSnapshot: true, skipStatusSync: done }); }
+            catch (e) { console.warn('resyncWorkOrdersFromOffer: recalc failed', wo.Work_Order_ID, e); }
         }
+        await syncProjectStatus(projectId, organizationId);
+        return { items, workOrders };
     } catch (e) {
         console.warn('resyncWorkOrdersFromOffer failed (non-critical):', e);
+        return null;
     }
 }
 
@@ -1599,7 +1609,7 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
     }
 }
 
-export async function updateOfferStatus(offerId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string; conflicts?: { Product_ID: string; Product_Name: string }[]; conflictingOfferNames?: string[] }> {
+export async function updateOfferStatus(offerId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string; conflicts?: { Product_ID: string; Product_Name: string }[]; conflictingOfferNames?: string[]; production?: OfferProductionLink }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -1625,10 +1635,11 @@ export async function updateOfferStatus(offerId: string, status: string, organiz
                 }
             }
 
+            let thisOfferProducts: OfferProduct[] = [];
             if (status === 'Prihvaćeno') {
                 // ── DUPLICATE ACCEPTANCE CHECK ──
                 // Get THIS offer's included products
-                const thisOfferProducts = await getOfferProducts(offerId, organizationId);
+                thisOfferProducts = await getOfferProducts(offerId, organizationId);
                 const thisIncludedProductIds = new Set(
                     thisOfferProducts.filter(p => p.Included !== false).map(p => p.Product_ID)
                 );
@@ -1680,8 +1691,11 @@ export async function updateOfferStatus(offerId: string, status: string, organiz
 
                 updateData.Accepted_Date = new Date().toISOString();
 
+                // Proizvodnja je možda krenula prije ponude — 'Odobreno' samo ako još nije.
                 if (offer.Project_ID) {
-                    await updateProjectStatus(offer.Project_ID, 'Odobreno', organizationId);
+                    const project = await getProject(offer.Project_ID, organizationId);
+                    const next = projectStatusOnOfferAccepted(project?.Status);
+                    if (next) await updateProjectStatus(offer.Project_ID, next, organizationId);
                 }
             }
 
@@ -1716,10 +1730,14 @@ export async function updateOfferStatus(offerId: string, status: string, organiz
             await updateDoc(snapshot.docs[0].ref, updateData);
 
             // Prihvatanje ponude (uklj. prihvat revizije) mijenja AUTORITATIVNU cijenu
-            // proizvoda projekta → propagiraj u aktivne naloge da profit odmah reflektuje
-            // novu (revidiranu) ponudu, bez čekanja na neki drugi recalc.
+            // proizvoda projekta → propagiraj u naloge (i one pokrenute ili završene prije
+            // ponude) da profit odmah reflektuje ponudu, bez čekanja na neki drugi recalc.
             if (status === 'Prihvaćeno' && offer.Project_ID) {
-                await resyncWorkOrdersFromOffer(offer.Project_ID, organizationId);
+                const synced = await resyncWorkOrdersFromOffer(offer.Project_ID, organizationId);
+                const production = synced
+                    ? linkOfferToProduction(thisOfferProducts, synced.items, synced.workOrders)
+                    : undefined;
+                return { success: true, message: 'Status ponude ažuriran', production };
             }
         }
 
