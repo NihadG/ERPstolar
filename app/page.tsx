@@ -15,7 +15,7 @@ import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
-import MobileTabBar, { MOBILE_TABS } from '@/components/tabs/mobile/MobileTabBar';
+import MobileTabBar, { MobileSubTabs, MOBILE_SCREEN_ORDER } from '@/components/tabs/mobile/MobileTabBar';
 import { useSwipeTabs } from '@/components/tabs/mobile/useSwipe';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
 import CSVImportWizard from '@/components/CSVImportWizard';
@@ -487,12 +487,13 @@ export default function Home() {
 
     const isDropdownTab = ['materials', 'workers', 'suppliers'].includes(activeTab);
 
-    // Vodoravno prevlačenje mijenja tab (samo telefon, i samo dok je otvoren
-    // jedan od tabova iz donje trake — inače bi swipe „ispao" na nepoznat tab).
-    const mobileTabIndex = MOBILE_TABS.findIndex(t => t.id === activeTab);
+    // Vodoravno prevlačenje mijenja ekran (samo telefon, i samo dok je otvoren
+    // jedan od ekrana iz donje trake — inače bi swipe „ispao" na nepoznat tab).
+    // Podtabovi grupe se prolaze redom: Narudžbe → Ponude → Nalozi → Šihtarica.
+    const mobileTabIndex = MOBILE_SCREEN_ORDER.indexOf(activeTab);
     useSwipeTabs(
-        () => { if (mobileTabIndex > 0) setActiveTab(MOBILE_TABS[mobileTabIndex - 1].id); },
-        () => { if (mobileTabIndex >= 0 && mobileTabIndex < MOBILE_TABS.length - 1) setActiveTab(MOBILE_TABS[mobileTabIndex + 1].id); },
+        () => { if (mobileTabIndex > 0) handleTabChange(MOBILE_SCREEN_ORDER[mobileTabIndex - 1]); },
+        () => { if (mobileTabIndex >= 0 && mobileTabIndex < MOBILE_SCREEN_ORDER.length - 1) handleTabChange(MOBILE_SCREEN_ORDER[mobileTabIndex + 1]); },
         isMobile && mobileTabIndex >= 0
     );
 
@@ -570,6 +571,9 @@ export default function Home() {
                 {/* Jedinična ekonomija proizvoda (ponuda + živa sastavnica) za detalj/rezime naloga — lib/projectFinance. */}
                 <FinanceBasisProvider projects={appState.projects} offers={appState.offers}>
                 <main className={`content-area${activeTab === 'platno' ? ' content-area--wide' : ''}`}>
+                    {/* Telefon: podtabovi grupe (Prodaja / Proizvodnja) iznad ekrana. */}
+                    {isMobile && <MobileSubTabs activeTab={activeTab} onTabChange={handleTabClick} />}
+
                     {activeTab === 'projects' && (
                         <ProjectsTab
                             projects={appState.projects}

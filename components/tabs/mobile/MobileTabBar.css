@@ -39,8 +39,8 @@
 .mtb-item.on { color: #007aff; }
 .mtb-item:active { opacity: 0.6; }
 
-/* Traka nosi šest tabova — natpis se skraćuje umjesto da se prelomi u dva reda
-   i gurne ikone gore. Na najužim telefonima ide korak manje. */
+/* Natpis se skraćuje umjesto da se prelomi u dva reda i gurne ikone gore
+   („Proizvodnja" je najduži). Na najužim telefonima ide korak manje. */
 .mtb-item span {
     max-width: 100%;
     overflow: hidden;
@@ -50,6 +50,51 @@
 
 @media (max-width: 360px) {
     .mtb-item { font-size: 9.5px; letter-spacing: -0.02em; }
+}
+
+/* ── Podtabovi grupe (Prodaja: Narudžbe | Ponude, Proizvodnja: Nalozi | Šihtarica)
+   Segmentna kontrola na vrhu sadržaja; poništava padding .content-area
+   (16px) da podloga ide od ruba do ruba. NIJE ljepljiva: html/body imaju
+   globalno overflow-x: hidden, što sticky pretvara u običan položaj — povratak
+   na vrh je dodir aktivnog dugmeta u traci. */
+.mtb-sub {
+    margin: -16px -16px 10px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
+    background: rgba(248, 250, 252, 0.88);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid rgba(60, 60, 67, 0.18);
+}
+.mtb-seg {
+    display: flex;
+    background: rgba(118, 118, 128, 0.14);
+    border-radius: 10px;
+    padding: 2px;
+    touch-action: pan-y;
+}
+.mtb-seg button {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    border: none;
+    background: none;
+    border-radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: #1c1c1e;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+}
+.mtb-seg button.on {
+    background: #fff;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
 }
 
 /* Cjeloekranski sloj (detalj naloga, dodjela naloga, sheet) prekriva traku i
