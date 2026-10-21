@@ -170,36 +170,8 @@ export async function deleteWorker(
     try {
         const db = getDb();
 
-        // Check if worker is assigned to active work orders
-        const woItemsQ = query(
-            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
-            where('Organization_ID', '==', organizationId)
-        );
-        const woItemsSnap = await getDocs(woItemsQ);
-
-        const assignedItems = woItemsSnap.docs.filter(d => {
-            const item = d.data();
-            if (item.Status === 'Završeno') return false;
-
-            // Check Assigned_Workers
-            if (item.Assigned_Workers?.some((w: any) => w.Worker_ID === workerId)) return true;
-
-            // Check Processes
-            if (item.Processes?.some((p: any) =>
-                p.Worker_ID === workerId ||
-                p.Helpers?.some((h: any) => h.Worker_ID === workerId)
-            )) return true;
-
-            return false;
-        });
-
-        if (assignedItems.length > 0) {
-            return {
-                success: false,
-                message: `Radnik je dodijeljen na ${assignedItems.length} aktivni(h) radni(h) nalog(a). Uklonite ga sa naloga prije brisanja.`
-            };
-        }
-
+        // Dodjela na aktivne naloge NE blokira brisanje: dosadašnje dnevnice ostaju
+        // u kalkulacijama (soft-delete ispod), a obrisan radnik se više ne knjiži.
         const ref = await findRef(COLLECTIONS.WORKERS, 'Worker_ID', workerId, organizationId);
         if (!ref) return { success: true, message: 'Radnik obrisan' };
 
