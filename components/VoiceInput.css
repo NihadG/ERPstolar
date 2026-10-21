@@ -25,7 +25,9 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.voice-btn:hover:not(:disabled) {
+/* Samo u mirovanju — inače hover (jači selektor) prekrije crvenu boju snimanja
+   baš dok je kursor na dugmetu kojim se snimanje zaustavlja. */
+.voice-btn.idle:hover:not(:disabled) {
     background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
     color: #334155;
     transform: scale(1.05);
@@ -151,49 +153,6 @@
     transition: stroke-dasharray 0.3s ease;
 }
 
-/* Transcript Preview */
-.transcript-preview {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: #1e293b;
-    color: white;
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 11px;
-    white-space: nowrap;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    z-index: 100;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-    animation: fade-in 0.2s ease;
-}
-
-.transcript-preview::before {
-    content: '';
-    position: absolute;
-    top: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-bottom: 6px solid #1e293b;
-}
-
-@keyframes fade-in {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(4px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-}
-
 /* Responsive */
 @media (max-width: 768px) {
     .voice-btn {
@@ -220,19 +179,225 @@
         width: 72px;
         height: 72px;
     }
+}
 
-    .transcript-preview {
-        max-width: 240px;
-        font-size: 13px;
-        bottom: 74px;
-        /* Position above the floating button */
-        top: auto;
-    }
+/* Nivo zvuka u dugmetu dok se snima */
+.voice-level {
+    width: 4px;
+    height: 16px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.35);
+    display: inline-flex;
+    align-items: flex-end;
+    overflow: hidden;
+}
 
-    .transcript-preview::before {
-        top: 100%;
-        bottom: -6px;
-        border-top: 6px solid #1e293b;
-        border-bottom: none;
-    }
+.voice-level > span {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #fff;
+    transform: scaleY(0.08);
+    transform-origin: bottom;
+    transition: transform 80ms linear;
+}
+
+/* ═══ Panel: stanje, transkript, prepoznato ═══ */
+.voice-panel {
+    --vp-bg: #ffffff;
+    --vp-text: #0f172a;
+    --vp-muted: #64748b;
+    --vp-line: #e2e8f0;
+    --vp-soft: #f1f5f9;
+    --vp-accent: #007aff;
+    --vp-warn-bg: #fff7ed;
+    --vp-warn: #b45309;
+    --vp-err: #b91c1c;
+
+    background: var(--vp-bg);
+    color: var(--vp-text);
+    border: 1px solid var(--vp-line);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+    line-height: 1.4;
+    text-align: left;
+    box-sizing: border-box;
+    animation: voice-panel-in 0.18s ease;
+}
+
+.voice-popover .voice-panel {
+    position: absolute;
+    bottom: calc(100% + 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(360px, calc(100vw - 32px));
+    z-index: 100;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.voice-inline {
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.voice-inline .voice-panel {
+    width: 100%;
+}
+
+@keyframes voice-panel-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.voice-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.voice-panel-head strong {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.voice-panel.is-recording .voice-panel-head strong { color: #dc2626; }
+.voice-panel.is-done .voice-panel-head strong { color: #15803d; }
+.voice-panel.is-error .voice-panel-head strong { color: var(--vp-err); }
+
+.voice-panel-x {
+    border: none;
+    background: var(--vp-soft);
+    color: var(--vp-muted);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.voice-panel-hint {
+    margin: 6px 0 0;
+    color: var(--vp-muted);
+    font-size: 12.5px;
+}
+
+.voice-panel-error {
+    margin: 6px 0 0;
+    color: var(--vp-err);
+}
+
+.voice-transcript {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    background: var(--vp-soft);
+    border-radius: 10px;
+    color: var(--vp-text);
+    font-style: italic;
+    max-height: 140px;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+}
+
+.voice-transcript .voice-link {
+    display: flex;
+    margin-top: 6px;
+    font-style: normal;
+}
+
+.voice-link {
+    border: none;
+    background: none;
+    padding: 2px 0;
+    color: var(--vp-accent);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    align-items: center;
+    gap: 4px;
+    display: inline-flex;
+}
+
+.voice-edit {
+    margin-top: 8px;
+}
+
+.voice-edit textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--vp-accent);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 16px; /* iOS ne zumira polje ≥16px */
+    color: var(--vp-text);
+    background: var(--vp-bg);
+    resize: vertical;
+}
+
+.voice-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 14px;
+    margin-top: 8px;
+}
+
+.voice-primary {
+    border: none;
+    background: var(--vp-accent);
+    color: #fff;
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.voice-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.voice-chips {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.voice-chips li {
+    background: var(--vp-soft);
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 12.5px;
+    display: inline-flex;
+    gap: 5px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.voice-chips li span {
+    color: var(--vp-muted);
+    white-space: nowrap;
+}
+
+.voice-chips li.warn {
+    background: var(--vp-warn-bg);
+    color: var(--vp-warn);
+}
+
+.voice-chips li.warn span {
+    color: inherit;
+    opacity: 0.8;
 }

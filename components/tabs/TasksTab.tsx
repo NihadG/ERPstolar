@@ -56,6 +56,8 @@ import { useData } from '@/context/DataContext';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { upsertTaskEvent, deleteTaskEvent } from '@/lib/google/calendarClient';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
+import { buildVoiceContext } from '@/lib/voice/context';
+import { applyVoiceResult, EMPTY_VOICE_APPLIED, type VoiceApplied } from '@/lib/voice/apply';
 import TaskChecklistEditor from '@/components/ui/TaskChecklistEditor';
 import { getTaskChecklistSections } from '@/lib/taskChecklist';
 
@@ -1938,53 +1940,31 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist || []);
     const [checklistGroups, setChecklistGroups] = useState<TaskChecklistGroup[]>(task?.ChecklistGroups || []);
     const [notes, setNotes] = useState(task?.Notes || '');
-    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const voiceContext = useMemo(() => buildVoiceContext(projects, workers, orders), [projects, workers, orders]);
+    const voiceAppliedRef = useRef<VoiceApplied>(EMPTY_VOICE_APPLIED);
 
-    // Handle voice input result
+    // Diktat popunjava formu; ponovljen/ispravljen diktat zamjenjuje ono što je
+    // upisao prethodni (checklista se ne udvostručuje, stari projekat se skida).
     const handleVoiceResult = (data: ExtractedTaskData) => {
-        // Apply extracted data to form fields
-        if (data.title) setTitle(data.title);
-        if (data.description) setDescription(data.description);
-        if (data.priority) setPriority(data.priority);
-        if (data.category) setCategory(data.category);
-        if (data.suggestedDueDate) setDueDate(data.suggestedDueDate);
-
-        // Add checklist items
-        if (data.checklist && data.checklist.length > 0) {
-            const newChecklist = data.checklist.map(text => ({
-                id: generateUUID(),
-                text,
-                completed: false
-            }));
-            setChecklist(prev => [...prev, ...newChecklist]);
-        }
-
-        // Try to match suggested worker
-        if (data.suggestedWorker) {
-            const matchedWorker = workers.find(w =>
-                w.Name.toLowerCase().includes(data.suggestedWorker!.toLowerCase())
-            );
-            if (matchedWorker) setAssignedWorker(matchedWorker.Worker_ID);
-        }
-
-        // Try to match suggested project and add as link
-        if (data.suggestedProject) {
-            const matchedProject = projects.find(p =>
-                p.Client_Name.toLowerCase().includes(data.suggestedProject!.toLowerCase())
-            );
-            if (matchedProject && !links.some(l => l.Entity_ID === matchedProject.Project_ID)) {
-                setLinks(prev => [...prev, {
-                    Entity_Type: 'project',
-                    Entity_ID: matchedProject.Project_ID,
-                    Entity_Name: matchedProject.Client_Name
-                }]);
-            }
-        }
+        const p = data.suggestedProjectId ? projects.find(x => x.Project_ID === data.suggestedProjectId) : undefined;
+        const { form, applied } = applyVoiceResult(
+            { title, description, priority, category, dueDate, workerId: assignedWorker, checklist, links },
+            voiceAppliedRef.current,
+            data,
+            p ? { id: p.Project_ID, name: p.Client_Name } : null,
+            generateUUID,
+        );
+        voiceAppliedRef.current = applied;
+        setTitle(form.title);
+        setDescription(form.description);
+        setPriority(form.priority);
+        setCategory(form.category);
+        setDueDate(form.dueDate);
+        setAssignedWorker(form.workerId);
+        setChecklist(form.checklist);
+        setLinks(form.links);
     };
 
-    const handleVoiceError = (error: string) => {
-        console.warn('Voice input error:', error);
-    };
 
     // Entity link state
     const [linkType, setLinkType] = useState<TaskLink['Entity_Type']>('project');
@@ -2268,16 +2248,7 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
 
                     {!isEdit && (
                         <div className="footer-voice-wrapper">
-                            <VoiceInput
-                                onResult={handleVoiceResult}
-                                onError={handleVoiceError}
-                                onTranscript={setVoiceTranscript}
-                                context={{
-                                    projects: projects.map(p => p.Address ? `${p.Client_Name} (${p.Address})` : p.Client_Name),
-                                    workers: workers.map(w => w.Name),
-                                    suppliers: Array.from(new Set(orders.map(o => o.Supplier_Name).filter(Boolean)))
-                                }}
-                            />
+                            <VoiceInput onResult={handleVoiceResult} context={voiceContext} />
                         </div>
                     )}
 

@@ -1,263 +1,105 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType, type ResponseSchema } from '@google/generative-ai';
+import { isIsoDate, localToday } from '@/lib/voice/dates';
+import {
+    buildExtractionPrompt, finalizeExtraction, parseModelJson,
+    VOICE_CATEGORIES, VOICE_PRIORITIES, type VoiceContext,
+} from '@/lib/voice/extract';
 
-// Types for extracted task data
-export interface ExtractedTaskData {
-    title: string;
-    description: string;
-    priority: 'low' | 'medium' | 'high' | 'urgent';
-    category: 'general' | 'manufacturing' | 'ordering' | 'installation' | 'design' | 'meeting' | 'reminder';
-    checklist: string[];
-    suggestedDueDate: string | null;
-    suggestedWorker: string | null;
-    suggestedProject: string | null;
+export type { ExtractedTaskData } from '@/lib/voice/extract';
+
+export const runtime = 'nodejs';
+
+// Isti model kao app/api/classify-names. Ključ za Anthropic nije podešen u
+// okruženju, pa parsiranje ostaje na Geminiju; tačnost drže kalendar, liste
+// s ID-jevima i provjere u lib/voice/extract (ne slijepo povjerenje modelu).
+const MODEL = 'gemini-3.1-flash-lite';
+const TIMEOUT_MS = 20_000;
+const MAX_TEXT = 4000;
+const MAX_LIST = 400;
+
+const nullableString = { type: SchemaType.STRING, nullable: true } as const;
+const RESPONSE_SCHEMA: ResponseSchema = {
+    type: SchemaType.OBJECT,
+    properties: {
+        title: { type: SchemaType.STRING },
+        description: { type: SchemaType.STRING },
+        priority: { type: SchemaType.STRING, format: 'enum', enum: [...VOICE_PRIORITIES] },
+        category: { type: SchemaType.STRING, format: 'enum', enum: [...VOICE_CATEGORIES] },
+        checklist: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+        suggestedDueDate: nullableString,
+        suggestedWorker: nullableString,
+        suggestedWorkerId: nullableString,
+        suggestedProject: nullableString,
+        suggestedProjectId: nullableString,
+    },
+    required: ['title', 'description', 'priority', 'category', 'checklist'],
+};
+
+/** Prihvata i stari oblik konteksta (nizovi stringova) da stari klijent ne pukne. */
+function sanitizeContext(raw: unknown): VoiceContext {
+    const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const arr = (v: unknown) => (Array.isArray(v) ? v.slice(0, MAX_LIST) : []);
+    const s = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 120) : '');
+    return {
+        projects: arr(c.projects).map((p, i) => typeof p === 'string'
+            ? { id: `p${i}`, client: s(p) }
+            : { id: s((p as any)?.id), client: s((p as any)?.client), name: s((p as any)?.name) || undefined, address: s((p as any)?.address) || undefined })
+            .filter(p => p.id && p.client),
+        workers: arr(c.workers).map((w, i) => typeof w === 'string'
+            ? { id: `w${i}`, name: s(w) }
+            : { id: s((w as any)?.id), name: s((w as any)?.name) })
+            .filter(w => w.id && w.name),
+        suppliers: arr(c.suppliers).map(s).filter(Boolean),
+    };
 }
 
-const EXTRACTION_PROMPT = `Ti si AI asistent za ERP sistem stolarske radionice (fabrika namještaja). Tvoj posao je da iz govornog unosa na bosanskom/hrvatskom/srpskom jeziku izvučeš strukturirane podatke za kreiranje zadatka.
-
-KONTEKST FIRME: Stolarska radionica koja proizvodi namještaj po mjeri — kuhinje, ormare, komode, vitrine, radne ploče. Koristi materijale kao iverica (iveral), MDF, drvo (hrast, bukva, orah), ABS trake, okove, šarke, vodilice, itd.
-
-═══════════════════════════════════════════════════════════════
-PRAVILA:
-═══════════════════════════════════════════════════════════════
-
-1. NASLOV (title):
-   - Kratak, jasan, profesionalan naslov (max 60 karaktera)
-   - Koristi infinitiv ili imenicu: "Naručiti materijal za...", "Pripremiti..." 
-   - Za JEDAN zadatak: sam zadatak kao naslov
-   - Za VIŠE zadataka: zbirni naslov ("Obaveze za klijenta X", "Pripreme za montažu")
-   - NIKADA ne stavljaj sirovi transkript kao naslov!
-   - Uvijek velikim slovom počni
-
-2. OPIS (description):
-   - Dodatni kontekst, detalji, napomene iz govora
-   - Bilo koji dio koji nije naslov ni checklist stavka
-   - Ako nema dodatnog konteksta → prazan string ""
-   - NE ponavljaj naslov u opisu!
-
-3. CHECKLIST:
-   - AKO korisnik nabraja VIŠE stvari ("prvo X, pa Y, i Z") → SVAKA stavka posebno u checklisti
-   - AKO je samo JEDAN zadatak bez nabrajanja → prazan niz []
-   - Svaka stavka čista, profesionalna rečenica sa velikim slovom
-   - Maksimalno 10 stavki
-
-4. PROJEKAT (suggestedProject):
-   - Ako korisnik pomene ime klijenta, mjesto, ili projekat → vrati ime
-   - OBAVEZNO provjeri listu dostupnih projekata/klijenata u KONTEKSTU
-   - Koristi fuzzy matching - "Hodžić" treba da matchuje "Hodžić Sarajevo"
-   - Ako ne prepoznajes → null
-
-5. RADNIK (suggestedWorker):
-   - Ako korisnik pomene ime radnika → vrati ime
-   - Provjeri listu dostupnih radnika u KONTEKSTU
-   - null ako nema
-
-═══════════════════════════════════════════════════════════════
-PRIMJERI (STOLARSKA RADIONICA):
-═══════════════════════════════════════════════════════════════
-
-Korisnik: "Treba naručiti iveral H3395 hrast za Hodžića"
-→ {"title": "Naručiti iveral H3395 hrast", "description": "Za projekat Hodžić", "priority": "medium", "category": "ordering", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": "Hodžić"}
-
-Korisnik: "Hitno za sutra, pripremiti materijal za montažu kod Begović, treba ABS trake, šarke i vodilice"
-→ {"title": "Pripremiti materijal za montažu Begović", "description": "Hitno za sutra", "priority": "urgent", "category": "manufacturing", "checklist": ["Pripremiti ABS trake", "Pripremiti šarke", "Pripremiti vodilice"], "suggestedDueDate": "{TOMORROW}", "suggestedWorker": null, "suggestedProject": "Begović"}
-
-Korisnik: "Emir neka izmjeri kod Petrović u Zenici za kuhinju"
-→ {"title": "Mjerenje za kuhinju - Petrović Zenica", "description": "", "priority": "medium", "category": "design", "checklist": [], "suggestedDueDate": null, "suggestedWorker": "Emir", "suggestedProject": "Petrović"}
-
-Korisnik: "Moramo nazvati dobavljača za okove, provjeriti cijenu vodilica i naručiti ABS trake"
-→ {"title": "Nabavka okova i materijala", "description": "", "priority": "medium", "category": "ordering", "checklist": ["Nazvati dobavljača za okove", "Provjeriti cijenu vodilica", "Naručiti ABS trake"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
-
-Korisnik: "Danas se mora završiti kuhinja za Delića, treba kantovati ploče i sklopiti gornje elemente"
-→ {"title": "Završiti kuhinju za Delića", "description": "Danas obavezno", "priority": "urgent", "category": "manufacturing", "checklist": ["Kantovati ploče", "Sklopiti gornje elemente"], "suggestedDueDate": "{TODAY}", "suggestedWorker": null, "suggestedProject": "Delić"}
-
-Korisnik: "U petak montaža kod Ibrahimović u Ilidži, treba ponijeti alat, silikoniti radnu ploču i spojiti vodu"
-→ {"title": "Montaža kod Ibrahimović - Ilidža", "description": "Petak", "priority": "high", "category": "installation", "checklist": ["Ponijeti alat", "Silikoniti radnu ploču", "Spojiti vodu"], "suggestedDueDate": "{FRIDAY}", "suggestedWorker": null, "suggestedProject": "Ibrahimović"}
-
-Korisnik: "Zakazati sastanak sa klijentom za novi projekat"
-→ {"title": "Zakazati sastanak sa klijentom", "description": "Za novi projekat", "priority": "medium", "category": "meeting", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
-
-Korisnik: "Kupi mlijeko i kruh"
-→ {"title": "Kupovina potrepština", "description": "", "priority": "low", "category": "general", "checklist": ["Kupiti mlijeko", "Kupiti kruh"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
-
-═══════════════════════════════════════════════════════════════
-TEKST ZA OBRADU:
-═══════════════════════════════════════════════════════════════
-"""
-{USER_TEXT}
-"""
-
-KONTEKST — dostupni projekti/klijenti, radnici i dobavljači:
-{CONTEXT}
-
-PRIORITET:
-- "hitno", "odmah", "urgent", "mora danas", "mora odmah" → "urgent"
-- "važno", "bitno", "mora se", "obavezno" → "high"  
-- Normalno → "medium"
-- "nije hitno", "kad stigneš", "kada bude vremena" → "low"
-
-KATEGORIJA (izaberi najbližu):
-- ordering: naručivanje, kupovina, nabavka, narudžba, dobavljač, cijena
-- manufacturing: proizvodnja, izrada, rezanje, kantovanje, brušenje, sklapanje, lakiranje
-- installation: montaža, ugradnja, instalacija, postavljanje, spajanje
-- design: dizajn, crtanje, projektovanje, mjerenje, nacrt
-- meeting: sastanak, poziv, razgovor
-- reminder: podsjetnik, ne zaboravi, zapamti
-- general: sve ostalo (DEFAULT)
-
-DATUM:
-- "danas" → {TODAY}
-- "sutra" → {TOMORROW}
-- "ovaj tjedan"/"do petka"/"u petak" → {FRIDAY}
-- Inače → null
-
-KRITIČNO:
-- SVAKA nabrojena stavka MORA biti u checklisti!
-- Ako korisnik kaže "A, B i C" = TRI stavke u checklisti
-- NIKADA ne vrati sirovi transkript kao naslov — uvijek obradi i skrati
-- Svaki naslov i stavku počni VELIKIM SLOVOM
-- Odgovori SAMO validnim JSON-om, bez dodatnog teksta`;
-
-
 export async function POST(request: NextRequest) {
+    let text = '';
+    let today = localToday();
+    let context: VoiceContext = {};
     try {
         const body = await request.json();
-        const { text, context } = body as {
-            text: string;
-            context?: {
-                projects?: string[];
-                workers?: string[];
-                suppliers?: string[];
-            };
-        };
+        text = typeof body?.text === 'string' ? body.text.trim().slice(0, MAX_TEXT) : '';
+        // Klijent šalje SVOJ lokalni datum — server (UTC) bi oko ponoći pogriješio dan.
+        if (isIsoDate(body?.today)) today = body.today;
+        context = sanitizeContext(body?.context);
+    } catch {
+        return NextResponse.json({ error: 'Neispravan zahtjev' }, { status: 400 });
+    }
 
-        if (!text || text.trim().length === 0) {
-            return NextResponse.json(
-                { error: 'No text provided' },
-                { status: 400 }
-            );
-        }
+    if (!text) {
+        return NextResponse.json({ error: 'Nema teksta za obradu' }, { status: 400 });
+    }
 
-        const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
-        if (!apiKey) {
-            return NextResponse.json(
-                { error: 'Gemini API key not configured' },
-                { status: 503 }
-            );
-        }
+    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    if (!apiKey) {
+        // Bez modela i dalje vrati upotrebljiv zadatak (naslov/opis + rok iz teksta).
+        return NextResponse.json({ ...finalizeExtraction(null, text, today, context), degraded: true });
+    }
 
-        // Build context string with all available data
-        const contextParts: string[] = [];
-        if (context?.projects?.length) {
-            contextParts.push(`Projekti/Klijenti: ${context.projects.join(', ')}`);
-        }
-        if (context?.workers?.length) {
-            contextParts.push(`Radnici: ${context.workers.join(', ')}`);
-        }
-        if (context?.suppliers?.length) {
-            contextParts.push(`Dobavljači: ${context.suppliers.join(', ')}`);
-        }
-        const contextStr = contextParts.length > 0 ? contextParts.join('\n') : 'Nema dostupnog konteksta';
-
-        // Get date references
-        const todayDate = new Date();
-        const today = todayDate.toISOString().split('T')[0];
-
-        const tomorrowDate = new Date(todayDate);
-        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-        const tomorrow = tomorrowDate.toISOString().split('T')[0];
-
-        const fridayDate = new Date(todayDate);
-        const dayOfWeek = fridayDate.getDay();
-        const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 5 + (7 - dayOfWeek);
-        fridayDate.setDate(fridayDate.getDate() + daysUntilFriday);
-        const friday = fridayDate.toISOString().split('T')[0];
-
-        // Build the prompt
-        const prompt = EXTRACTION_PROMPT
-            .replace('{USER_TEXT}', text)
-            .replace('{CONTEXT}', contextStr)
-            .replaceAll('{TODAY}', today)
-            .replaceAll('{TOMORROW}', tomorrow)
-            .replaceAll('{FRIDAY}', friday);
-
-        // Initialize Gemini
+    try {
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-
-        console.log(`Voice extract: Processing text: "${text}"`);
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let responseText = response.text();
-
-        console.log(`Voice extract: Gemini raw response: "${responseText.substring(0, 500)}..."`);
-
-        // Clean up response
-        responseText = responseText
-            .replace(/```json\n?/g, '')
-            .replace(/```\n?/g, '')
-            .trim();
-
-        // Parse JSON
-        let extractedData: ExtractedTaskData;
-        try {
-            extractedData = JSON.parse(responseText);
-        } catch (parseError) {
-            console.error('Failed to parse AI response:', responseText);
-            // Intelligent fallback: use first 60 chars as title, rest as description
-            const cleanText = text.trim();
-            const sentenceEnd = cleanText.indexOf('.') > 0 && cleanText.indexOf('.') < 60
-                ? cleanText.indexOf('.') + 1
-                : Math.min(cleanText.length, 60);
-            extractedData = {
-                title: cleanText.substring(0, sentenceEnd).trim(),
-                description: cleanText.length > sentenceEnd ? cleanText.substring(sentenceEnd).trim() : '',
-                priority: 'medium',
-                category: 'general',
-                checklist: [],
-                suggestedDueDate: null,
-                suggestedWorker: null,
-                suggestedProject: null
-            };
-        }
-
-        // Validate and sanitize
-        const validPriorities = ['low', 'medium', 'high', 'urgent'];
-        const validCategories = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
-
-        if (!validPriorities.includes(extractedData.priority)) {
-            extractedData.priority = 'medium';
-        }
-        if (!validCategories.includes(extractedData.category)) {
-            extractedData.category = 'general';
-        }
-        if (!Array.isArray(extractedData.checklist)) {
-            extractedData.checklist = [];
-        }
-        // Limit checklist to 10 items
-        extractedData.checklist = extractedData.checklist.slice(0, 10);
-
-        // Post-processing: ensure title starts with uppercase, trim excess
-        if (extractedData.title) {
-            extractedData.title = extractedData.title.charAt(0).toUpperCase() + extractedData.title.slice(1);
-            if (extractedData.title.length > 60) {
-                extractedData.title = extractedData.title.substring(0, 57) + '...';
-            }
-        }
-
-        // Capitalize checklist items
-        extractedData.checklist = extractedData.checklist.map(item =>
-            item ? item.charAt(0).toUpperCase() + item.slice(1) : item
+        const model = genAI.getGenerativeModel(
+            {
+                model: MODEL,
+                generationConfig: {
+                    temperature: 0.1,
+                    responseMimeType: 'application/json',
+                    responseSchema: RESPONSE_SCHEMA,
+                },
+            },
+            { timeout: TIMEOUT_MS },
         );
 
-        return NextResponse.json(extractedData);
+        const result = await model.generateContent(buildExtractionPrompt(text, today, context));
+        const raw = parseModelJson(result.response.text());
+        if (!raw) console.error('Voice extract: model nije vratio JSON');
 
+        return NextResponse.json({ ...finalizeExtraction(raw, text, today, context), degraded: !raw });
     } catch (error: any) {
-        console.error('Task Extraction Error:', error);
-        return NextResponse.json(
-            { error: 'Greška pri ekstrakciji zadatka: ' + (error.message || 'Unknown error') },
-            { status: 500 }
-        );
+        // Model nedostupan/timeout: korisnik ne gubi diktat — dobije osnovna polja.
+        console.error('Voice extract error:', error?.message || error);
+        return NextResponse.json({ ...finalizeExtraction(null, text, today, context), degraded: true });
     }
 }

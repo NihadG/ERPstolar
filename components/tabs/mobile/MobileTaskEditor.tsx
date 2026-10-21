@@ -21,6 +21,8 @@ import type {
 import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, TASK_CATEGORIES, TASK_CATEGORY_LABELS, TASK_STATUS_LABELS } from '@/lib/types';
 import { generateUUID } from '@/lib/services';
 import VoiceInput, { type ExtractedTaskData } from '@/components/VoiceInput';
+import { buildVoiceContext } from '@/lib/voice/context';
+import { applyVoiceResult, EMPTY_VOICE_APPLIED, type VoiceApplied } from '@/lib/voice/apply';
 import {
     MSegmented, MSection, MList, MItem, MCell, MText, MCheck, MSheet, MIcon, MSearch, MChips, MEmpty,
 } from './MobileUI';
@@ -129,25 +131,28 @@ export default function MobileTaskEditor({ task, projects, workers, materials, w
         setNewItem('');
     };
 
+    const voiceContext = useMemo(() => buildVoiceContext(projects, workers, orders), [projects, workers, orders]);
+    const voiceAppliedRef = useRef<VoiceApplied>(EMPTY_VOICE_APPLIED);
+
+    // Ponovljen/ispravljen diktat zamjenjuje ono što je upisao prethodni (ne dopisuje).
     const handleVoice = (data: ExtractedTaskData) => {
-        if (data.title) setTitle(data.title);
-        if (data.description) setDescription(data.description);
-        if (data.priority) setPriority(data.priority as TaskPriority);
-        if (data.category) setCategory(data.category as TaskCategory);
-        if (data.suggestedDueDate) setDueDate(data.suggestedDueDate);
-        if (data.checklist?.length) {
-            setChecklist(prev => [...prev, ...data.checklist!.map(text => ({ id: generateUUID(), text, completed: false }))]);
-        }
-        if (data.suggestedWorker) {
-            const w = workers.find(x => x.Name.toLowerCase().includes(data.suggestedWorker!.toLowerCase()));
-            if (w) setWorkerId(w.Worker_ID);
-        }
-        if (data.suggestedProject) {
-            const p = projects.find(x => x.Client_Name.toLowerCase().includes(data.suggestedProject!.toLowerCase()));
-            if (p && !links.some(l => l.Entity_ID === p.Project_ID)) {
-                setLinks(prev => [...prev, { Entity_Type: 'project', Entity_ID: p.Project_ID, Entity_Name: p.Name || p.Client_Name }]);
-            }
-        }
+        const p = data.suggestedProjectId ? projects.find(x => x.Project_ID === data.suggestedProjectId) : undefined;
+        const { form, applied } = applyVoiceResult(
+            { title, description, priority, category, dueDate, workerId, checklist, links },
+            voiceAppliedRef.current,
+            data,
+            p ? { id: p.Project_ID, name: p.Name || p.Client_Name } : null,
+            generateUUID,
+        );
+        voiceAppliedRef.current = applied;
+        setTitle(form.title);
+        setDescription(form.description);
+        setPriority(form.priority);
+        setCategory(form.category);
+        setDueDate(form.dueDate);
+        setWorkerId(form.workerId);
+        setChecklist(form.checklist);
+        setLinks(form.links);
     };
 
     const submit = async () => {
@@ -203,16 +208,8 @@ export default function MobileTaskEditor({ task, projects, workers, materials, w
 
                 {!isEdit && (
                     <div className="mt-voice">
-                        <VoiceInput
-                            onResult={handleVoice}
-                            onError={(e) => console.error('Voice error:', e)}
-                            context={{
-                                projects: projects.map(p => p.Address ? `${p.Client_Name} (${p.Address})` : p.Client_Name),
-                                workers: workers.map(w => w.Name),
-                                suppliers: Array.from(new Set(orders.map(o => o.Supplier_Name).filter(Boolean))),
-                            }}
-                        />
-                        <small>ili izdiktiraj zadatak</small>
+                        <VoiceInput onResult={handleVoice} context={voiceContext} layout="inline" />
+                        <small>ili izdiktiraj zadatak — šta, za koga, ko i do kada</small>
                     </div>
                 )}
 
