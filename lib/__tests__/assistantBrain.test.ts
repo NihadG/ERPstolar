@@ -10,13 +10,15 @@ type Step = { calls?: { name: string; args: Record<string, unknown> }[]; text?: 
 const mockScript: Step[] = [];
 /** Sve što je poslano modelu (poruke i odgovori alata). */
 const mockSent: any[] = [];
+/** Zadnji sistemski prompt (da test nađe oznaku zadatka kao što bi je našao model). */
+let mockSystem = "";
 
 jest.mock('@google/generative-ai', () => {
     const actual = jest.requireActual('@google/generative-ai');
     return {
         ...actual,
         GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
-            getGenerativeModel: () => ({
+            getGenerativeModel: (cfg: any) => (mockSystem = cfg.systemInstruction, {
                 startChat: () => ({
                     sendMessage: async (msg: any) => {
                         mockSent.push(msg);
@@ -99,6 +101,26 @@ describe('asistent od poruke do baze', () => {
         const task = docs('tasks').find(t => t.Title.startsWith('Reći Ameru'));
         expect(task).toMatchObject({ Assigned_Worker_ID: 'w-amer', Assigned_Worker_Name: 'Amer Hodžić', Reminder_At: '2026-10-24T05:00:00.000Z' });
         expect(session.pending).toBeNull();
+    });
+
+    it('jedan posao s više ljudi → jedan zadatak, dopuna ide u check listu', async () => {
+        const before = docs('tasks').length;
+        await say('Reci Imeru u ponedjeljak ujutro da napravi ploču za Dinu', [
+            { calls: [{ name: 'create_task', args: { title: 'Ploča za Dinu', category: 'manufacturing', worker: 'W1', reminder_at: '2026-10-26T08:00', checklist: ['Amer — napraviti ploču'] } }] },
+            { text: '✅ Ploča za Dinu (T9), Amer Hodžić (W1) — pon 26.10. u 08:00' },
+        ]);
+        // Oznaka iz liste zadataka u promptu — model je čita isto tako.
+        mockScript.push({ text: 'x' });
+        await runAssistant({ orgId: 'org1', uid: 'u1', text: '(proba)', session: { history: [], pending: null }, now: NOW });
+        const alias = mockSystem.match(/^(T\d+) \| Ploča za Dinu/m)![1];
+        const out = await say('a Edinu reci da odradi na CNC', [
+            { calls: [{ name: 'update_task', args: { task: alias, add_checklist: ['Edin — CNC'] } }] },
+            { text: `Dodano u isti zadatak (${alias}): Edin (W2) — CNC.` },
+        ]);
+        const tasks = docs('tasks').filter(t => t.Title === 'Ploča za Dinu');
+        expect(docs('tasks')).toHaveLength(before + 1);
+        expect(tasks[0].Checklist.map((c: any) => c.text)).toEqual(['Amer — napraviti ploču', 'Edin — CNC']);
+        expect(out.reply).toBe('Dodano u isti zadatak: Edin — CNC.');
     });
 
     it('„u stanu 304 imam 3 ogledala od 1 m" → bilježnica', async () => {

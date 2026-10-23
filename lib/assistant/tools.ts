@@ -61,6 +61,7 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
                 reminder_at: { ...str, description: 'Novo lokalno vrijeme YYYY-MM-DDTHH:MM.' },
                 title: str,
                 note: { ...str, description: 'Bilješka koja se dopisuje (npr. ko je javio šta).' },
+                add_checklist: { ...strList, description: 'Nove stavke check liste u ISTOM zadatku („Kerim — CNC").' },
             },
             required: ['task'],
         },
@@ -253,6 +254,10 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         reminderLabel = formatReminder(r.iso, env.tz, env.now);
     }
     if (text(a.title)) patch.Title = text(a.title, 120);
+    const added = Array.isArray(a.add_checklist) ? a.add_checklist.map(c => text(c, 120)).filter(Boolean).slice(0, 12) : [];
+    if (added.length) {
+        patch.Checklist = [...(task.Checklist || []), ...added.map(t => ({ id: uuidv4(), text: t, completed: false }))];
+    }
     if (text(a.note)) {
         const line = `[${shortDay(env.now.toISOString(), env.tz)}] ${text(a.note, 500)}${env.reporter !== 'ja' ? ` (${env.reporter})` : ''}`;
         patch.Notes = task.Notes ? `${task.Notes}\n${line}` : line;
@@ -417,9 +422,19 @@ async function findMaterialTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, materials: hits.map(({ m }) => `${m.Name} (${m.Unit || 'kom'}${m.Category ? `, ${m.Category}` : ''})`) };
 }
 
+/** Oznake (W9, T6…) su interne — „Imer (W9)" → „Imer". Model ih ponekad ipak napiše. */
+export function stripAliases(s: string): string {
+    return s
+        .replace(/\s*\((?:[WPMTS]\d+(?:\s*,\s*[WPMTS]\d+)*)\)/g, '')
+        // Golo „W9" se briše, ali ne „M8" — to su vijci, ne oznaka.
+        .replace(/\s*\b[WPTS]\d+\b(?=[\s,.:;)]|$)/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
-    const question = text(a.question, 300);
-    const options = Array.isArray(a.options) ? a.options.map(o => text(o, 40)).filter(Boolean).slice(0, 4) : [];
+    const question = stripAliases(text(a.question, 300));
+    const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
     if (!question) return { ok: false, error: 'Prazno pitanje.' };
     env.question = { question, options };
     return { ok: true, note: 'Pitanje je poslano. Ne radi ništa više dok korisnik ne odgovori.' };
