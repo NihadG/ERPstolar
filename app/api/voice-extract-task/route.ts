@@ -5,6 +5,7 @@ import {
     buildExtractionPrompt, finalizeExtraction, parseModelJson,
     VOICE_CATEGORIES, VOICE_PRIORITIES, type VoiceContext,
 } from '@/lib/voice/extract';
+import { errorResponse, requireUserOrDevPreview } from '@/lib/server/requireUser';
 
 export type { ExtractedTaskData } from '@/lib/voice/extract';
 
@@ -55,6 +56,13 @@ function sanitizeContext(raw: unknown): VoiceContext {
 }
 
 export async function POST(request: NextRequest) {
+    try {
+        // Parsiranje troši plaćeni Gemini ključ — samo za prijavljene.
+        await requireUserOrDevPreview(request);
+    } catch (e) {
+        return errorResponse(e);
+    }
+
     let text = '';
     let today = localToday();
     let context: VoiceContext = {};

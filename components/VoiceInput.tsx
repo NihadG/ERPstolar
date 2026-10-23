@@ -19,6 +19,7 @@ import { localToday } from '@/lib/voice/dates';
 import { contextNames, projectLabel, type ExtractedTaskData, type VoiceContext } from '@/lib/voice/extract';
 import { audioExtension, pickRecorderMimeType } from '@/lib/voice/transcript';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
+import { auth } from '@/lib/firebase';
 import './VoiceInput.css';
 
 export type { ExtractedTaskData, VoiceContext } from '@/lib/voice/extract';
@@ -146,7 +147,12 @@ export default function VoiceInput({ onResult, onError, onTranscript, disabled, 
         abortRef.current = ctrl;
         const timer = setTimeout(() => ctrl.abort('timeout'), REQUEST_TIMEOUT_MS);
         try {
-            const res = await fetch(url, { ...init, signal: ctrl.signal });
+            // Rute troše plaćene ključeve i traže prijavu. Bez korisnika (dev
+            // preview) zahtjev ide bez tokena — server to dozvoljava samo u devu.
+            const headers = new Headers(init.headers);
+            const token = await auth?.currentUser?.getIdToken().catch(() => null);
+            if (token) headers.set('Authorization', `Bearer ${token}`);
+            const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
             const data = await readJson(res);
             if (!res.ok) throw new VoiceError(data.error || `Greška servera (${res.status}).`);
             return data;

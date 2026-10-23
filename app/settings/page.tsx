@@ -14,6 +14,7 @@ import Link from 'next/link';
 import SystemReadiness from '@/components/settings/SystemReadiness';
 import NameClassificationReview from '@/components/settings/NameClassificationReview';
 import TeamSection from '@/components/settings/TeamSection';
+import TelegramSection from '@/components/settings/TelegramSection';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
     free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
@@ -324,7 +325,7 @@ export default function SettingsPage() {
     // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije i Korisnici
     // se čuvaju odmah po akciji (Poveži/Kreiraj nalog/Deaktiviraj), pa tu prikazujemo
     // napomenu umjesto dugmeta — glavno dugme bi tamo bilo prazno obećanje.
-    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici';
+    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici' && activeSection !== 'telegram';
 
     return (
         <div className="settings-page">
@@ -408,6 +409,13 @@ export default function SettingsPage() {
                             <span className="sidebar-item-label">Google integracija</span>
                             {!hasModule('google_integration') && <span className="nav-pro-badge">PRO</span>}
                         </button>
+                        <button
+                            className={`sidebar-item ${activeSection === 'telegram' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('telegram')}
+                        >
+                            <span className="material-icons-round">send</span>
+                            <span className="sidebar-item-label">Telegram asistent</span>
+                        </button>
                     </nav>
 
                     <button className="settings-signout" onClick={() => signOut()}>
@@ -427,6 +435,10 @@ export default function SettingsPage() {
 
                     {activeSection === 'korisnici' && (
                         <TeamSection showMessage={showMessage} />
+                    )}
+
+                    {activeSection === 'telegram' && (
+                        <TelegramSection showMessage={showMessage} />
                     )}
 
                     {activeSection === 'company' && (

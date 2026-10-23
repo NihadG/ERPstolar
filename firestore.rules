@@ -508,5 +508,24 @@ service cloud.firestore {
                             && request.resource.data.User_ID == userId;
       allow delete: if isOwner(userId);
     }
+
+    // ============================================
+    // BILJEŽNICA TELEGRAM ASISTENTA
+    //
+    // Privatna kao lična tabla: stavke vidi i mijenja samo njihov vlasnik.
+    // Nove stavke pravi isključivo server (Telegram webhook, Admin SDK), pa
+    // klijentski CREATE nije potreban. Vlasnik i firma se ne mogu promijeniti.
+    // Ostale assistant_* kolekcije nemaju pravilo = klijent ih ne dira.
+    // ============================================
+
+    match /memory_items/{itemId} {
+      allow read, delete: if isAuthenticated()
+                          && resource.data.Owner_UID == request.auth.uid;
+      allow update: if isAuthenticated()
+                    && resource.data.Owner_UID == request.auth.uid
+                    && request.resource.data.Owner_UID == resource.data.Owner_UID
+                    && request.resource.data.Organization_ID == resource.data.Organization_ID;
+      allow create: if false;
+    }
   }
 }

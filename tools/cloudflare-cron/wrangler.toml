@@ -1,0 +1,17 @@
+name = "erp-assistant-cron"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+# Worker nema javnu adresu — treba mu samo cron okidač.
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# Produkcijski domen aplikacije na Vercelu.
+TICK_URL = "https://er-pstolar-76ho.vercel.app/api/assistant/tick"
+
+# CRON_SECRET se NE piše ovdje — postavi ga kao tajnu:
+#   npx wrangler secret put CRON_SECRET
+# (ista vrijednost kao CRON_SECRET na Vercelu)
