@@ -50,12 +50,16 @@ import {
     Printer,
     MoreHorizontal,
     Users,
-    UserPlus
+    UserPlus,
+    Bell,
+    Send,
+    BookOpen
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { upsertTaskEvent, deleteTaskEvent } from '@/lib/google/calendarClient';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
+import NotebookLens from './notebook/NotebookLens';
 import { buildVoiceContext } from '@/lib/voice/context';
 import { applyVoiceResult, EMPTY_VOICE_APPLIED, type VoiceApplied } from '@/lib/voice/apply';
 import TaskChecklistEditor from '@/components/ui/TaskChecklistEditor';
@@ -147,6 +151,8 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     const [filterPriority, setFilterPriority] = useState<TaskPriority | 'all'>('all');
     const [filterCategory, setFilterCategory] = useState<TaskCategory | 'all'>('all');
     const [viewMode, setViewMode] = useState<ViewMode>('grid');
+    // Zadaci = šta treba uraditi; Bilježnica = šta gdje stoji (Telegram asistent).
+    const [lens, setLens] = useState<'tasks' | 'notebook'>('tasks');
     const [groupBy, setGroupBy] = useState<GroupBy>('priority');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -991,6 +997,17 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                     {new Date(task.Due_Date).toLocaleDateString('hr-HR', { day: 'numeric', month: 'short' })}
                                 </span>
                             )}
+                            {task.Reminder_At && task.Reminder_Pending && (
+                                <span className="meta-chip reminder" title="Podsjetnik na Telegram">
+                                    <Bell size={12} />
+                                    {reminderChipLabel(task.Reminder_At)}
+                                </span>
+                            )}
+                            {task.Source === 'telegram' && (
+                                <span className="meta-chip source" title="Nastalo iz Telegram asistenta">
+                                    <Send size={11} />
+                                </span>
+                            )}
                         </div>
                         {/* Entity links preview */}
                         {task.Links && task.Links.length > 0 && (
@@ -1185,6 +1202,18 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                     {new Date(task.Due_Date).toLocaleDateString('hr-HR', { day: 'numeric', month: 'short' })}
                                 </span>
                             )}
+                            {task.Reminder_At && task.Reminder_Pending && (
+                                <span className="grid-exp-meta-chip reminder" title="Podsjetnik na Telegram">
+                                    <Bell size={12} />
+                                    {reminderChipLabel(task.Reminder_At)}
+                                </span>
+                            )}
+                            {task.Source === 'telegram' && (
+                                <span className="grid-exp-meta-chip" title="Nastalo iz Telegram asistenta">
+                                    <Send size={12} />
+                                    Telegram
+                                </span>
+                            )}
                             {task.Assigned_Worker_Name && (
                                 <span className="grid-exp-meta-chip">
                                     <User size={12} />
@@ -1230,6 +1259,14 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         <CheckSquare size={28} color="#1D3557" />
                         Zadaci
                     </h2>
+                    <div className="tasks-lens" role="tablist" aria-label="Prikaz">
+                        <button type="button" role="tab" aria-selected={lens === 'tasks'} className={lens === 'tasks' ? 'on' : ''} onClick={() => setLens('tasks')}>
+                            <CheckSquare size={14} /> Zadaci
+                        </button>
+                        <button type="button" role="tab" aria-selected={lens === 'notebook'} className={lens === 'notebook' ? 'on' : ''} onClick={() => setLens('notebook')}>
+                            <BookOpen size={14} /> Bilježnica
+                        </button>
+                    </div>
                     <div className="tasks-count-wrapper">
                         <span className="tasks-count">{filteredTasks.length} ukupno</span>
                         <button className="mobile-toggle-btn" onClick={toggleControls}>
@@ -1314,6 +1351,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                 </button>
             </div>
 
+            {lens === 'notebook' ? <NotebookLens organizationId={organizationId} /> : (<>
             {/* Project Filter Banner */}
             {projectFilter && (
                 <div className="project-filter-banner">
@@ -1688,6 +1726,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                     </DragDropContext>
                 )}
             </div>
+            </>)}
 
             {/* Task Modal */}
             {isModalOpen && (
@@ -1913,6 +1952,25 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 // TASK MODAL COMPONENT
 // ============================================
 
+/** ISO → vrijednost za <input type="datetime-local"> u lokalnom vremenu preglednika. */
+function isoToLocalInput(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Kratka oznaka podsjetnika za karticu: „sutra 07:00", „26. lis 08:00". */
+function reminderChipLabel(iso: string): string {
+    const d = new Date(iso);
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const time = d.toLocaleTimeString('hr-HR', { hour: '2-digit', minute: '2-digit' });
+    if (d.toDateString() === today.toDateString()) return `danas ${time}`;
+    if (d.toDateString() === tomorrow.toDateString()) return `sutra ${time}`;
+    return `${d.toLocaleDateString('hr-HR', { day: 'numeric', month: 'short' })} ${time}`;
+}
+
 interface TaskModalProps {
     task: Task | null;
     projects: Project[];
@@ -1935,6 +1993,8 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     const [priority, setPriority] = useState<TaskPriority>(task?.Priority || 'medium');
     const [category, setCategory] = useState<TaskCategory>(task?.Category || 'general');
     const [dueDate, setDueDate] = useState(task?.Due_Date ? task.Due_Date.split('T')[0] : '');
+    // „Podsjeti me" — lokalni datum i sat (datetime-local), u bazu ide kao ISO.
+    const [reminderAt, setReminderAt] = useState(task?.Reminder_At ? isoToLocalInput(task.Reminder_At) : '');
     const [assignedWorker, setAssignedWorker] = useState(task?.Assigned_Worker_ID || '');
     const [links, setLinks] = useState<TaskLink[]>(task?.Links || []);
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist || []);
@@ -2013,6 +2073,9 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
             Category: category,
             Status: task?.Status || 'pending',
             Due_Date: dueDate ? new Date(dueDate).toISOString() : undefined,
+            // Prazan string briše postojeći podsjetnik (undefined bi se samo preskočio).
+            Reminder_At: reminderAt ? new Date(reminderAt).toISOString() : (task?.Reminder_At ? '' : undefined),
+            Created_By_UID: task?.Created_By_UID,
             Assigned_Worker_ID: assignedWorker || undefined,
             Assigned_Worker_Name: worker?.Name,
             Links: links,
@@ -2096,6 +2159,18 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                                     type="date"
                                     value={dueDate}
                                     onChange={e => setDueDate(e.target.value)}
+                                    className="meta-date-input"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="meta-item">
+                            <span className="meta-label" title="Podsjetnik stiže na Telegram (Postavke → Telegram asistent)">Podsjeti me</span>
+                            <div className="meta-input-wrapper">
+                                <input
+                                    type="datetime-local"
+                                    value={reminderAt}
+                                    onChange={e => setReminderAt(e.target.value)}
                                     className="meta-date-input"
                                 />
                             </div>

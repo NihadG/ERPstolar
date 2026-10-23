@@ -21,6 +21,7 @@ import {
     onSnapshot,
 } from '../shared/firestoreClient';
 import { v4 as uuidv4 } from 'uuid';
+import { auth } from '../../firebase';
 import {
     withWorkOrderLink,
     withoutWorkOrderLink,
@@ -32,6 +33,12 @@ import type { Task, TaskProfile, ChecklistItem, TaskLink, WorkOrderItem } from '
 // ============================================
 // TASK CRUD
 // ============================================
+
+/** Podsjetnik čeka slanje dok je u budućnosti i dok je zadatak otvoren. */
+export function isReminderPending(t: Partial<Task>): boolean {
+    if (!t.Reminder_At || t.Status === 'completed' || t.Status === 'cancelled') return false;
+    return Date.parse(t.Reminder_At) > Date.now();
+}
 
 export async function getTasks(organizationId: string): Promise<Task[]> {
     return queryByOrg<Task>(COLLECTIONS.TASKS, organizationId);
@@ -53,11 +60,20 @@ export async function saveTask(
     try {
         const isNew = !data.Task_ID;
 
+        // Podsjetnik (Reminder_At) šalje /api/assistant/tick na Telegram onome
+        // ko ga je postavio — zato uz njega mora ići i autor.
+        if ('Reminder_At' in data) {
+            data.Reminder_Pending = isReminderPending(data);
+            if (data.Reminder_At && !data.Created_By_UID) data.Created_By_UID = auth?.currentUser?.uid;
+        }
+
         if (isNew) {
             data.Task_ID = uuidv4();
             data.Organization_ID = organizationId;
             data.Created_Date = new Date().toISOString();
             data.Status = data.Status || 'pending';
+            data.Source = data.Source || 'app';
+            data.Created_By_UID = data.Created_By_UID || auth?.currentUser?.uid;
             await createDoc(COLLECTIONS.TASKS, data as Record<string, unknown>);
         } else {
             const ref = await findRef(COLLECTIONS.TASKS, 'Task_ID', data.Task_ID!, organizationId);
@@ -112,6 +128,10 @@ export async function updateTaskStatus(
         const updates: Record<string, unknown> = { Status: status };
         if (status === 'completed') {
             updates.Completed_Date = new Date().toISOString();
+        }
+        // Završen ili otkazan zadatak više ne podsjeća.
+        if (status === 'completed' || status === 'cancelled') {
+            updates.Reminder_Pending = false;
         }
 
         const ref = await findRef(COLLECTIONS.TASKS, 'Task_ID', taskId, organizationId);

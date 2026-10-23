@@ -22,7 +22,7 @@ import { aggregateLaborFromLogs, laborCostOf } from '@/lib/laborAggregate';
 import { getWorkLogsForWorkOrder } from './fieldRepo';
 import { withProductLinkInOrder, withWorkOrderLink } from '@/lib/workOrderTasks';
 import { workOrderDisplayName } from '@/lib/utils';
-import type { ItemProcessStatus, Task, TaskCategory, TaskPriority } from '@/lib/types';
+import type { ItemProcessStatus, Task, TaskCategory, TaskPriority, TaskSource } from '@/lib/types';
 
 // ─── Procesi ──────────────────────────────────────────────────────────
 
@@ -140,6 +140,7 @@ export async function reopenItem(orgId: string, workOrderId: string, itemId: str
 
 export interface CreateTaskInput {
     title: string;
+    description?: string;
     priority?: TaskPriority;
     category?: TaskCategory;
     dueDate?: string;
@@ -149,6 +150,13 @@ export interface CreateTaskInput {
     assignedWorkerId?: string;
     assignedWorkerName?: string;
     checklist?: string[];
+    /** Dodatne veze (projekat, materijal…) — idu iza veze na nalog. */
+    links?: Task['Links'];
+    /** ISO UTC; postavlja i `Reminder_Pending` da ga tick pošalje. */
+    reminderAt?: string;
+    source?: TaskSource;
+    sourceEntryId?: string;
+    createdByUid?: string;
 }
 
 /**
@@ -181,12 +189,16 @@ export async function createTask(orgId: string, input: CreateTaskInput): Promise
         }
     }
 
+    for (const l of input.links || []) {
+        if (!links.some(x => x.Entity_Type === l.Entity_Type && x.Entity_ID === l.Entity_ID)) links.push(l);
+    }
+
     const taskId = uuidv4();
     const task: Record<string, unknown> = {
         Task_ID: taskId,
         Organization_ID: orgId,
         Title: title,
-        Description: '',
+        Description: input.description?.trim() || '',
         Status: 'pending',
         Priority: input.priority || 'medium',
         Category: input.category || 'general',
@@ -204,13 +216,18 @@ export async function createTask(orgId: string, input: CreateTaskInput): Promise
                 .filter(Boolean)
                 .map(text => ({ id: uuidv4(), text, completed: false })),
         } : {}),
+        ...(input.reminderAt ? { Reminder_At: input.reminderAt, Reminder_Pending: true } : {}),
+        ...(input.source ? { Source: input.source } : {}),
+        ...(input.sourceEntryId ? { Source_Entry_ID: input.sourceEntryId } : {}),
+        ...(input.createdByUid ? { Created_By_UID: input.createdByUid } : {}),
     };
 
     await adminDb().collection('tasks').add(task);
     return taskId;
 }
 
-async function taskRef(orgId: string, taskId: string) {
+/** Referenca zadatka po Task_ID (dokument ima nasumičan ID). */
+export async function taskRef(orgId: string, taskId: string) {
     const snap = await adminDb().collection('tasks')
         .where('Organization_ID', '==', orgId)
         .where('Task_ID', '==', taskId)
@@ -225,6 +242,8 @@ export async function setTaskStatus(orgId: string, taskId: string, done: boolean
     await (await taskRef(orgId, taskId)).update({
         Status: done ? 'completed' : 'pending',
         Completed_Date: done ? new Date().toISOString() : '',
+        // Završen zadatak više ne podsjeća.
+        ...(done ? { Reminder_Pending: false } : {}),
     });
 }
 
@@ -237,6 +256,7 @@ export async function setTaskState(orgId: string, taskId: string, status: Task['
     await (await taskRef(orgId, taskId)).update({
         Status: status,
         Completed_Date: status === 'completed' ? new Date().toISOString() : '',
+        ...(status === 'completed' || status === 'cancelled' ? { Reminder_Pending: false } : {}),
     });
 }
 

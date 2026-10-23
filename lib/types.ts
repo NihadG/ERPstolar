@@ -630,6 +630,83 @@ export interface Task {
 
     // GOOGLE CALENDAR (Faza 1) — ID događaja kreiranog iz roka zadatka (Due_Date).
     Calendar_Event_ID?: string;
+
+    // PODSJETNIK (od 10/2026) — tačan trenutak, ne samo dan. Šalje ga
+    // /api/assistant/tick na Telegram korisniku iz `Created_By_UID`.
+    // `Reminder_Date` (samo dan) ostaje radi starih zapisa.
+    Reminder_At?: string;          // ISO UTC
+    /** true dok podsjetnik čeka slanje — po ovom polju tick traži (indeks). */
+    Reminder_Pending?: boolean;
+    Reminder_Sent_At?: string;
+
+    // POREKLO
+    Source?: TaskSource;
+    /** assistant_entries zapis iz kojeg je zadatak nastao (Telegram). */
+    Source_Entry_ID?: string;
+    Created_By_UID?: string;
+}
+
+export type TaskSource = 'app' | 'voice' | 'telegram';
+
+// ============================================
+// BILJEŽNICA — „druga memorija" asistenta (od 10/2026)
+//
+// Zadatak je nešto što treba URADITI. Stavka bilježnice je nešto što STOJI
+// negdje u nekom stanju („3 ogledala od 1 m u stanu 304, nije montirano").
+// Stanje se mijenja kad stigne nova informacija (radnik javi „montirano"),
+// pa pitanje „gdje nisu montirana ogledala" čita stanje, a ne stare poruke.
+// Privatno: vidi je samo `Owner_UID`.
+// ============================================
+
+export type MemoryState = 'open' | 'resolved';
+
+export interface MemoryHistoryEntry {
+    At: string;
+    Text: string;
+    /** Ko je javio: „ja" ili ime iz proslijeđene poruke. */
+    By?: string;
+    Entry_ID?: string;
+}
+
+export interface MemoryItem {
+    Item_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Title: string;
+    /** Predmet u osnovnom obliku, za grupisanje i pretragu („ogledalo"). */
+    Subject: string;
+    Quantity?: number;
+    Unit?: string;
+    /** Mjere/opis („1 m", „bijela, 60×80"). */
+    Spec?: string;
+    /** Gdje stoji („Stan 304", „Kombi", „Radionica"). */
+    Location?: string;
+    Links: TaskLink[];
+    State: MemoryState;
+    /** Ljudski opis stanja („nije montirano", „montirano"). */
+    State_Label: string;
+    Tags: string[];
+    History: MemoryHistoryEntry[];
+    Source_Entry_IDs: string[];
+    Created_At: string;
+    Updated_At: string;
+    Resolved_At?: string;
+}
+
+/** Sirovi dnevnik asistenta: sve što je stiglo, nepromijenjeno. */
+export interface AssistantEntry {
+    Entry_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Channel: 'telegram' | 'app';
+    Kind: 'text' | 'voice' | 'forward';
+    Raw_Text: string;
+    Forward_From?: string;
+    Forward_Date?: string;
+    Telegram_File_ID?: string;
+    Created_At: string;
+    Task_IDs?: string[];
+    Memory_IDs?: string[];
 }
 
 export interface TaskProfile {

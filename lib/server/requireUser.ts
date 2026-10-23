@@ -144,6 +144,18 @@ export async function requireOrgAdmin(req: Request): Promise<AuthedUser> {
     return user;
 }
 
+/**
+ * Za rute koje troše plaćene AI ključeve (glasovni unos): u produkciji samo
+ * prijavljeni korisnik. U devu zahtjev BEZ tokena prolazi, jer ih dev preview
+ * stranice (/voice-preview) zovu bez prijave — zahtjev s tokenom se i u devu
+ * provjerava.
+ */
+export async function requireUserOrDevPreview(req: Request): Promise<AuthedUser | null> {
+    const hasToken = !!(req.headers.get('authorization') || req.headers.get('Authorization'));
+    if (!hasToken && process.env.NODE_ENV !== 'production') return null;
+    return requireUser(req);
+}
+
 /** Jedinstveno pretvaranje greške u odgovor — da nijedna ruta ne procuri stack. */
 export function errorResponse(e: unknown): NextResponse {
     if (e instanceof HttpError) {

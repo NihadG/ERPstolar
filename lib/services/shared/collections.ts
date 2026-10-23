@@ -40,6 +40,14 @@ export const COLLECTIONS = {
     CHANGE_REQUESTS: 'change_requests',
     /** Lična tabla Komandnog centra — jedan dokument po korisniku (ID = auth uid). */
     USER_BOARDS: 'user_boards',
+    // Asistent (Telegram) — vidi lib/assistant/store.ts.
+    MEMORY_ITEMS: 'memory_items',
+    ASSISTANT_ENTRIES: 'assistant_entries',
+    ASSISTANT_LINKS: 'assistant_links',
+    ASSISTANT_LINK_CODES: 'assistant_link_codes',
+    ASSISTANT_SESSIONS: 'assistant_sessions',
+    ASSISTANT_OPS: 'assistant_ops',
+    ASSISTANT_UPDATES: 'assistant_updates',
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;
