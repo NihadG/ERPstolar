@@ -17,6 +17,7 @@
     "jose": "^5.10.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.2.0",
     "@google/generative-ai": "^0.24.1",
     "@hello-pangea/dnd": "^18.0.1",
     "@types/html2canvas": "^0.5.35",

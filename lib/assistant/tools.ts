@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { v4 as uuidv4 } from 'uuid';
-import { SchemaType, type FunctionDeclaration } from '@google/generative-ai';
+import type Anthropic from '@anthropic-ai/sdk';
 import { createTask, taskRef } from '@/lib/server/fieldWrites';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { isIsoDate } from '@/lib/voice/dates';
@@ -16,7 +16,8 @@ import { foldText, tokens, stem } from '@/lib/voice/text';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
 import { formatReminder, resolveReminderAt, toZoned } from './datetime';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
-import { memoryLine } from './prompt';
+import { memoryLine, taskLine } from './prompt';
+import { getAllTasks } from '@/lib/server/fieldRepo';
 import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
 import type { Material, MemoryItem, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
@@ -24,18 +25,19 @@ const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'des
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 const STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 
-const str = { type: SchemaType.STRING } as const;
-const num = { type: SchemaType.NUMBER } as const;
-const bool = { type: SchemaType.BOOLEAN } as const;
-const strList = { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } } as const;
-const enumOf = (values: string[]) => ({ type: SchemaType.STRING, format: 'enum', enum: values }) as const;
+const str = { type: 'string' } as const;
+const num = { type: 'number' } as const;
+const bool = { type: 'boolean' } as const;
+const strList = { type: 'array', items: { type: 'string' } } as const;
+const enumOf = (values: string[]) => ({ type: 'string', enum: values }) as const;
 
-export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
+/** Alati u Anthropic formatu (JSON Schema). Redoslijed je fiksan — dio keširanog prefiksa. */
+export const TOOLS: Anthropic.Tool[] = [
     {
         name: 'create_task',
         description: 'Novi zadatak ili podsjetnik u ERP Zadacima. Za podsjetnik obavezno reminder_at.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: {
                 title: { ...str, description: 'Kratak naslov u infinitivu, npr. „Naručiti 10 baglama", „Reći Ameru da povuče ogledala u kombi".' },
                 description: { ...str, description: 'Dodatni detalji iz poruke (neobavezno).' },
@@ -53,8 +55,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     {
         name: 'update_task',
         description: 'Izmjena postojećeg zadatka: završen/otkazan, novo vrijeme podsjetnika, novi naslov ili bilješka.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: {
                 task: { ...str, description: 'Oznaka T#.' },
                 status: enumOf(STATUSES),
@@ -69,8 +71,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     {
         name: 'remember',
         description: 'Nova stavka bilježnice: stvar, gdje stoji i u kakvom je stanju.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: {
                 subject: { ...str, description: 'Predmet u osnovnom obliku jednine: „ogledalo".' },
                 title: { ...str, description: 'Kratak opis za prikaz: „Ogledala 1 m za kupatila".' },
@@ -90,8 +92,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     {
         name: 'update_memory',
         description: 'Promjena stavke bilježnice (M# ili S#): riješeno, novo stanje, količina, lokacija.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: {
                 item: { ...str, description: 'Oznaka M# ili S#.' },
                 resolved: { ...bool, description: 'true = gotovo (npr. montirano), false = ponovo otvoreno.' },
@@ -106,9 +108,9 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     },
     {
         name: 'search_memory',
-        description: 'Pretraga cijele bilježnice (i riješenih stavki) i starih poruka/izvještaja. Za istoriju i stvari kojih nema u otvorenoj listi.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        description: 'Pretraga cijele bilježnice (i riješenih stavki), SVIH zadataka (i dalekih i završenih) i starih poruka/izvještaja. Za sve čega nema u listama na kraju uputa.',
+        input_schema: {
+            type: 'object',
             properties: {
                 query: { ...str, description: 'Ključne riječi: „ogledala 304".' },
                 include_resolved: bool,
@@ -119,8 +121,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     {
         name: 'find_material',
         description: 'Traži materijal u katalogu ERP-a (tačan naziv, jedinica). Za narudžbe kad nije jasno koji artikal.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: { query: str },
             required: ['query'],
         },
@@ -128,8 +130,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     {
         name: 'ask_user',
         description: 'Postavi korisniku JEDNO kratko pitanje s 2–4 opcije. Poslije ovoga ne radi ništa dok ne odgovori.',
-        parameters: {
-            type: SchemaType.OBJECT,
+        input_schema: {
+            type: 'object',
             properties: {
                 question: str,
                 options: { ...strList, description: '2–4 kratke opcije (do 30 znakova).' },
@@ -156,7 +158,26 @@ export interface ToolEnv {
     searchHits: Aliased<MemoryItem>[];
     created: { taskIds: string[]; memoryIds: string[] };
     changes: string[];
+    /** Potvrde za korisnika, po jedna po upisu — od njih se složi odgovor bez drugog poziva modela. */
+    summaries: string[];
     question?: { question: string; options: string[] };
+}
+
+/**
+ * Alati koji samo upisuju. Kad je model pozvao samo njih i svi su uspjeli,
+ * odgovor složi sistem iz `summaries` — drugi poziv modela bi samo prepričao
+ * isto, uz trošak i sekundu-dvije čekanja.
+ */
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory']);
+
+function qtyLabel(m: MemoryItem): string {
+    return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
+}
+
+function memorySummary(m: MemoryItem): string {
+    const where = m.Location ? ` · ${m.Location}` : '';
+    const spec = m.Spec ? ` (${m.Spec})` : '';
+    return `${m.State === 'resolved' ? '✔' : '📒'} ${qtyLabel(m)}${m.Title}${spec}${where} — ${m.State_Label}`;
 }
 
 type Args = Record<string, unknown>;
@@ -221,12 +242,18 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     env.ctx.tasks.push({ alias, value: created });
     env.created.taskIds.push(taskId);
     env.changes.push(`zadatak „${title}"`);
+    const reminderLabel = reminder ? formatReminder(reminder.iso, env.tz, env.now) : undefined;
+    env.summaries.push([
+        `✅ ${title}${reminderLabel ? ` — ${reminderLabel}` : dueDate ? ` — rok ${dueDate}` : ''}${worker ? ` · ${worker.name}` : ''}`,
+        ...(project ? [`📁 ${projectLabel(project)}`] : []),
+        ...(created.Checklist || []).map(c => `☐ ${c.text}`),
+    ].join('\n'));
 
     return clean({
         ok: true,
         task: alias,
         title,
-        reminder_label: reminder ? formatReminder(reminder.iso, env.tz, env.now) : undefined,
+        reminder_label: reminderLabel,
         worker: worker?.name,
         project: project ? projectLabel(project) : undefined,
     });
@@ -268,6 +295,14 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before, label: `zadatak „${task.Title}"` });
     Object.assign(task, patch);
     env.changes.push(`zadatak „${task.Title}"`);
+    const lines: string[] = [];
+    if (patch.Status === 'completed') lines.push(`✅ Urađeno: ${task.Title}`);
+    else if (patch.Status === 'cancelled') lines.push(`✖ Otkazano: ${task.Title}`);
+    else if (patch.Status) lines.push(`↺ ${task.Title} — ${patch.Status === 'in_progress' ? 'u toku' : 'ponovo otvoreno'}`);
+    if (reminderLabel) lines.push(`⏰ ${task.Title} → ${reminderLabel}`);
+    if (added.length) lines.push(`➕ ${task.Title}:`, ...added.map(t => `☐ ${t}`));
+    if (!lines.length) lines.push(`✏️ ${task.Title}${text(a.note) ? `: ${text(a.note, 200)}` : ''}`);
+    env.summaries.push(lines.join('\n'));
     return clean({ ok: true, task: String(a.task), title: task.Title, status: patch.Status as string | undefined, reminder_label: reminderLabel });
 }
 
@@ -327,6 +362,7 @@ async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     env.ctx.memory.push({ alias, value: item });
     env.created.memoryIds.push(item.Item_ID);
     env.changes.push(`bilješka „${item.Title}"`);
+    env.summaries.push(memorySummary(item));
     return { ok: true, item: alias, saved: memoryLine(alias, item, env.tz) };
 }
 
@@ -358,6 +394,7 @@ async function updateMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (!next.Resolved_At) delete item.Resolved_At;
     env.created.memoryIds.push(item.Item_ID);
     env.changes.push(`bilješka „${item.Title}"`);
+    env.summaries.push(memorySummary(next));
     return { ok: true, item: String(a.item), now: memoryLine(String(a.item), next, env.tz) };
 }
 
@@ -384,10 +421,27 @@ async function searchMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const query = text(a.query, 120);
     if (!query) return { ok: false, error: 'Prazan upit.' };
     const since = new Date(env.now.getTime() - 180 * 86_400_000).toISOString();
-    const [items, entries] = await Promise.all([
+    const [items, entries, allTasks] = await Promise.all([
         listMemory(env.orgId, env.uid, a.include_resolved !== false),
         listEntriesSince(env.orgId, env.uid, since),
+        getAllTasks(env.orgId),
     ]);
+
+    // Zadaci kojih nema u skraćenoj listi (daleki, stariji, završeni) dobiju
+    // novu T-oznaku, da ih model odmah može i izmijeniti.
+    const known = new Set(env.ctx.tasks.map(t => t.value.Task_ID));
+    const taskHits = allTasks
+        .filter(t => !known.has(t.Task_ID))
+        .map(t => ({ t, s: textScore(query, [t.Title, t.Description, t.Notes, t.Assigned_Worker_Name, ...(t.Checklist || []).map(c => c.text), ...(t.Links || []).map(l => l.Entity_Name)].join(' ')) }))
+        .filter(x => x.s >= 0.5)
+        .sort((x, y) => y.s - x.s || String(y.t.Created_Date).localeCompare(String(x.t.Created_Date)))
+        .slice(0, 8);
+    const taskLines = taskHits.map(({ t }) => {
+        const alias = `T${env.ctx.tasks.length + 1}`;
+        env.ctx.tasks.push({ alias, value: t });
+        const state = t.Status === 'completed' ? 'ZAVRŠEN' : t.Status === 'cancelled' ? 'OTKAZAN' : t.Status === 'in_progress' ? 'u toku' : 'otvoren';
+        return `${taskLine(alias, t, env.tz, env.now)} | ${state}`;
+    });
 
     const itemHits = items
         .map(m => ({ m, s: textScore(query, memoryHaystack(m)) }))
@@ -405,6 +459,7 @@ async function searchMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return {
         ok: true,
         items: env.searchHits.map(h => memoryLine(h.alias, h.value, env.tz)),
+        tasks: taskLines,
         messages: entryHits.map(({ e }) => `${shortDay(e.Forward_Date || e.Created_At, env.tz)} ${e.Forward_From ? `od ${e.Forward_From}` : 'ja'}: ${e.Raw_Text.slice(0, 300)}`),
     };
 }
