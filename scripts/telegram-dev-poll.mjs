@@ -17,6 +17,21 @@ const target = `${(process.argv[2] || 'http://localhost:3000').replace(/\/+$/, '
 await tg(token, 'deleteWebhook', { drop_pending_updates: false });
 console.log(`🔁 Prosljeđujem poruke na ${target} (Ctrl+C za kraj)`);
 
+// Lokalni „sat": isto što Cloudflare radi u produkciji — svake minute tick.
+const cronSecret = env.CRON_SECRET?.trim();
+if (cronSecret) {
+    const tickUrl = target.replace('/api/telegram/webhook', '/api/assistant/tick');
+    setInterval(async () => {
+        try {
+            const res = await fetch(tickUrl, { method: 'POST', headers: { Authorization: `Bearer ${cronSecret}` } });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body.sent || body.digests) console.log(`⏰ tick ${res.status}`, JSON.stringify(body));
+        } catch (e) {
+            console.error('tick:', e.message);
+        }
+    }, 60_000);
+}
+
 let offset = 0;
 for (;;) {
     let updates = [];
