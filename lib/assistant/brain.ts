@@ -19,7 +19,7 @@ import type { ButtonRows } from '@/lib/telegram/api';
 import { assistantTimezone, toZoned } from './datetime';
 import { loadContext } from './context';
 import { buildSystemPrompt } from './prompt';
-import { runTool, TOOL_DECLARATIONS, type ToolEnv } from './tools';
+import { runTool, stripAliases, TOOL_DECLARATIONS, type ToolEnv } from './tools';
 import type { AssistantSession, SessionTurn } from './store';
 
 const MAX_STEPS = 6;
@@ -51,7 +51,7 @@ export interface AssistantTurnOutput {
 
 /** Telegram šaljemo kao običan tekst — model ponekad ipak ubaci markdown. */
 export function plainText(s: string): string {
-    return s
+    return stripAliases(s)
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/__(.+?)__/g, '$1')
         .replace(/^#{1,6}\s*/gm, '')
