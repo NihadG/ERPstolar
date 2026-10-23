@@ -1,34 +1,40 @@
 // ════════════════════════════════════════════════════════════════════
 // MOZAK ASISTENTA — jedna poruka korisnika → radnje + odgovor.
 //
-// Gemini s function callingom: model čita kontekst (bilježnica, zadaci,
-// radnici, projekti), bira alate iz lib/assistant/tools, i na kraju piše
-// kratak odgovor. Najviše MAX_STEPS krugova alata po poruci.
+// Claude Haiku 5.5 s alatima: model čita kontekst (bilježnica, zadaci,
+// radnici, projekti), bira alate iz lib/assistant/tools, i po potrebi piše
+// odgovor. Najviše MAX_STEPS krugova alata po poruci.
+//
+// TROŠAK — tri pravila:
+//   1. Keš: stabilni dio prompta (pravila, radnici, projekti) ima vlastitu
+//      tačku keša; ostatak (vrijeme, liste, razgovor) kešira automatika, pa
+//      drugi krug iste poruke plaća ulaz ~10 puta jeftinije.
+//   2. Bez drugog poziva: kad je model samo upisivao (zadatak, bilješka,
+//      izmjena) i sve je uspjelo, potvrdu složi sistem iz rezultata alata.
+//   3. effort: low — ovaj posao ne treba dugo razmišljanje.
 //
 // Kad model zatraži pitanje (ask_user), krug staje: korisnik dobije pitanje
-// s dugmadima, a sesija pamti razgovor da sljedeća poruka (odgovor) završi
-// prvobitni zahtjev.
+// s dugmadima, a sesija pamti razgovor da sljedeća poruka završi zahtjev.
 //
 // Bez AI-ja (nema ključa / model pao) poruka NIJE izgubljena — već je u
 // assistant_entries; korisnik dobije jasnu poruku da nije razvrstana.
 // ════════════════════════════════════════════════════════════════════
 
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenerativeAI, type Content, type EnhancedGenerateContentResponse, type Part } from '@google/generative-ai';
+import Anthropic from '@anthropic-ai/sdk';
 import type { ButtonRows } from '@/lib/telegram/api';
 import { assistantTimezone, toZoned } from './datetime';
 import { loadContext } from './context';
-import { buildSystemPrompt } from './prompt';
-import { runTool, stripAliases, TOOL_DECLARATIONS, type ToolEnv } from './tools';
+import { buildPromptParts } from './prompt';
+import { runTool, stripAliases, TOOLS, WRITE_TOOLS, type ToolEnv } from './tools';
 import type { AssistantSession, SessionTurn } from './store';
 
 const MAX_STEPS = 6;
+const MAX_TOKENS = 8000;
 const TIMEOUT_MS = 25_000;
-// 3.1 flash-lite je brz i već radi u voice-extract-task; 2.5 flash je rezerva.
-const FALLBACK_MODEL = 'gemini-2.5-flash';
 
-function primaryModel(): string {
-    return process.env.ASSISTANT_MODEL?.trim() || 'gemini-3.1-flash-lite';
+function model(): string {
+    return process.env.ASSISTANT_MODEL?.trim() || 'claude-haiku-5-5';
 }
 
 export interface AssistantTurnInput {
@@ -49,7 +55,7 @@ export interface AssistantTurnOutput {
     degraded?: boolean;
 }
 
-/** Telegram šaljemo kao običan tekst — model ponekad ipak ubaci markdown. */
+/** Telegram šaljemo kao običan tekst — model ponekad ipak ubaci markdown ili oznake. */
 export function plainText(s: string): string {
     return stripAliases(s)
         .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -66,19 +72,18 @@ function userMessage(input: AssistantTurnInput, tz: string): string {
     return `[Proslijeđeno od ${input.forward.from}, ${Number(d.date.slice(8, 10))}.${Number(d.date.slice(5, 7))}. ${d.time}]\n${input.text}`;
 }
 
-function toContents(history: SessionTurn[]): Content[] {
-    const out: Content[] = history.map(t => ({ role: t.role, parts: [{ text: t.text }] }));
-    while (out.length && out[0].role !== 'user') out.shift(); // Gemini traži da istorija počne korisnikom
+function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
+    const out: Anthropic.MessageParam[] = history.map(t => ({ role: t.role === 'model' ? 'assistant' : 'user', content: t.text }));
+    while (out.length && out[0].role !== 'user') out.shift(); // razgovor mora početi korisnikom
     return out;
 }
 
-function safeText(res: EnhancedGenerateContentResponse): string {
-    try { return res.text(); } catch { return ''; }
-}
-
-function isModelMissing(e: unknown): boolean {
-    const msg = String((e as Error)?.message || e);
-    return /\b404\b|not found|is not supported|unknown model/i.test(msg);
+function textOf(res: Anthropic.Message): string {
+    return res.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map(b => b.text)
+        .join('\n')
+        .trim();
 }
 
 export async function runAssistant(input: AssistantTurnInput): Promise<AssistantTurnOutput> {
@@ -100,13 +105,13 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         },
     });
 
-    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-        const reply = '📥 Sačuvao sam poruku u dnevnik, ali AI nije podešen (nedostaje Gemini ključ), pa je nisam razvrstao.';
+        const reply = '📥 Sačuvao sam poruku u dnevnik, ali AI nije podešen (nedostaje ANTHROPIC_API_KEY), pa je nisam razvrstao.';
         return finish(reply, [], null, reply, { degraded: true });
     }
 
-    const ctx = await loadContext(input.orgId, input.uid);
+    const ctx = await loadContext(input.orgId, input.uid, now);
     // Vrijeme se potvrđuje samo prema OVOJ poruci — osim kad je ovo odgovor na
     // pitanje; tad i prema poruci koja je pitanje izazvala („napomeni me sutra…"
     // → „Ameru"). Starije poruke bi podmetnule pogrešan dan.
@@ -126,49 +131,63 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         searchHits: [],
         created: { taskIds: [], memoryIds: [] },
         changes: [],
+        summaries: [],
     };
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const system = buildSystemPrompt(ctx, now, tz);
-    const startChat = (name: string) => genAI.getGenerativeModel(
-        {
-            model: name,
-            systemInstruction: system,
-            tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
-            // 2.5 bez „razmišljanja": odgovor za ~1 s umjesto ~5 s, a alati drže tačnost.
-            generationConfig: { temperature: 0.2, ...(name.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}) } as any,
-        },
-        { timeout: TIMEOUT_MS },
-    ).startChat({ history: toContents(history) });
+    const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 1 });
+    const prompt = buildPromptParts(ctx, now, tz);
+    const system: Anthropic.TextBlockParam[] = [
+        // Tačka keša na kraju stabilnog dijela: alati + pravila + imena se čitaju iz keša.
+        { type: 'text', text: prompt.stable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: prompt.volatile },
+    ];
+    const messages: Anthropic.MessageParam[] = [...toMessages(history), { role: 'user', content: message }];
 
     let reply = '';
     try {
-        let chat = startChat(primaryModel());
-        let res: EnhancedGenerateContentResponse;
-        try {
-            res = (await chat.sendMessage(message)).response;
-        } catch (e) {
-            if (!isModelMissing(e) || primaryModel() === FALLBACK_MODEL) throw e;
-            console.warn(`[assistant] ${primaryModel()} nedostupan, prelazim na ${FALLBACK_MODEL}`);
-            chat = startChat(FALLBACK_MODEL);
-            res = (await chat.sendMessage(message)).response;
-        }
-
         for (let step = 0; step < MAX_STEPS; step++) {
-            const calls = res.functionCalls() || [];
-            if (!calls.length) break;
-            const parts: Part[] = [];
+            const res = await client.messages.create({
+                model: model(),
+                max_tokens: MAX_TOKENS,
+                system,
+                tools: TOOLS,
+                messages,
+                // Automatski keš za rastući rep (razgovor + rezultati alata).
+                cache_control: { type: 'ephemeral' },
+                output_config: { effort: 'low' },
+            });
+            const u = res.usage;
+            console.log(`[assistant] korak ${step + 1}: ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
+
+            if (res.stop_reason === 'refusal') {
+                reply = 'Ovu poruku ne mogu obraditi. Probaj je reći drugačije.';
+                break;
+            }
+            const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+            if (!uses.length) {
+                reply = plainText(textOf(res));
+                break;
+            }
+
+            messages.push({ role: 'assistant', content: res.content });
+            const results: Anthropic.ToolResultBlockParam[] = [];
+            let allOk = true;
             // Redom, ne paralelno: drugi alat može zavisiti od prvog (kreiraj → izmijeni).
-            for (const call of calls) {
-                const out = await runTool(env, call.name, (call.args || {}) as Record<string, unknown>);
-                parts.push({ functionResponse: { name: call.name, response: out } });
+            for (const use of uses) {
+                const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
+                if (out.ok === false) allOk = false;
+                results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), ...(out.ok === false ? { is_error: true } : {}) });
             }
             if (env.question) break;
-            res = (await chat.sendMessage(parts)).response;
+            // Samo upisi, svi uspjeli → potvrdu složi sistem, bez drugog poziva modela.
+            if (allOk && uses.every(x => WRITE_TOOLS.has(x.name)) && env.summaries.length) {
+                reply = env.summaries.join('\n\n');
+                break;
+            }
+            messages.push({ role: 'user', content: results });
         }
-        reply = env.question ? '' : plainText(safeText(res));
     } catch (e) {
-        console.error('[assistant] model pao:', e);
+        console.error('[assistant] model pao:', e instanceof Anthropic.APIError ? `${e.status} ${e.message}` : e);
         if (!env.changes.length && !env.question) {
             const msg = '📥 Sačuvao sam poruku u dnevnik, ali AI se trenutno ne javlja. Pokušaj ponovo za minut.';
             return finish(msg, [], null, msg, { degraded: true });
@@ -183,7 +202,11 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         return finish(question, buttons, pending, modelTurn, { created: env.created });
     }
 
-    if (!reply) reply = env.changes.length ? `✅ Sačuvano: ${env.changes.join(', ')}.` : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
+    if (!reply) {
+        reply = env.summaries.length ? env.summaries.join('\n\n')
+            : env.changes.length ? `✅ Sačuvano: ${env.changes.join(', ')}.`
+                : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
+    }
     const buttons: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
     return finish(reply, buttons, null, reply, { created: env.created });
 }
