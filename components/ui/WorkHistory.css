@@ -1,0 +1,179 @@
+/* ════════════════════════════════════════════════════════════════════
+   ISTORIJA RADA — jedna kolona, tabela s poravnatim kolonama,
+   jedna oznaka po redu. Skala: 12/13/14/15, težine 400/500/600.
+   ════════════════════════════════════════════════════════════════════ */
+
+.wh { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.wh-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+.wh-seg {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 3px;
+}
+.wh-seg button {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+.wh-seg button:hover { color: var(--text-primary); }
+.wh-seg button.active { background: var(--background); color: var(--text-primary); box-shadow: 0 1px 2px var(--shadow-md); }
+
+.wh-select {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.wh-summary {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.wh-summary strong { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Po procesima: tabela ─────────────────────────────────────────── */
+.wh-table {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    overflow: hidden;
+}
+.wh-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.2fr) minmax(0, 1.8fr) 64px 120px;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    font-size: 14px;
+    color: var(--text-primary);
+    border-top: 1px solid var(--border-light);
+}
+.wh-row:first-child { border-top: none; }
+.wh-head {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    padding-top: 8px;
+    padding-bottom: 8px;
+    background: var(--background);
+}
+.wh-c-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wh-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.wh-head .wh-c-name { padding-left: 22px; }
+.wh-frac { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.wh-c-when, .wh-c-num { font-variant-numeric: tabular-nums; color: var(--text-secondary); white-space: nowrap; }
+.wh-c-num { text-align: right; }
+.wh-c-who { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wh-c-basis { font-size: 13px; color: var(--text-secondary); }
+.wh-c-basis.logged { color: var(--text-primary); }
+.wh-c-basis.assumed, .wh-c-basis.estimated { font-style: italic; color: var(--text-tertiary); }
+.wh-row.waiting .wh-name { color: var(--text-secondary); font-weight: 400; }
+.wh-row.assumed .wh-name { color: var(--text-secondary); }
+
+/* Stanje: pun krug = završeno, polovina = u toku, prsten = čeka; pretpostavka = isprekidano. */
+.wh-mark {
+    width: 12px; height: 12px; border-radius: 50%;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border: 2px solid var(--text-tertiary);
+}
+.wh-mark.done { background: var(--success); border-color: var(--success); }
+.wh-mark.active { border-color: var(--accent); background: linear-gradient(90deg, var(--accent) 50%, transparent 50%); }
+.assumed .wh-mark.done { background: transparent; border-style: dashed; }
+.wh-mark.none { border: none; height: 2px; border-radius: 1px; background: var(--text-tertiary); }
+
+/* ── Po danima ────────────────────────────────────────────────────── */
+.wh-days { display: flex; flex-direction: column; gap: 10px; }
+.wh-day {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    padding: 4px 14px 8px;
+}
+.wh-day-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+.wh-day-date { font-size: 15px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.wh-day-meta { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+.wh-entry {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr) 48px 88px;
+    align-items: baseline;
+    gap: 12px;
+    padding: 8px 0;
+    font-size: 14px;
+    border-top: 1px solid var(--border-light);
+}
+.wh-day-head + .wh-entry { border-top: none; }
+.wh-e-who { font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wh-e-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wh-e-proc { color: var(--text-primary); }
+.wh-e-prod { font-size: 13px; color: var(--text-tertiary); }
+.wh-e-src-inline, .wh-e-prod.src-only { display: none; }
+.wh-e-num { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.wh-e-src { font-size: 13px; color: var(--text-secondary); text-align: right; }
+.wh-e-src.auto { font-style: italic; color: var(--text-tertiary); }
+.wh-entry.auto .wh-e-proc { color: var(--text-secondary); }
+
+.wh-done {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border-light);
+}
+.wh-day-head + .wh-done { border-top: none; }
+.wh-done.assumed { font-style: italic; color: var(--text-tertiary); }
+
+.wh-empty { margin: 0; padding: 24px 0; text-align: center; font-size: 14px; color: var(--text-tertiary); }
+.wh-note { margin: 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
+
+/* ── Uski ekran: red tabele postaje dva reda ─────────────────────── */
+@media (max-width: 640px) {
+    .wh-head { display: none; }
+    .wh-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "name basis" "meta meta";
+        row-gap: 4px;
+        padding: 10px 12px;
+    }
+    .wh-c-name { grid-area: name; }
+    .wh-c-basis { grid-area: basis; text-align: right; }
+    .wh-c-when, .wh-c-who, .wh-c-num { grid-row: 2; font-size: 13px; }
+    .wh-c-when { grid-column: 1 / -1; padding-left: 22px; }
+    .wh-c-who, .wh-c-num { display: none; }
+    .wh-row .wh-c-when::after { content: attr(data-meta); }
+    .wh-c-when.empty { display: none; }
+    .wh-row:has(.wh-c-when.empty) { grid-template-areas: "name basis"; }
+
+    .wh-day { padding: 4px 12px 8px; }
+    .wh-entry { grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; }
+
+    .wh-e-src { display: none; }
+    .wh-e-src-inline { display: inline; }
+    .wh-e-prod.src-only { display: block; }
+    .wh-entry.auto .wh-e-src-inline { font-style: italic; }
+}
