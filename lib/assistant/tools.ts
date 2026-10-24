@@ -27,7 +27,7 @@ import {
     listOrdersWithItems, receiveOrderItems, revertOrderToDraft, sendOrder,
     loadProductMaterials, loadProjectMaterials, loadProjectProducts, type DraftLine, type OrderableRow, type WriteOp,
 } from '@/lib/server/orderWrites';
-import { bookWorkDiary, workLogReport, type DiaryAbsenceInput, type DiaryLineInput } from '@/lib/server/workDiary';
+import { bookWorkDiary, workLogReport, type DiaryAbsenceInput, type DiaryLineInput, type DiaryProcessNote } from '@/lib/server/workDiary';
 import { coverage } from '@/lib/workDiary';
 import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
@@ -1073,6 +1073,8 @@ function dayLabel(f: number): string {
     return `${q(f)} dana`;
 }
 
+const noteWhere = (n: DiaryProcessNote) => `${n.workOrderName}${n.products.length ? ` (${n.products.join(', ')})` : ''}`;
+
 async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const today = toZoned(env.now, env.tz).date;
     const date = isIsoDate(a.date) ? a.date : today;
@@ -1143,6 +1145,8 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         `🗓 Rad ${dayName}:`,
         ...result.rows.map(r => `• ${r.worker} — ${dayLabel(r.dayFraction)} · ${r.process ? `${r.process}${r.done ? ' ✔' : ''} · ` : ''}${r.workOrderName}${r.products.length ? ` (${r.products.join(', ')})` : ''}${r.graphAdded ? ' · novo u grafu' : ''}`),
         ...result.absences.map(x => `• ${x.worker} — ${x.status}`),
+        ...result.planned.map(n => `📋 Plan ${n.source === 'rules' ? 'iz pravila materijala' : 's kartice proizvoda'} · ${noteWhere(n)}: ${n.processes.join(' → ')}`),
+        ...result.assumedDone.map(n => `☑️ Podrazumijeva se završeno · ${noteWhere(n)}: ${n.processes.join(', ')}`),
         ...(result.newCatalog.length ? [`➕ U katalog procesa: ${result.newCatalog.join(', ')}`] : []),
     ].join('\n'));
     return { ok: true, rows: result.rows.length, absences: result.absences.length };

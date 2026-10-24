@@ -1,5 +1,9 @@
 import { splitDnevnicaByOrder, splitWorkerDay } from '../laborSplit';
-import { coverage, ensureGraphNode, markItemProcess, matchProcess, matchTarget, planWorkerDay, type DiaryTarget } from '../workDiary';
+import {
+    applyPlanToItem, completeUpstream, coverage, ensureGraphNode, graphFromStages, itemHasPlan, markItemProcess,
+    matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
+} from '../workDiary';
+import { buildGraphFromRules } from '../productProcesses';
 
 describe('splitWorkerDay — podjela dana s izričitim udjelom', () => {
     it('bez težina je identično dvonivovskoj podjeli', () => {
@@ -153,5 +157,73 @@ describe('graf naloga i čekiranje', () => {
         expect(done).toMatchObject({ change: 'completed', processes: [{ Status: 'Završeno', Completed_At: 't2', Started_At: 't1' }] });
         expect(markItemProcess(done.processes, 'Kantiranje', false, w, 't3').change).toBe('none');
         expect(markItemProcess([], 'Lakiranje', true, w, 't4')).toMatchObject({ change: 'added', processes: [{ Status: 'Završeno' }] });
+    });
+});
+
+describe('plan iz pravila materijala i pretpostavljeno završeni koraci', () => {
+    let n = 0;
+    const id = () => `x${++n}`;
+    // Furnir + MDF = jedna grana, iveral paralelno; obje se spajaju na sklapanju.
+    const rules = [
+        { Match_Kind: 'material_type_combo' as const, Match_Value: '', Match_Types: ['furnir', 'mdf'],
+            Processes: ['Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje', 'Brušenje', 'Lakiranje', 'Sklapanje'] },
+        { Match_Kind: 'material_type' as const, Match_Value: 'iveral', Processes: ['Krojenje Iverala', 'Kantiranje', 'Sklapanje'] },
+    ];
+    const materials = [{ Material_Name: 'MDF 18mm' }, { Material_Name: 'Furnir hrast' }, { Material_Name: 'Iveral bijeli 18' }];
+    const plan = buildGraphFromRules(materials, rules).graph;
+
+    it('stavka s procesima ili stvarnim čvorom ima plan; „Rad" se ne broji', () => {
+        expect(itemHasPlan(undefined, { ID: 'a', Processes: [{ Process_Name: 'X', Status: 'Na čekanju' }] })).toBe(true);
+        expect(itemHasPlan({ nodes: [{ id: 'r', name: 'Rad', itemIds: [] }], edges: [] }, { ID: 'a' })).toBe(false);
+        expect(itemHasPlan({ nodes: [{ id: 'k', name: 'Kantiranje', itemIds: ['b'] }], edges: [] }, { ID: 'a' })).toBe(false);
+        expect(itemHasPlan({ nodes: [{ id: 'k', name: 'Kantiranje', itemIds: [] }], edges: [] }, { ID: 'a' })).toBe(true);
+    });
+
+    it('faze → graf: svaki iz faze vodi u svaki iz sljedeće', () => {
+        const g = graphFromStages([['A', 'B'], ['C']]);
+        expect(g.nodes.map(x => x.name)).toEqual(['A', 'B', 'C']);
+        expect(g.edges.map(e => `${e.source}>${e.target}`)).toEqual(['s0-0>s1-0', 's0-1>s1-0']);
+    });
+
+    it('plan se ulije u graf naloga: postojeći čvor se proširi, procesi stavke „Na čekanju" redom toka', () => {
+        const wo = { nodes: [{ id: 'kant', name: 'Kantiranje', itemIds: ['drugi'] }, { id: 'rad', name: 'Rad', itemIds: [] }], edges: [] };
+        const r = applyPlanToItem(wo, undefined, 'k1', plan, id);
+        expect(r.graph.nodes.find(x => x.id === 'kant')!.itemIds).toEqual(['drugi', 'k1']);
+        expect(r.graph.nodes.filter(x => x.name === 'Kantiranje')).toHaveLength(1);
+        expect(r.processes.every(p => p.Status === 'Na čekanju')).toBe(true);
+        expect(r.added.indexOf('Krojenje MDF-a')).toBeLessThan(r.added.indexOf('Brušenje'));
+        expect(r.added.indexOf('Kantiranje')).toBeLessThan(r.added.indexOf('Sklapanje'));
+        expect(r.added).not.toContain('Rad');
+        expect(r.added).toHaveLength(9);
+        expect(wo.nodes[0].itemIds).toEqual(['drugi']); // ulaz se ne mijenja
+    });
+
+    it('brušenje upisano → raniji koraci grane završeni (pretpostavka), paralelna grana i kasniji ne', () => {
+        const seeded = applyPlanToItem(undefined, undefined, 'k1', plan, id);
+        const brus = seeded.graph.nodes.find(x => x.name === 'Brušenje')!;
+        const marked = markItemProcess(seeded.processes, 'Brušenje', false, { id: 'w', name: 'Amer' }, 't1');
+        const r = completeUpstream(seeded.graph, 'k1', brus.id, marked.processes, 't1');
+        expect(r.completed).toEqual(['Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje']);
+        const status = Object.fromEntries(r.processes.map(p => [p.Process_Name, p.Status]));
+        expect(status).toMatchObject({ 'Krojenje MDF-a': 'Završeno', Srezivanje: 'Završeno', Brušenje: 'U toku', Lakiranje: 'Na čekanju', 'Krojenje Iverala': 'Na čekanju', Kantiranje: 'Na čekanju' });
+        expect(r.processes.find(p => p.Process_Name === 'Furniranje')).toMatchObject({ Assumed_Done: true, Completed_At: 't1' });
+        expect(r.processes.find(p => p.Process_Name === 'Brušenje')!.Assumed_Done).toBeUndefined();
+    });
+
+    it('sklapanje upisano → obje grane prije njega završene; već završen korak se ne dira', () => {
+        const seeded = applyPlanToItem(undefined, [{ Process_Name: 'Krojenje Iverala', Status: 'Završeno', Completed_At: 'ranije' }], 'k1', plan, id);
+        const skl = seeded.graph.nodes.find(x => x.name === 'Sklapanje')!;
+        const r = completeUpstream(seeded.graph, 'k1', skl.id, seeded.processes, 't2');
+        expect(r.completed).not.toContain('Krojenje Iverala');
+        expect(r.completed).toEqual(expect.arrayContaining(['Kantiranje', 'Lakiranje', 'Krojenje MDF-a']));
+        expect(r.processes.find(p => p.Process_Name === 'Krojenje Iverala')).toEqual({ Process_Name: 'Krojenje Iverala', Status: 'Završeno', Completed_At: 'ranije' });
+    });
+
+    it('čvorovi drugih proizvoda se ne završavaju', () => {
+        const g = {
+            nodes: [{ id: 'a', name: 'Krojenje MDF-a', itemIds: ['drugi'] }, { id: 'b', name: 'Brušenje', itemIds: ['k1', 'drugi'] }],
+            edges: [{ id: 'e', source: 'a', target: 'b' }],
+        };
+        expect(completeUpstream(g, 'k1', 'b', [], 't').completed).toEqual([]);
     });
 });

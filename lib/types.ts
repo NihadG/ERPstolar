@@ -877,6 +877,9 @@ export interface ItemProcessStatus {
         Worker_Name: string;
     }[];
     Notes?: string;   // napomena po procesu (gdje je stalo, šta treba, itd.)
+    // Završen PRETPOSTAVKOM: upisan je kasniji proces u grafu, a ovaj niko nije
+    // izričito javio (dnevni upis rada). Prikaz/izvještaji ga mogu razlikovati.
+    Assumed_Done?: boolean;
 }
 
 // Sub-task za split proizvoda - omogućava podjelu količine na više dijelova

@@ -196,23 +196,24 @@ function itemNodes(graph: ProcessGraph, itemId: string): ProcessNode[] {
  * Proces u grafu naloga za stavku: postojeći čvor (i proširen na stavku ako
  * je bio za druge proizvode) ili nov čvor iza zadnjeg procesa te stavke.
  * Generički čvor „Rad" (nalozi Zadaci) se ne koristi kao prethodnik — stvarni
- * procesi ga zamjenjuju u prikazu toka.
+ * procesi ga zamjenjuju u prikazu toka. `covered` = proces je već bio u planu
+ * stavke (samo tada se raniji koraci smiju pretpostaviti završenim).
  */
-export function ensureGraphNode(graph: ProcessGraph | undefined, itemId: string, processName: string, newId: () => string): { graph: ProcessGraph; nodeId: string; added: boolean } {
+export function ensureGraphNode(graph: ProcessGraph | undefined, itemId: string, processName: string, newId: () => string): { graph: ProcessGraph; nodeId: string; added: boolean; covered: boolean } {
     const g: ProcessGraph = graph ? { ...graph, nodes: graph.nodes.map(n => ({ ...n })), edges: [...graph.edges] } : { nodes: [], edges: [] };
     const covering = g.nodes.find(n => nodeMatchesProcess(n, processName) && (!(n.itemIds || []).length || n.itemIds.includes(itemId)));
-    if (covering) return { graph: g, nodeId: covering.id, added: false };
+    if (covering) return { graph: g, nodeId: covering.id, added: false, covered: true };
     const sameName = g.nodes.find(n => nodeMatchesProcess(n, processName));
     if (sameName) {
         sameName.itemIds = Array.from(new Set([...(sameName.itemIds || []), itemId]));
-        return { graph: g, nodeId: sameName.id, added: false };
+        return { graph: g, nodeId: sameName.id, added: false, covered: false };
     }
     const chain = itemNodes(g, itemId).filter(n => foldText(n.name) !== 'rad');
     const node: ProcessNode = { id: newId(), name: processName, itemIds: [itemId] };
     g.nodes.push(node);
     const last = chain[chain.length - 1];
     if (last) g.edges.push({ id: newId(), source: last.id, target: node.id });
-    return { graph: g, nodeId: node.id, added: true };
+    return { graph: g, nodeId: node.id, added: true, covered: false };
 }
 
 /** Čekiranje procesa na stavci: postojeći → u toku / završen; nov se dodaje. */
@@ -253,3 +254,118 @@ export function markItemProcess(
     return { processes: list, change: 'none' };
 }
 
+
+// ─── Plan za proizvod bez procesa ─────────────────────────────────────
+
+const coversItem = (n: ProcessNode, itemId: string) => !(n.itemIds || []).length || n.itemIds.includes(itemId);
+
+/** Stavka već ima plan: procese ili stvaran (ne „Rad") čvor u grafu naloga koji je pokriva. */
+export function itemHasPlan(graph: ProcessGraph | undefined, item: { ID: string; Processes?: ItemProcessStatus[] }): boolean {
+    if ((item.Processes || []).length) return true;
+    return (graph?.nodes || []).some(n => foldText(n.name) !== 'rad' && coversItem(n, item.ID));
+}
+
+/** Faze plana proizvoda kao graf: svaki proces faze vodi u svaki proces sljedeće. */
+export function graphFromStages(stages: string[][]): ProcessGraph {
+    const nodes: ProcessNode[] = [];
+    const edges: ProcessGraph['edges'] = [];
+    let prev: ProcessNode[] = [];
+    stages.forEach((stage, s) => {
+        const cur = stage.filter(Boolean).map((name, i) => ({ id: `s${s}-${i}`, name, itemIds: [] as string[] }));
+        if (!cur.length) return;
+        nodes.push(...cur);
+        prev.forEach(a => cur.forEach(b => edges.push({ id: `${a.id}>${b.id}`, source: a.id, target: b.id })));
+        prev = cur;
+    });
+    return { nodes, edges };
+}
+
+/**
+ * Plan proizvoda (iz pravila materijala ili s kartice proizvoda) se ulije u graf
+ * naloga za jednu stavku: isti proces = postojeći čvor proširen na stavku, ostali
+ * su novi; veze se preslikaju bez duplikata i bez kruga. Procesi stavke dobiju
+ * cijeli plan kao „Na čekanju", redom toka.
+ */
+export function applyPlanToItem(
+    graph: ProcessGraph | undefined,
+    processes: ItemProcessStatus[] | undefined,
+    itemId: string,
+    plan: ProcessGraph,
+    newId: () => string,
+): { graph: ProcessGraph; processes: ItemProcessStatus[]; added: string[] } {
+    const g: ProcessGraph = graph ? { ...graph, nodes: graph.nodes.map(n => ({ ...n })), edges: [...graph.edges] } : { nodes: [], edges: [] };
+    const idFor = new Map<string, string>();                  // čvor plana → čvor naloga
+    for (const p of plan.nodes) {
+        if (!p.name?.trim() || foldText(p.name) === 'rad') continue;
+        const existing = g.nodes.find(n => foldText(n.name) !== 'rad' && nodeMatchesProcess(n, p.name));
+        if (existing) {
+            if ((existing.itemIds || []).length && !existing.itemIds.includes(itemId)) existing.itemIds = [...existing.itemIds, itemId];
+            idFor.set(p.id, existing.id);
+        } else {
+            const node: ProcessNode = { id: newId(), name: p.name.trim(), itemIds: [itemId] };
+            g.nodes.push(node);
+            idFor.set(p.id, node.id);
+        }
+    }
+    const reaches = (from: string, to: string): boolean => {
+        const seen = new Set<string>();
+        const stack = [from];
+        while (stack.length) {
+            const cur = stack.pop()!;
+            if (cur === to) return true;
+            if (seen.has(cur)) continue;
+            seen.add(cur);
+            g.edges.filter(e => e.source === cur).forEach(e => stack.push(e.target));
+        }
+        return false;
+    };
+    for (const e of plan.edges) {
+        const a = idFor.get(e.source), b = idFor.get(e.target);
+        if (!a || !b || a === b) continue;
+        if (g.edges.some(x => x.source === a && x.target === b) || reaches(b, a)) continue;
+        g.edges.push({ id: newId(), source: a, target: b });
+    }
+    const list = (processes || []).map(p => ({ ...p }));
+    const added: string[] = [];
+    const planIds = new Set(idFor.values());
+    for (const n of itemNodes(g, itemId)) {
+        if (!planIds.has(n.id) || list.some(p => nodeMatchesProcess(n, p.Process_Name))) continue;
+        list.push({ Process_Name: n.name, Status: 'Na čekanju' });
+        added.push(n.name);
+    }
+    return { graph: g, processes: list, added };
+}
+
+/**
+ * Upisan proces znači da su raniji koraci iste stavke gotovi: svi PRETHODNICI
+ * čvora u grafu (ne paralelne grane) koji nisu završeni postaju „Završeno" s
+ * oznakom Assumed_Done. Dnevnica se na njih ne knjiži — samo status.
+ */
+export function completeUpstream(
+    graph: ProcessGraph,
+    itemId: string,
+    nodeId: string,
+    processes: ItemProcessStatus[] | undefined,
+    atIso: string,
+): { processes: ItemProcessStatus[]; completed: string[] } {
+    const mine = new Map(graph.nodes.filter(n => coversItem(n, itemId)).map(n => [n.id, n]));
+    const before = new Set<string>();
+    const stack = [nodeId];
+    while (stack.length) {
+        const cur = stack.pop()!;
+        graph.edges.forEach(e => {
+            if (e.target === cur && mine.has(e.source) && !before.has(e.source)) { before.add(e.source); stack.push(e.source); }
+        });
+    }
+    const list = (processes || []).map(p => ({ ...p }));
+    const completed: string[] = [];
+    for (const n of itemNodes(graph, itemId)) {
+        if (!before.has(n.id) || foldText(n.name) === 'rad') continue;
+        const existing = list.find(p => nodeMatchesProcess(n, p.Process_Name));
+        if (existing?.Status === 'Završeno') continue;
+        if (existing) Object.assign(existing, { Status: 'Završeno', Completed_At: atIso, Assumed_Done: true });
+        else list.push({ Process_Name: n.name, Status: 'Završeno', Completed_At: atIso, Assumed_Done: true });
+        completed.push(n.name);
+    }
+    return { processes: list, completed };
+}
