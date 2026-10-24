@@ -265,6 +265,7 @@ describe('failureReason', () => {
     it('prevodi česte greške Anthropica', () => {
         expect(failureReason(apiError(401, 'invalid x-api-key'))).toMatch(/ključ nije ispravan/);
         expect(failureReason(apiError(400, 'Your credit balance is too low to access the Anthropic API.'))).toMatch(/nema kredita/);
+        expect(failureReason(apiError(400, 'This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header'))).toMatch(/ANTHROPIC_WORKSPACE_ID/);
         expect(failureReason(apiError(404, 'model not found'))).toMatch(/claude-haiku-5-5 nije dostupan/);
         expect(failureReason(apiError(529, 'Overloaded'))).toMatch(/preopterećen/);
         expect(failureReason(apiError(400, 'tools.0: bad schema'))).toBe('400: tools.0: bad schema');
