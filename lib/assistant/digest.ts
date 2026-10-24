@@ -12,6 +12,15 @@ import type { MemoryItem, Task } from '@/lib/types';
 
 const OPEN = new Set<Task['Status']>(['pending', 'in_progress']);
 
+/** Due_Date je nekad „2026-08-10", a nekad puni ISO („2026-08-10T00:00:00.000Z"). */
+function dueDay(t: Task): string {
+    return (t.Due_Date || '').slice(0, 10);
+}
+
+function shortDay(day: string): string {
+    return `${Number(day.slice(8, 10))}.${Number(day.slice(5, 7))}.${day.slice(0, 4)}.`;
+}
+
 function taskLabel(t: Task, tz: string, now: Date): string {
     const bits = [t.Title];
     if (t.Reminder_At) bits.push(formatReminder(t.Reminder_At, tz, now));
@@ -24,8 +33,8 @@ export async function buildTodayDigest(orgId: string, now: Date, tz: string): Pr
     const today = toZoned(now, tz).date;
     const open = (await getAllTasks(orgId)).filter(t => OPEN.has(t.Status));
 
-    const todays = open.filter(t => (t.Reminder_At && toZoned(t.Reminder_At, tz).date === today) || t.Due_Date === today);
-    const late = open.filter(t => !todays.includes(t) && t.Due_Date && t.Due_Date < today);
+    const todays = open.filter(t => (t.Reminder_At && toZoned(t.Reminder_At, tz).date === today) || dueDay(t) === today);
+    const late = open.filter(t => !todays.includes(t) && dueDay(t) && dueDay(t) < today);
     if (!todays.length && !late.length) return null;
 
     const byTime = (a: Task, b: Task) => (a.Reminder_At || a.Due_Date || '').localeCompare(b.Reminder_At || b.Due_Date || '');
@@ -37,7 +46,7 @@ export async function buildTodayDigest(orgId: string, now: Date, tz: string): Pr
     if (late.length) {
         if (lines.length) lines.push('');
         lines.push(`⚠️ Kasni (${late.length}):`);
-        late.sort(byTime).slice(0, 15).forEach(t => lines.push(`• ${t.Title} — rok ${t.Due_Date}`));
+        late.sort(byTime).slice(0, 15).forEach(t => lines.push(`• ${t.Title} — rok ${shortDay(dueDay(t))}`));
         if (late.length > 15) lines.push(`… i još ${late.length - 15}`);
     }
     return lines.join('\n');

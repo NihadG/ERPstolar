@@ -78,6 +78,22 @@ function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
     return out;
 }
 
+/** Kratak razlog greške za korisnika — bez logova na Vercelu inače se ne vidi šta je puklo. */
+export function failureReason(e: unknown): string {
+    if (e instanceof Anthropic.APIError) {
+        const msg = String(e.message || '');
+        if (e.status === 401) return 'Anthropic ključ nije ispravan (401) — provjeri ANTHROPIC_API_KEY na Vercelu';
+        if (e.status === 403) return 'ključ nema pristup (403)';
+        if (/credit balance/i.test(msg)) return 'nema kredita na Anthropic nalogu (console.anthropic.com → Billing)';
+        if (e.status === 404) return `model ${model()} nije dostupan (404)`;
+        if (e.status === 429) return 'previše zahtjeva ili dostignut limit potrošnje (429)';
+        if (e.status === 529 || (e.status ?? 0) >= 500) return `Anthropic je trenutno preopterećen (${e.status})`;
+        if (e.status) return `${e.status}: ${msg.slice(0, 160)}`;
+        return 'nema veze s Anthropicom (mreža ili istek vremena)';
+    }
+    return e instanceof Error ? e.message.slice(0, 160) : 'nepoznata greška';
+}
+
 function textOf(res: Anthropic.Message): string {
     return res.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -105,7 +121,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         },
     });
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    // trim: zalijepljen ključ s novim redom ruši zaglavlje zahtjeva.
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) {
         const reply = '📥 Sačuvao sam poruku u dnevnik, ali AI nije podešen (nedostaje ANTHROPIC_API_KEY), pa je nisam razvrstao.';
         return finish(reply, [], null, reply, { degraded: true });
@@ -189,7 +206,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     } catch (e) {
         console.error('[assistant] model pao:', e instanceof Anthropic.APIError ? `${e.status} ${e.message}` : e);
         if (!env.changes.length && !env.question) {
-            const msg = '📥 Sačuvao sam poruku u dnevnik, ali AI se trenutno ne javlja. Pokušaj ponovo za minut.';
+            const msg = `📥 Sačuvao sam poruku u dnevnik, ali AI se trenutno ne javlja.\nRazlog: ${failureReason(e)}.`;
             return finish(msg, [], null, msg, { degraded: true });
         }
     }
