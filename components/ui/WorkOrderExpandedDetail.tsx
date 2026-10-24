@@ -21,6 +21,7 @@ import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
 import OrderProcessBoard from './OrderProcessBoard';
 import WorkOrderTasksPanel from './WorkOrderTasksPanel';
+import WorkHistory from './WorkHistory';
 import { tasksForWorkOrder, taskProgress, firstBookingDate, lastBookingDate } from '@/lib/workOrderTasks';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import './WorkOrderExpandedDetail.css';
@@ -68,7 +69,9 @@ export default function WorkOrderExpandedDetail({
     const [processOpen, setProcessOpen] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
-    const [tab, setTab] = useState<'tok' | 'rad' | 'zadaci'>('tok');
+    const [tab, setTab] = useState<'tok' | 'rad' | 'istorija' | 'zadaci'>('tok');
+    // Proizvod s kojim se Istorija otvara („Istorija rada →" na proizvodu); '' = cijeli nalog.
+    const [historyItemId, setHistoryItemId] = useState('');
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
     const [productsOpen, setProductsOpen] = useState(true);   // "Proizvodi" — glavni sadržaj, otvoren po defaultu
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
@@ -631,6 +634,9 @@ export default function WorkOrderExpandedDetail({
                 <button className={tab === 'rad' ? 'active' : ''} onClick={() => setTab('rad')}>
                     <NotebookPen size={14} /> Knjiga rada {bookedDays > 0 && <span className="wo-seg-count">{bookedDays}</span>}
                 </button>
+                <button className={tab === 'istorija' ? 'active' : ''} onClick={() => { setHistoryItemId(''); setTab('istorija'); }}>
+                    <History size={14} /> Istorija
+                </button>
                 <button className={tab === 'zadaci' ? 'active' : ''} onClick={() => setTab('zadaci')}
                     title={taskStats.overdue > 0 ? `${taskStats.overdue} zadataka kasni` : undefined}>
                     <ListTodo size={14} /> Zadaci
@@ -856,9 +862,14 @@ export default function WorkOrderExpandedDetail({
                                             </div>
                                         )}
 
-                                        <button className="wo-details" onClick={() => setTimelineItem(item)}>
-                                            Detalji proizvoda (cijena, materijal, rad) →
-                                        </button>
+                                        <div className="wo-details-row">
+                                            <button className="wo-details" onClick={() => setTimelineItem(item)}>
+                                                Detalji proizvoda (cijena, materijal, rad) →
+                                            </button>
+                                            <button className="wo-details" onClick={() => { setHistoryItemId(item.ID); setTab('istorija'); }}>
+                                                Istorija rada →
+                                            </button>
+                                        </div>
                                     </>
                                 )}
                             </div>
@@ -890,6 +901,17 @@ export default function WorkOrderExpandedDetail({
                         />
                     </div>
                 </div>
+            )}
+
+            {/* ═══ ISTORIJA: šta je rađeno i kada — po procesima ili po danima ═══ */}
+            {tab === 'istorija' && (
+                <WorkHistory
+                    key={historyItemId}
+                    items={localItems.length ? localItems : (workOrder.items || [])}
+                    graph={workOrder.Process_Graph}
+                    workLogs={liveLogs(workLogs)}
+                    initialItemId={historyItemId || undefined}
+                />
             )}
 
             {/* ═══ ZADACI: pregled i čekiranje bez odlaska u tab Zadaci ═══ */}

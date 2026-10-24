@@ -34,6 +34,8 @@ import { useData } from '@/context/DataContext';
 import WorkOrderTasksPanel from '@/components/ui/WorkOrderTasksPanel';
 import WorkLogPanel from '@/components/field/orders/WorkLogPanel';
 import OrderProcessBoard from '@/components/ui/OrderProcessBoard';
+import WorkHistory from '@/components/ui/WorkHistory';
+import { liveLogs } from '@/lib/projectFinance';
 import '@/components/field/Controller.css';
 import { useSwipeBack } from './useSwipe';
 import { useOverlayGuard } from './overlayGuard';
@@ -44,7 +46,7 @@ import {
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
-type Tab = 'tok' | 'zadaci' | 'rad' | 'stavke';
+type Tab = 'tok' | 'zadaci' | 'rad' | 'istorija' | 'stavke';
 
 interface Props {
     workOrder: WorkOrder;
@@ -240,6 +242,7 @@ export default function MobileWorkOrderDetail({
                         { id: 'tok', label: 'Tok' },
                         { id: 'zadaci', label: tProg.total > 0 ? `Zadaci ${tProg.done}/${tProg.total}` : 'Zadaci' },
                         { id: 'rad', label: 'Knjiga' },
+                        { id: 'istorija', label: 'Istorija' },
                         { id: 'stavke', label: `Stavke ${items.length}` },
                     ]}
                 />
@@ -291,6 +294,13 @@ export default function MobileWorkOrderDetail({
                             showToast={showToast}
                             onChanged={() => { reloadLogs(); onRefresh('workOrders', 'projects', 'workLogs'); }}
                         />
+                    </div>
+                )}
+
+                {/* ── ISTORIJA: šta je rađeno i kada (isti prikaz kao desktop) ── */}
+                {tab === 'istorija' && (
+                    <div className="mwd-panel">
+                        <WorkHistory items={items} graph={workOrder.Process_Graph} workLogs={liveLogs(workLogs)} />
                     </div>
                 )}
 
