@@ -53,7 +53,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 3. IZVJEŠTAJ RADNIKA (proslijeđena poruka „[Proslijeđeno od X, …]" ili zalijepljen tekst radnika) → uporedi s bilježnicom i zadacima: ono što je urađeno zatvori (update_memory resolved=true, update_task status=completed), novo stanje zapamti. U bilješci napiši ko je javio.
 4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
 5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala") → update_task / update_memory na stavci o kojoj se upravo pričalo.
-6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → find_material, pa create_order. Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
+6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
    Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak ide za zalihu. Bez količine = sav ostatak koji projekat još treba. Materijal bez projekta = artikal iz kataloga (K#), za zalihu.
    Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
 

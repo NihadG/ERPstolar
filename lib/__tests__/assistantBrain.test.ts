@@ -97,6 +97,7 @@ describe('asistent od poruke do baze', () => {
         const p = mockSent[0];
         expect(p.model).toBe('claude-haiku-5-5');
         expect(p.output_config).toEqual({ effort: 'low' });
+        expect(p.thinking).toEqual({ type: 'disabled' });
         expect(p.cache_control).toEqual({ type: 'ephemeral' });
         expect(p.system[0].cache_control).toEqual({ type: 'ephemeral' });
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
@@ -255,6 +256,22 @@ describe('asistent od poruke do baze', () => {
         process.env.ANTHROPIC_API_KEY = 'test';
     });
 
+    it('razgovor stariji od 3 sata ne ide modelu', async () => {
+        mockSent.length = 0;
+        mockScript.push({ text: 'ok' });
+        const old = new Date(NOW.getTime() - 5 * 3_600_000).toISOString();
+        const recent = new Date(NOW.getTime() - 20 * 60_000).toISOString();
+        await runAssistant({
+            orgId: 'org1', uid: 'u1', text: 'a sad?', now: NOW,
+            session: { history: [
+                { role: 'user', text: 'staro jutros', at: old }, { role: 'model', text: 'ok', at: old },
+                { role: 'user', text: 'malo prije', at: recent }, { role: 'model', text: 'ok', at: recent },
+            ], pending: null },
+        });
+        const texts = mockSent[0].messages.map((m: any) => m.content);
+        expect(texts).toEqual(['malo prije', 'ok', 'a sad?']);
+    });
+
     it('kad model padne, korisnik vidi razlog', async () => {
         const out = await say('nešto', []); // prazna skripta → mock baca grešku
         expect(out.degraded).toBe(true);
@@ -352,6 +369,33 @@ describe('narudžbe preko asistenta', () => {
         const order = docs('orders').find(o => o.Name === 'Zaliha')!;
         expect(orderItems(order.Order_ID)[0]).toMatchObject({ Quantity: 12, Product_Material_ID: '', Project_ID: '' });
         expect(orderItems(order.Order_ID)[0].Product_Material_Quantities).toBeUndefined();
+    });
+
+    it('narudžba nazivom: jedan poziv modela, bez find_material', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Naruči 4 baglame za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P, quantity: 4 }] } }] },
+        ]);
+        expect(mockSent).toHaveLength(1);
+        // Sve što projekat treba je već naručeno ili u nacrtu → 4 ide za zalihu.
+        expect(out.reply).toMatch(/• 4 kom Baglama ravna — .*\(0 za projekat \+ 4 za zalihu\)/);
+    });
+
+    it('naziv koji pokriva dva materijala → kandidati, model bira', async () => {
+        mockStore.set('product_materials/c', { ID: 'pm-c', Organization_ID: 'org1', Product_ID: 'pr-hod', Material_ID: 'mat-k', Material_Name: 'Baglama kutna', Quantity: 6, Unit: 'kom', Unit_Price: 3, Total_Price: 18, Status: 'Nije naručeno', Supplier: 'Häfele', Order_ID: '' });
+        const P = grb();
+        const before = docs('orders').length;
+        mockSent.length = 0;
+        await say('Naruči 2 baglame za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P, quantity: 2 }] } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: 'O1', quantity: 2 }] } }] },
+        ]);
+        const candidates = JSON.parse(mockSent[1].messages.at(-1).content[0].content).error as string;
+        expect(candidates).toMatch(/nije jednoznačno/);
+        expect(candidates).toMatch(/Baglama kutna/);
+        expect(candidates).toMatch(/Baglama ravna/);
+        expect(docs('orders').length).toBe(before + 1);
     });
 
     it('PDF narudžbe: pravi PDF s našim slovima', async () => {

@@ -26,7 +26,7 @@ import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
 import {
     addEntry, attachEntryResults, claimUpdate, consumeLinkCode, getLinkByTelegramId,
-    getSession, saveSession, undoTurn, type AssistantLink,
+    getSession, saveSession, undoTurn, type AssistantLink, type AssistantSession,
 } from './store';
 import type { Task } from '@/lib/types';
 
@@ -58,9 +58,9 @@ export async function handleTelegramUpdate(update: TgUpdate): Promise<void> {
         return;
     }
     // Telegram ponavlja webhook kad odgovor kasni — drugi put se ništa ne radi.
-    if (!(await claimUpdate(inc.updateId))) return;
-
-    const link = await getLinkByTelegramId(inc.from.id);
+    // Veza se čita usporedo: svaki krug do baze je vrijeme koje korisnik čeka.
+    const [claimed, link] = await Promise.all([claimUpdate(inc.updateId), getLinkByTelegramId(inc.from.id)]);
+    if (!claimed) return;
 
     if (inc.type === 'message' && inc.command?.name === 'start') {
         if (inc.command.arg) {
@@ -117,26 +117,30 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         await sendTyping(inc.chatId);
     }
 
-    const entryId = await addEntry({
-        Organization_ID: link.orgId,
-        Owner_UID: link.uid,
-        Channel: 'telegram',
-        Kind: inc.forward ? 'forward' : inc.voice ? 'voice' : 'text',
-        Raw_Text: text,
-        Forward_From: inc.forward?.from,
-        Forward_Date: inc.forward?.date,
-        Telegram_File_ID: inc.voice?.fileId,
-    });
+    const [entryId, session] = await Promise.all([
+        addEntry({
+            Organization_ID: link.orgId,
+            Owner_UID: link.uid,
+            Channel: 'telegram',
+            Kind: inc.forward ? 'forward' : inc.voice ? 'voice' : 'text',
+            Raw_Text: text,
+            Forward_From: inc.forward?.from,
+            Forward_Date: inc.forward?.date,
+            Telegram_File_ID: inc.voice?.fileId,
+        }),
+        getSession(inc.chatId),
+    ]);
 
-    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard });
+    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session });
 }
 
 async function converse(
     link: AssistantLink,
     chatId: number,
-    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string },
+    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession },
 ): Promise<void> {
-    const session = await getSession(chatId);
+    const started = Date.now();
+    const session = input.session || await getSession(chatId);
     const out = await runAssistant({
         orgId: link.orgId,
         uid: link.uid,
@@ -145,20 +149,24 @@ async function converse(
         entryId: input.entryId,
         session,
     });
-    await saveSession(chatId, out.session);
+    // Prvo odgovor korisniku, pa spremanje — sesija i dnevnik ne trebaju da ga čekaju.
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
     await sendMessage(chatId, prefix + out.reply, out.buttons);
-    for (const doc of out.documents || []) {
-        try {
-            await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
-        } catch (e) {
-            console.error('[assistant] PDF narudžbe pao:', e);
-            await sendMessage(chatId, '📄 Narudžba je sačuvana, ali PDF nije uspio. Otvori je u ERP-u → Narudžbe.');
-        }
-    }
-    if (input.entryId) {
-        await attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)));
-    }
+    console.log(`[assistant] odgovor za ${Date.now() - started} ms`);
+    await Promise.all([
+        saveSession(chatId, out.session),
+        input.entryId
+            ? attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)))
+            : Promise.resolve(),
+        ...(out.documents || []).map(async doc => {
+            try {
+                await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
+            } catch (e) {
+                console.error('[assistant] PDF narudžbe pao:', e);
+                await sendMessage(chatId, '📄 Narudžba je sačuvana, ali PDF nije uspio. Otvori je u ERP-u → Narudžbe.');
+            }
+        }),
+    ]);
 }
 
 async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promise<void> {
