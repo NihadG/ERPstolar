@@ -11,6 +11,8 @@ import { fakeDocs as docs, fakeStore as store } from '@/lib/testing/fakeFirestor
 import { runTool, type ToolEnv } from '@/lib/assistant/tools';
 import { undoTurn } from '@/lib/assistant/store';
 import { renormalizeWorkerDay } from '@/lib/server/fieldAttendance';
+import { resolveWorkRef, workOrderRefs } from '@/lib/assistant/context';
+import { workOrderLine } from '@/lib/assistant/prompt';
 
 const DAY = '2026-10-24';
 let turn = 0;
@@ -20,7 +22,7 @@ function env(): ToolEnv {
         turnId: `t${++turn}`, dateText: '', reporter: 'ja', searchHits: [],
         created: { taskIds: [], memoryIds: [] }, changes: [], summaries: [],
         ctx: {
-            projects: [], suppliers: [], memory: [], tasks: [], names: [],
+            projects: [], suppliers: [], memory: [], tasks: [], names: [], workOrders: [], processes: [],
             workers: [
                 { alias: 'W1', value: { id: 'amer', name: 'Amer' } },
                 { alias: 'W2', value: { id: 'kerim', name: 'Kerim' } },
@@ -68,9 +70,10 @@ describe('pitanja prije upisa — ništa se ne upisuje dok nije jasno', () => {
         expect(res.ok).toBe(false);
         expect(res.error).toMatch(/nije jednoznačan.*R1 .*R2 /s);
         expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
-        // Ponovo s izabranim nalogom.
-        const kuhinja = e.diaryCandidates!.find(c => c.value === 'r7')!.alias;
-        const ok = await runTool(e, 'log_work', { lines: [{ workers: ['W1'], work: 'Čorluka', order: kuhinja, process: 'krojenje iverala' }] });
+        // Ponovo s izabranim nalogom — kandidati su dobili oznake u listi naloga.
+        const kuhinja = e.ctx.workOrders.find(o => o.value.id === 'r7')!;
+        expect(kuhinja.value.items.map(i => i.id).sort()).toEqual(['k1', 'k2']);
+        const ok = await runTool(e, 'log_work', { lines: [{ workers: ['W1'], work: 'Čorluka', refs: [kuhinja.alias], process: 'krojenje iverala' }] });
         expect(ok.ok).toBe(true);
         await undoTurn(e.turnId, 'u1');
         expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
@@ -203,5 +206,72 @@ describe('dnevni upis: cijela poruka u jednom pozivu', () => {
         expect(wo('r3').Process_Graph).toBeUndefined();
         expect(docs('process_catalog').map(c => c.Name)).not.toContain('Montaža');
         expect(wo('z21').Process_Graph.nodes).toHaveLength(1);
+    });
+});
+
+describe('AI bira nalog oznakom (R#), ERP provjerava', () => {
+    // Lista kao u promptu: otvoreni nalozi s proizvodima.
+    const withOrders = () => {
+        const e = env();
+        e.ctx.workOrders = workOrderRefs([
+            { Work_Order_ID: 'r3', Work_Order_Number: '2026-09/R3', Name: 'Meliha A501 - Vrata', Status: 'Na čekanju', Work_Order_Type: 'Proizvodnja', items: [{ ID: 'm1', Product_Name: 'Vrata sobna', Project_ID: 'pm' }] },
+            { Work_Order_ID: 'r5', Work_Order_Number: '2026-09/R5', Name: 'Corluka - Gardaroberi u djecijoj sobi', Status: 'U toku', Work_Order_Type: 'Proizvodnja', items: [{ ID: 'g1', Product_Name: 'Gardarober', Project_ID: 'pc' }] },
+            { Work_Order_ID: 'r7', Work_Order_Number: '2026-09/R7', Name: 'Corluka - Kuhinja', Status: 'U toku', Work_Order_Type: 'Proizvodnja', items: [{ ID: 'k2', Product_Name: 'Gornji elementi', Project_ID: 'pc' }, { ID: 'k1', Product_Name: 'Donji elementi', Project_ID: 'pc' }] },
+            { Work_Order_ID: 'z21', Work_Order_Number: '2026-09/Z21', Name: 'Montaža vrata E5', Status: 'U toku', Work_Order_Type: 'Zadaci', items: [{ ID: 'e1', Product_Name: 'Montaža vrata E5' }] },
+        ] as any, id => ({ pc: 'Jerko Čorluka - Kuća', pm: 'Melihin stan' } as Record<string, string>)[id] || '');
+        return e;
+    };
+
+    it('oznake i red u promptu su stabilni i čitljivi', () => {
+        const list = withOrders().ctx.workOrders;
+        expect(list.map(o => o.alias)).toEqual(['R1', 'R2', 'R3', 'R4']);
+        expect(workOrderLine('R3', list[2].value)).toBe('R3 | Corluka - Kuhinja · Jerko Čorluka - Kuća | Proizvodnja | R3a Donji elementi; R3b Gornji elementi');
+        expect(workOrderLine('R4', list[3].value)).toBe('R4 | Montaža vrata E5 | Zadaci'); // jedan proizvod istog imena se ne ponavlja
+        expect(resolveWorkRef(list, 'R3b')).toMatchObject({ itemIds: ['k2'] });
+        expect(resolveWorkRef(list, 'r3')).toMatchObject({ itemIds: ['k1', 'k2'] });
+        expect(resolveWorkRef(list, 'R3z')).toBeNull();
+        expect(resolveWorkRef(list, 'R9')).toBeNull();
+    });
+
+    it('„ormari kod Jerka" — tekst ne bi pogodio, oznaka R2 hoće; proces kanonski', async () => {
+        const e = withOrders();
+        const res = await runTool(e, 'log_work', { lines: [{ workers: ['W3'], refs: ['R2'], work: 'ormari kod Jerka', process: 'Kantiranje' }] });
+        expect(res.ok).toBe(true);
+        expect(logsOf('edin')).toEqual([expect.objectContaining({ Work_Order_Item_ID: 'g1', Process_Name: 'Kantiranje', Process_Node_ID: 'ka' })]);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    it('R3b = samo jedan proizvod naloga', async () => {
+        const e = withOrders();
+        await runTool(e, 'log_work', { lines: [{ workers: ['W1'], refs: ['R3b'], work: 'gornji elementi', process: 'Krojenje Iverala' }] });
+        expect(logsOf('amer').map(l => l.Work_Order_Item_ID)).toEqual(['k2']);
+        expect(e.summaries[0]).toMatch(/Corluka - Kuhinja \(Gornji elementi\)/);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    it('jedna stavka na dva naloga → udio dana podijeljen', async () => {
+        const e = withOrders();
+        await runTool(e, 'log_work', { lines: [{ workers: ['W4'], refs: ['R1', 'R4'], work: 'vrata Meliha i montaža E5' }] });
+        expect(logsOf('imer').map(l => [l.Work_Order_ID, l.Daily_Rate]).sort()).toEqual([['r3', 50], ['z21', 50]]);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    it('nepostojeća oznaka se odbija — ništa upisano', async () => {
+        const res = await runTool(withOrders(), 'log_work', { lines: [{ workers: ['W1'], refs: ['R9'], work: 'nešto' }] });
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/R9 ne postoji/) });
+        expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
+    });
+
+    it('pregled po oznaci', async () => {
+        const e = withOrders();
+        await runTool(e, 'log_work', { lines: [{ workers: ['W3'], refs: ['R2'], work: 'gardaroberi', process: 'Kantiranje' }] });
+        const res = await runTool(withOrders(), 'work_report', { work: 'R2' });
+        // Edinov upisani rad i Amerova stara automatska podjela na istom nalogu.
+        expect(res.lines).toHaveLength(2);
+        expect(res.lines).toEqual(expect.arrayContaining([
+            expect.stringMatching(/Edin \| 1 dan \| Kantiranje \| Corluka - Gardaroberi.*\| upisano$/),
+            expect.stringMatching(/Amer \| 1 dan \| Kantiranje \| .*\| auto iz prisustva$/),
+        ]));
+        await undoTurn(e.turnId, 'u1');
     });
 });

@@ -13,7 +13,7 @@
 
 import { calendarHint } from '@/lib/voice/dates';
 import { describeNow, formatReminder, toZoned } from './datetime';
-import { projectLabel, type AssistantContext } from './context';
+import { projectLabel, type AssistantContext, type WorkOrderRef } from './context';
 import type { MemoryItem, Task } from '@/lib/types';
 
 function shortDate(iso: string, tz: string): string {
@@ -61,7 +61,8 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
    RADNJA nad narudžbom („pošalji/poslao sam narudžbu…", „stigla je…", „stigle su samo baglame", „vrati u nacrt", „obriši narudžbu…") → manage_order s brojem (ako broj nije poznat, prvo list_orders). Brisanje uvijek potvrdi s ask_user.
 
-7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. Ne pogađaj nalog ni proces — ERP ih sam nađe; ako pita, pitaj korisnika (ask_user) i ponovi. Pitanje ko radi/šta je rađeno → work_report.
+7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + refs + proces + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent.
+   refs: nađi posao u RADNIM NALOZIMA po ZNAČENJU (klijent, mjesto, vrsta: „ormari kod Jerka" = gardaroberi Čorluka) — R# = cijeli nalog, R#a = samo taj proizvod kad je proizvod rečen. Proces: kanonski naziv iz PROCESA („rezali iveral" = Krojenje Iverala). Kad posla nema u listi ili nisi siguran između dva naloga, NE biraj — pošalji samo work (tekst) i ERP će tražiti/pitati. Pitanje ko radi/šta je rađeno → work_report.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;
@@ -69,12 +70,20 @@ PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno saču
 - za stvar u bilježnici nije jasno ključno stanje (npr. montirano ili ne).
 Jedno pitanje odjednom, 2–4 kratke opcije. Ne pitaj ono što se može razumno pretpostaviti. Kad dobiješ odgovor, završi prvobitni zahtjev.
 
-OZNAKE: W# radnici, P# projekti, M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
+OZNAKE: W# radnici, P# projekti, R# radni nalozi (R#a proizvod naloga), M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
 Oznake su SAMO za alate — korisniku ih NIKAD ne piši (ni u odgovoru ni u opcijama pitanja). Piši imena: „Imer", ne „Imer (W9)".
 
 BILJEŽNICA: jedna stavka = jedna stvar na jednoj lokaciji. subject = predmet u osnovnom obliku jednine („ogledalo", „baglama", „radna ploča"). state_label = kratko stanje („nije montirano", „čeka isporuku", „u kombiju").
 
 ODGOVOR: kratko, običan tekst bez markdowna (bez *, #, _). Liste s „• ". Kad samo upisuješ (zadatak, bilješka, izmjena, narudžba), potvrdu i PDF korisniku pošalje sistem iz rezultata alata — ne trebaš ih pisati. Na pitanja odgovaraš tekstom; kod „gdje sve…" grupiši po lokaciji: količina, opis, od kad. Dugme za poništavanje dodaje sistem — ne spominji ga.`;
+
+/** „R3 | Corluka - Kuhinja · Jerko Čorluka - Kuća | Proizvodnja | R3a Donji elementi; R3b Gornji elementi" */
+export function workOrderLine(alias: string, o: WorkOrderRef): string {
+    const single = o.items.length === 1 && o.items[0].name.trim().toLowerCase() === o.name.trim().toLowerCase();
+    const items = single || !o.items.length ? '' : o.items.map(i => `${i.alias} ${i.name}`).join('; ') + (o.moreItems ? `; +${o.moreItems} proizvoda` : '');
+    return [alias, [o.name, o.projectName].filter(Boolean).join(' · '), `${o.type || 'Nalog'}${o.finished ? ', završen' : ''}`, items]
+        .filter(Boolean).join(' | ');
+}
 
 export interface PromptParts {
     /** Ne mijenja se od poruke do poruke (pravila, radnici, projekti) — ide u keš. */
@@ -87,6 +96,7 @@ export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string): 
     const today = toZoned(now, tz).date;
     const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}`).join('\n') || '—';
     const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}`).join('\n') || '—';
+    const orders = (ctx.workOrders || []).map(o => workOrderLine(o.alias, o.value)).join('\n') || '—';
     const memory = ctx.memory.map(m => memoryLine(m.alias, m.value, tz)).join('\n') || '— (prazno)';
     const tasks = ctx.tasks.map(t => taskLine(t.alias, t.value, tz, now)).join('\n') || '— (nema)';
 
@@ -100,7 +110,12 @@ ${workers}
 PROJEKTI (oznaka | klijent · naziv · mjesto):
 ${projects}
 
-DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}`;
+DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}
+
+RADNI NALOZI za dnevni rad (oznaka | naziv · projekat | vrsta | proizvodi s oznakama):
+${orders}
+
+PROCESI (katalog, kanonski nazivi): ${(ctx.processes || []).join(', ') || '—'}`;
 
     const volatile = `SADA: ${describeNow(now, tz)} (${tz}).
 

@@ -30,8 +30,10 @@ export interface DiaryLineInput {
     workerIds: string[];
     /** Posao kako je rečen: „kuhinja Čorluka", „montaža kod Melihe". */
     target: string;
-    /** Nalog izabran nakon pitanja (kandidati iz prethodnog pokušaja). */
+    /** Nalog izabran oznakom (R#) ili nakon pitanja. */
     workOrderId?: string;
+    /** Tačne stavke naloga izabrane oznakom (R# = sve, R#a = jedna) — tekstualna pretraga se preskače. */
+    itemIds?: string[];
     process?: string;
     alsoProcesses?: string[];
     /** Udio dana (0–1) ako je rečen: „pola dana" = 0.5. */
@@ -44,7 +46,7 @@ export interface DiaryLineInput {
 export interface DiaryAbsenceInput { workerId: string; status: 'Bolovanje' | 'Odmor' | 'Odsutan' }
 
 export type DiaryIssue =
-    | { kind: 'target'; line: number; text: string; candidates: { workOrderId: string; workOrderName: string; projectName: string }[] }
+    | { kind: 'target'; line: number; text: string; candidates: { workOrderId: string; workOrderName: string; projectName: string; items: { id: string; name: string }[] }[] }
     | { kind: 'process'; line: number; name: string }
     | { kind: 'worker'; line: number; workerId: string };
 
@@ -102,13 +104,27 @@ export async function bookWorkDiary(
     const resolved: ResolvedLine[] = [];
     lines.forEach((line, i) => {
         line.workerIds.filter(id => !workerById.has(id)).forEach(workerId => issues.push({ kind: 'worker', line: i, workerId }));
-        const pool = line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
-        const match = pool.length ? matchTarget(line.target || pool[0]?.workOrderName || '', pool) : { kind: 'none' as const };
-        const fallback = line.workOrderId && pool.length && match.kind !== 'ok'
-            ? { kind: 'ok' as const, workOrderId: line.workOrderId, workOrderName: pool[0].workOrderName, items: pool }
-            : match;
+        let fallback: ReturnType<typeof matchTarget>;
+        if (line.itemIds?.length) {
+            // Izbor oznakom: stavke moraju postojati i primati rad — inače pitanje, ne tihi pogodak.
+            const chosen = targets.filter(t => line.itemIds!.includes(t.itemId));
+            fallback = chosen.length === line.itemIds.length && new Set(chosen.map(t => t.workOrderId)).size === 1
+                ? { kind: 'ok', workOrderId: chosen[0].workOrderId, workOrderName: chosen[0].workOrderName, items: chosen }
+                : { kind: 'none' };
+        } else {
+            const pool = line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
+            const match = pool.length ? matchTarget(line.target || pool[0]?.workOrderName || '', pool) : { kind: 'none' as const };
+            fallback = line.workOrderId && pool.length && match.kind !== 'ok'
+                ? { kind: 'ok', workOrderId: line.workOrderId, workOrderName: pool[0].workOrderName, items: pool }
+                : match;
+        }
         if (fallback.kind !== 'ok') {
-            issues.push({ kind: 'target', line: i, text: line.target, candidates: fallback.kind === 'ambiguous' ? fallback.candidates : [] });
+            issues.push({
+                kind: 'target', line: i, text: line.target,
+                candidates: fallback.kind === 'ambiguous'
+                    ? fallback.candidates.map(c => ({ ...c, items: targets.filter(t => t.workOrderId === c.workOrderId).map(t => ({ id: t.itemId, name: t.productName })) }))
+                    : [],
+            });
             return;
         }
         let process: string | undefined;
@@ -330,6 +346,8 @@ async function upsertAttendance(orgId: string, workerId: string, workerName: str
 
 export interface WorkLogRow {
     date: string;
+    workOrderId: string;
+    itemId: string;
     workerId: string;
     worker: string;
     dayFraction: number;
@@ -358,6 +376,8 @@ export async function workLogReport(orgId: string, from: string, to: string): Pr
             const item = itemById.get(l.Work_Order_Item_ID);
             return {
                 date: String(l.Date).slice(0, 10),
+                workOrderId: l.Work_Order_ID,
+                itemId: l.Work_Order_Item_ID,
                 workerId: l.Worker_ID,
                 worker: l.Worker_Name,
                 dayFraction: l.Day_Fraction ?? 1,

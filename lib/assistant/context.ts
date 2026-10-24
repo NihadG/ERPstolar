@@ -14,11 +14,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from '@/lib/server/firebaseAdmin';
-import { getActiveWorkers, getAllTasks } from '@/lib/server/fieldRepo';
+import { attachItems, getActiveWorkers, getAllTasks, getBookableWorkOrders, getItemsForWorkOrders } from '@/lib/server/fieldRepo';
 import { buildVoiceContext } from '@/lib/voice/context';
 import { contextNames, projectLabel, type VoiceProjectRef } from '@/lib/voice/extract';
 import { listMemory } from './store';
-import type { MemoryItem, Project, Supplier, Task } from '@/lib/types';
+import type { MemoryItem, ProcessCatalogItem, Project, Supplier, Task, WorkOrder } from '@/lib/types';
 
 const MAX_PROJECTS = 80;
 const MAX_TASKS = 60;
@@ -35,12 +35,28 @@ export interface Aliased<T> {
     value: T;
 }
 
+/** Radni nalog za dnevni upis rada: model bira oznaku (R3 = nalog, R3b = proizvod), ERP provjerava. */
+export interface WorkOrderRef {
+    id: string;
+    name: string;
+    type: string;
+    projectName: string;
+    finished: boolean;
+    items: { alias: string; id: string; name: string }[];
+    /** Proizvoda ima više nego što je navedeno (iznad MAX_ITEMS_PER_ORDER). */
+    moreItems: number;
+}
+
 export interface AssistantContext {
     workers: Aliased<{ id: string; name: string }>[];
     projects: Aliased<VoiceProjectRef>[];
     suppliers: string[];
     memory: Aliased<MemoryItem>[];
     tasks: Aliased<Task>[];
+    /** Otvoreni i nedavno završeni nalozi s proizvodima (R#, R#a…). */
+    workOrders: Aliased<WorkOrderRef>[];
+    /** Katalog procesa (kanonski redoslijed) — model bira naziv odavde. */
+    processes: string[];
     /** Imena za prompt transkripcije glasovne poruke. */
     names: string[];
 }
@@ -94,15 +110,18 @@ export function relevantTasks(tasks: Task[], uid: string, now: Date): Task[] {
 }
 
 export async function loadContext(orgId: string, uid: string, now: Date = new Date()): Promise<AssistantContext> {
-    const [projects, workers, suppliers, memory, tasks] = await Promise.all([
+    const [projects, workers, suppliers, memory, tasks, orders, processes] = await Promise.all([
         loadProjects(orgId),
         getActiveWorkers(orgId),
         loadSuppliers(orgId),
         listMemory(orgId, uid),
         getAllTasks(orgId),
+        loadWorkOrders(orgId, now),
+        loadProcessCatalog(orgId),
     ]);
 
     const voice = buildVoiceContext(relevantProjects(projects, now), workers);
+    const projectName = new Map(projects.map(p => [p.Project_ID, p.Name || p.Client_Name || '']));
 
     return {
         workers: (voice.workers || []).map((w, i) => ({ alias: `W${i + 1}`, value: w })),
@@ -110,8 +129,72 @@ export async function loadContext(orgId: string, uid: string, now: Date = new Da
         suppliers,
         memory: memory.slice(-MAX_MEMORY).map((m, i) => ({ alias: `M${i + 1}`, value: m })),
         tasks: relevantTasks(tasks, uid, now).map((t, i) => ({ alias: `T${i + 1}`, value: t })),
+        workOrders: workOrderRefs(orders, id => projectName.get(id) || ''),
+        processes,
         names: contextNames({ ...voice, suppliers }),
     };
+}
+
+// ─── Nalozi za dnevni upis rada ───────────────────────────────────────
+
+const MAX_ORDERS = 60;
+const MAX_ITEMS_PER_ORDER = 26;          // a…z
+const FINISHED_ORDER_DAYS = 14;          // završen nalog još prima zaostali rad (kao šihtarica)
+
+async function loadWorkOrders(orgId: string, now: Date): Promise<WorkOrder[]> {
+    const cutoff = new Date(now.getTime() - FINISHED_ORDER_DAYS * DAY_MS).toISOString();
+    const orders = (await getBookableWorkOrders(orgId))
+        .filter(o => o.Status !== 'Završeno' || String(o.Completed_At || '') >= cutoff);
+    return attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
+}
+
+async function loadProcessCatalog(orgId: string): Promise<string[]> {
+    const snap = await adminDb().collection('process_catalog').where('Organization_ID', '==', orgId).get();
+    return snap.docs.map(d => d.data() as ProcessCatalogItem)
+        .sort((a, b) => (a.Order || 0) - (b.Order || 0) || a.Name.localeCompare(b.Name, 'bs'))
+        .map(c => c.Name);
+}
+
+/**
+ * Oznake naloga: otvoreni prvo, pa nedavno završeni; unutar grupe po broju
+ * naloga — deterministički, da stabilni dio prompta ostane isti (keš).
+ */
+export function workOrderRefs(orders: WorkOrder[], projectNameOf: (id: string) => string): Aliased<WorkOrderRef>[] {
+    return orders
+        .slice()
+        .sort((a, b) => Number(a.Status === 'Završeno') - Number(b.Status === 'Završeno')
+            || String(a.Work_Order_Number || '').localeCompare(String(b.Work_Order_Number || ''), 'bs', { numeric: true })
+            || a.Work_Order_ID.localeCompare(b.Work_Order_ID))
+        .slice(0, MAX_ORDERS)
+        .map((o, i) => {
+            const alias = `R${i + 1}`;
+            const items = (o.items || []).slice().sort((a, b) => (a.Product_Name || '').localeCompare(b.Product_Name || '', 'bs') || a.ID.localeCompare(b.ID));
+            const projectId = items.find(it => it.Project_ID)?.Project_ID;
+            return {
+                alias,
+                value: {
+                    id: o.Work_Order_ID,
+                    name: o.Name || o.Work_Order_Number || 'Nalog',
+                    type: o.Work_Order_Type || '',
+                    projectName: projectId ? projectNameOf(projectId) : '',
+                    finished: o.Status === 'Završeno',
+                    items: items.slice(0, MAX_ITEMS_PER_ORDER).map((it, j) => ({ alias: `${alias}${String.fromCharCode(97 + j)}`, id: it.ID, name: it.Product_Name || '' })),
+                    moreItems: Math.max(0, items.length - MAX_ITEMS_PER_ORDER),
+                },
+            };
+        });
+}
+
+/** „R3" → cijeli nalog; „R3b" → jedan proizvod. null = nepostojeća oznaka. */
+export function resolveWorkRef(list: Aliased<WorkOrderRef>[], ref: unknown): { order: WorkOrderRef; itemIds: string[] } | null {
+    if (typeof ref !== 'string') return null;
+    const m = ref.trim().match(/^(R\d+)([a-z])?$/i);
+    if (!m) return null;
+    const order = resolveAlias(list, m[1]);
+    if (!order) return null;
+    if (!m[2]) return { order, itemIds: order.items.map(i => i.id) };
+    const item = order.items.find(i => i.alias.toLowerCase() === `${m[1]}${m[2]}`.toLowerCase());
+    return item ? { order, itemIds: [item.id] } : null;
 }
 
 export function resolveAlias<T>(list: Aliased<T>[], alias: unknown): T | null {
