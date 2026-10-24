@@ -1,5 +1,5 @@
 // Memorijski Firestore za testove serverskog koda (Admin SDK oblik).
-// Pokriva samo ono što koristi asistent: doc/collection, where (==, <=, in),
+// Pokriva samo ono što koristi asistent: doc/collection, where (==, <, <=, >, >=, in),
 // limit, add, create (ALREADY_EXISTS), runTransaction, db.doc(path).
 //
 // Upotreba u testu:
@@ -41,7 +41,8 @@ class FakeQuery {
         const docs = Array.from(fakeStore.entries())
             .filter(([k]) => k.startsWith(`${this.col}/`) && k.split('/').length === 2)
             .filter(([, d]) => this.filters.every(([f, op, v]) =>
-                op === '==' ? d[f] === v : op === '<=' ? d[f] <= v : op === 'in' ? v.includes(d[f]) : false))
+                op === '==' ? d[f] === v : op === '<=' ? d[f] <= v : op === '>=' ? d[f] >= v
+                    : op === '<' ? d[f] < v : op === '>' ? d[f] > v : op === 'in' ? v.includes(d[f]) : false))
             .slice(0, this.lim)
             .map(([k, d]) => {
                 const id = k.split('/')[1];

@@ -43,6 +43,7 @@ const HELP =
     '• Proslijeđenu poruku radnika → ažuriram stanje\n' +
     '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n' +
     '• „Naruči 5 baglama za Stan 304" → narudžba (nacrt) + PDF\n' +
+    '• „Amer i Kerim krojili iveral za kuhinju Čorluka, Edin kantirao — završio" → dnevni rad\n' +
     '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Komande: /danas · /otvoreno · /pomoc';
 

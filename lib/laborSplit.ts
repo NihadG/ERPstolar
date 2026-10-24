@@ -113,3 +113,82 @@ export function splitDnevnicaByOrder(
     });
     return { amounts, dayFractions };
 }
+
+// ════════════════════════════════════════════════════════════════════
+// PODJELA DANA PO ZAPISIMA — s izričitim udjelom (Day_Weight)
+//
+// Dnevni upis rada („Imer pola dana lakiranje, ostatak na dva druga posla")
+// zna TAČAN udio dana po poslu. Taj udio nosi zapis kao `Day_Weight` (0–1)
+// i svaka renormalizacija dana ga mora poštovati — inače bi sljedeća izmjena
+// u šihtarici tiho vratila jednaku podjelu.
+//
+//   • nijedan zapis nema težinu → IDENTIČNO splitDnevnicaByOrder (nalog → proizvod)
+//   • Σ težina < 1 → zapisi s težinom dobiju tačno svoj udio, ostatak se dijeli
+//     dvonivovski na zapise bez težine
+//   • zapisi bez težine uz Σ težina ≥ 1 (npr. kasnije dodan ručni unos) → svaki
+//     takav zapis dobije 1/N dana, a težinski dijele ostatak srazmjerno
+//
+// Invarijanta ostaje: Σ iznosa = round2(dnevnica × presence), Σ Day_Fraction = presence.
+// ════════════════════════════════════════════════════════════════════
+
+export interface DayLogInput { Work_Order_ID?: string; Day_Weight?: number }
+export interface DayLogShare { amount: number; dayFraction: number; splitFactor: number }
+
+export function splitWorkerDay(dnevnica: number, presence: number, logs: DayLogInput[]): DayLogShare[] {
+    if (logs.length === 0) return [];
+    const p = normalizePresence(presence);
+    const weightOf = (l: DayLogInput) => (typeof l.Day_Weight === 'number' && l.Day_Weight > 0 ? l.Day_Weight : 0);
+
+    if (!logs.some(weightOf)) {
+        const orderIds: string[] = [];
+        const byOrder = new Map<string, number[]>();
+        logs.forEach((l, i) => {
+            const id = l.Work_Order_ID || '__none__';
+            if (!byOrder.has(id)) { byOrder.set(id, []); orderIds.push(id); }
+            byOrder.get(id)!.push(i);
+        });
+        const { amounts, dayFractions } = splitDnevnicaByOrder(dnevnica, p, orderIds.map(id => byOrder.get(id)!.length));
+        const out: DayLogShare[] = new Array(logs.length);
+        orderIds.forEach((id, oi) => byOrder.get(id)!.forEach((idx, j) => {
+            out[idx] = { amount: amounts[oi][j], dayFraction: dayFractions[oi][j], splitFactor: orderIds.length * byOrder.get(id)!.length };
+        }));
+        return out;
+    }
+
+    // Udio dana (zbir 1) po zapisu.
+    const share = new Array<number>(logs.length).fill(0);
+    const weighted = logs.map((l, i) => i).filter(i => weightOf(logs[i]) > 0);
+    const plain = logs.map((l, i) => i).filter(i => weightOf(logs[i]) === 0);
+    const W = weighted.reduce((s, i) => s + weightOf(logs[i]), 0);
+    if (W < 1 && plain.length) {
+        weighted.forEach(i => { share[i] = weightOf(logs[i]); });
+        const rest = 1 - W;
+        const orderIds: string[] = [];
+        const byOrder = new Map<string, number[]>();
+        plain.forEach(i => {
+            const id = logs[i].Work_Order_ID || '__none__';
+            if (!byOrder.has(id)) { byOrder.set(id, []); orderIds.push(id); }
+            byOrder.get(id)!.push(i);
+        });
+        orderIds.forEach(id => byOrder.get(id)!.forEach(i => { share[i] = rest / orderIds.length / byOrder.get(id)!.length; }));
+    } else {
+        const plainShare = plain.length ? 1 / logs.length : 0;
+        const forWeighted = 1 - plainShare * plain.length;
+        plain.forEach(i => { share[i] = plainShare; });
+        weighted.forEach(i => { share[i] = forWeighted * weightOf(logs[i]) / W; });
+    }
+
+    // Centi: najveći ostatak, pa je zbir tačan.
+    const totalCents = Math.max(0, Math.round((dnevnica || 0) * p * 100));
+    const exact = share.map(s => totalCents * s);
+    const cents = exact.map(Math.floor);
+    let rem = totalCents - cents.reduce((s, c) => s + c, 0);
+    exact.map((v, i) => ({ i, r: v - cents[i] }))
+        .sort((a, b) => b.r - a.r || a.i - b.i)
+        .forEach(({ i }) => { if (rem > 0) { cents[i]++; rem--; } });
+    return share.map((s, i) => ({
+        amount: cents[i] / 100,
+        dayFraction: Math.round(p * s * 1e6) / 1e6,
+        splitFactor: Math.max(1, Math.round(1 / (s || 1))),
+    }));
+}
