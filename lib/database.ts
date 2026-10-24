@@ -51,6 +51,7 @@ import { ALLOWED_ORDER_TRANSITIONS } from './types';
 import { mergeOfferProducts } from './offerLocking';
 import { linkOfferToProduction, projectStatusOnOfferAccepted, type OfferProductionLink } from './offerProductionLink';
 import { orderItemAllocations } from './orderMaterialAllocation';
+import { materialCoverage, settledMaterialStatus } from './materialCoverage';
 
 // Shared service modules (architecture upgrade)
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders } from './services/shared/dataAssembler';
@@ -781,6 +782,14 @@ export async function batchUpdateMaterialStatuses(
                         }
                         if (upd.receivedQty !== undefined) {
                             fields.Received_Quantity = Math.max(0, (data.Received_Quantity || 0) + upd.receivedQty);
+                        }
+                        // Materijal u više narudžbi: prijem/vraćanje jedne ne zatvara ostale.
+                        const settled = settledMaterialStatus(upd.status,
+                            (fields.Ordered_Quantity as number | undefined) ?? (data.Ordered_Quantity || 0),
+                            (fields.Received_Quantity as number | undefined) ?? (data.Received_Quantity || 0));
+                        if (settled !== upd.status) {
+                            fields.Status = settled;
+                            fields.Order_ID = data.Order_ID || upd.orderId;
                         }
                     }
                     if (upd.onStock !== undefined) fields.On_Stock = upd.onStock;
@@ -4004,14 +4013,8 @@ export async function buildMaterialOrderPlan(
             const productMaterials = await getProductMaterials(item.Product_ID, organizationId);
 
             for (const material of productMaterials) {
-                if (material.Status === 'Primljeno' || material.Status === 'Na stanju') continue;
-                if (material.Status === 'Naručeno' && material.Order_ID) continue;
-
-                const quantityNeeded = (material.Quantity || 0) * (item.Quantity || 1);
-                const onStock = material.On_Stock || 0;
-                const alreadyOrdered = material.Ordered_Quantity || 0;
-                const alreadyReceived = material.Received_Quantity || 0;
-                const quantityToOrder = quantityNeeded - onStock - alreadyOrdered - alreadyReceived;
+                // Iz količina, ne iz statusa — djelimično naručen materijal i dalje nudi ostatak.
+                const quantityToOrder = materialCoverage(material, item.Quantity || 1).toOrder;
                 if (quantityToOrder <= 0) continue;
 
                 const supplierKey = material.Supplier || 'Nepoznat dobavljač';

@@ -24,10 +24,20 @@ test('pokriveni materijali se ne nude za narudžbu', () => {
         material({ ID: 'a', Status: 'Primljeno' }),
         material({ ID: 'b', Status: 'Na stanju' }),
         material({ ID: 'c', Status: 'Naručeno', Order_ID: 'ord1' }),
+        // Status bez količina (stari zapis) = pokriveno, isto kao u čarobnjaku narudžbi.
         material({ ID: 'd', Status: 'Naručeno', Order_ID: '' }),
         material({ ID: 'e', On_Stock: 99 }),
+        material({ ID: 'f' }),
     ])]);
-    expect(rows.filter(r => r.orderable).map(r => r.ID)).toEqual(['d']);
+    expect(rows.filter(r => r.orderable).map(r => r.ID)).toEqual(['f']);
+});
+
+test('djelimično naručen materijal nudi ostatak', () => {
+    const [row] = commandMaterialRows([projectWith([
+        material({ ID: 'a', Quantity: 25, Status: 'Naručeno', Order_ID: 'ord1', Ordered_Quantity: 5 }),
+    ], 1)]);
+    expect(row.orderable).toBe(true);
+    expect(row.toOrder).toBe(20);
 });
 
 test('plan se grupiše po dobavljaču, sortira abecedno i nosi potrebnu, ne ukupnu količinu', () => {

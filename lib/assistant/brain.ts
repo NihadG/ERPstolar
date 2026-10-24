@@ -11,7 +11,10 @@
 //      drugi krug iste poruke plaća ulaz ~10 puta jeftinije.
 //   2. Bez drugog poziva: kad je model samo upisivao (zadatak, bilješka,
 //      izmjena) i sve je uspjelo, potvrdu složi sistem iz rezultata alata.
-//   3. effort: low — ovaj posao ne treba dugo razmišljanje.
+//   3. Bez razmišljanja (thinking: disabled) i effort: low — biranje alata
+//      i izvlačenje podataka iz poruke ne treba razmišljanje, a ono bi se
+//      platilo kao izlaz i čekalo se na njega pri svakom koraku.
+//   4. Razgovor stariji od HISTORY_HOURS ne ide modelu — ne pomaže, a plaća se.
 //
 // Kad model zatraži pitanje (ask_user), krug staje: korisnik dobije pitanje
 // s dugmadima, a sesija pamti razgovor da sljedeća poruka završi zahtjev.
@@ -32,6 +35,8 @@ import type { AssistantSession, SessionTurn } from './store';
 const MAX_STEPS = 6;
 const MAX_TOKENS = 8000;
 const TIMEOUT_MS = 25_000;
+/** Poruke starije od ovoga ne idu modelu (osim kad čeka odgovor na pitanje). */
+const HISTORY_HOURS = 3;
 
 function model(): string {
     return process.env.ASSISTANT_MODEL?.trim() || 'claude-haiku-5-5';
@@ -52,6 +57,8 @@ export interface AssistantTurnOutput {
     buttons: ButtonRows;
     session: AssistantSession;
     created: { taskIds: string[]; memoryIds: string[] };
+    /** PDF-ovi narudžbi koji idu poslije odgovora. */
+    documents?: { orderId: string; draft: boolean }[];
     degraded?: boolean;
 }
 
@@ -108,7 +115,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const tz = assistantTimezone();
     const turnId = uuidv4();
     const message = userMessage(input, tz);
-    const history = input.session.history || [];
+    const cutoff = now.getTime() - HISTORY_HOURS * 3_600_000;
+    const history = (input.session.history || []).filter(t => input.session.pending || Date.parse(t.at) >= cutoff);
     const at = now.toISOString();
 
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
@@ -169,6 +177,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     let reply = '';
     try {
         for (let step = 0; step < MAX_STEPS; step++) {
+            const started = Date.now();
             const res = await client.messages.create({
                 model: model(),
                 max_tokens: MAX_TOKENS,
@@ -177,10 +186,11 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 messages,
                 // Automatski keš za rastući rep (razgovor + rezultati alata).
                 cache_control: { type: 'ephemeral' },
+                thinking: { type: 'disabled' },
                 output_config: { effort: 'low' },
             });
             const u = res.usage;
-            console.log(`[assistant] korak ${step + 1}: ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
+            console.log(`[assistant] korak ${step + 1}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
 
             if (res.stop_reason === 'refusal') {
                 reply = 'Ovu poruku ne mogu obraditi. Probaj je reći drugačije.';
@@ -231,5 +241,5 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
     }
     const buttons: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
-    return finish(reply, buttons, null, reply, { created: env.created });
+    return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents });
 }

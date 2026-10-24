@@ -43,6 +43,9 @@ import { fakeDocs as docs, fakeStore as mockStore } from '@/lib/testing/fakeFire
 import Anthropic from '@anthropic-ai/sdk';
 import { failureReason, runAssistant } from '@/lib/assistant/brain';
 import { undoTurn, type AssistantSession } from '@/lib/assistant/store';
+import { stripAliases } from '@/lib/assistant/tools';
+import { getOrderWithItems, loadProjectMaterials, sendOrder } from '@/lib/server/orderWrites';
+import { buildOrderPdf } from '@/lib/server/orderPdf';
 
 const NOW = new Date('2026-10-23T12:05:00Z'); // petak 14:05 u Sarajevu
 const systemText = (params: any) => params.system.map((b: any) => b.text).join('\n');
@@ -94,12 +97,13 @@ describe('asistent od poruke do baze', () => {
         const p = mockSent[0];
         expect(p.model).toBe('claude-haiku-5-5');
         expect(p.output_config).toEqual({ effort: 'low' });
+        expect(p.thinking).toEqual({ type: 'disabled' });
         expect(p.cache_control).toEqual({ type: 'ephemeral' });
         expect(p.system[0].cache_control).toEqual({ type: 'ephemeral' });
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'order_pdf', 'ask_user']);
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
         mockSent.length = 0;
@@ -252,10 +256,163 @@ describe('asistent od poruke do baze', () => {
         process.env.ANTHROPIC_API_KEY = 'test';
     });
 
+    it('razgovor stariji od 3 sata ne ide modelu', async () => {
+        mockSent.length = 0;
+        mockScript.push({ text: 'ok' });
+        const old = new Date(NOW.getTime() - 5 * 3_600_000).toISOString();
+        const recent = new Date(NOW.getTime() - 20 * 60_000).toISOString();
+        await runAssistant({
+            orgId: 'org1', uid: 'u1', text: 'a sad?', now: NOW,
+            session: { history: [
+                { role: 'user', text: 'staro jutros', at: old }, { role: 'model', text: 'ok', at: old },
+                { role: 'user', text: 'malo prije', at: recent }, { role: 'model', text: 'ok', at: recent },
+            ], pending: null },
+        });
+        const texts = mockSent[0].messages.map((m: any) => m.content);
+        expect(texts).toEqual(['malo prije', 'ok', 'a sad?']);
+    });
+
     it('kad model padne, korisnik vidi razlog', async () => {
         const out = await say('nešto', []); // prazna skripta → mock baca grešku
         expect(out.degraded).toBe(true);
         expect(out.reply).toMatch(/Razlog: skripta je prazna/);
+    });
+});
+
+describe('narudžbe preko asistenta', () => {
+    const grb = () => (systemText(mockSent[0]).match(/(P\d+) \| Begović/) || [])[1];
+    const orderItems = (orderId: string) => docs('order_items').filter(i => i.Order_ID === orderId);
+    let firstOrderId = '';
+    let firstTurn = '';
+
+    beforeAll(() => {
+        session = { history: [], pending: null };
+        mockStore.set('products/k', { Product_ID: 'pr-kuh', Organization_ID: 'org1', Project_ID: 'p-grb', Name: 'Kuhinja', Quantity: 1, Status: 'Na čekanju' });
+        mockStore.set('products/h', { Product_ID: 'pr-hod', Organization_ID: 'org1', Project_ID: 'p-grb', Name: 'Hodnik', Quantity: 1, Status: 'Na čekanju' });
+        mockStore.set('product_materials/a', { ID: 'pm-a', Organization_ID: 'org1', Product_ID: 'pr-kuh', Material_ID: 'mat-b', Material_Name: 'Baglama ravna', Quantity: 15, Unit: 'kom', Unit_Price: 2, Total_Price: 30, Status: 'Nije naručeno', Supplier: 'Häfele', Order_ID: '' });
+        mockStore.set('product_materials/b', { ID: 'pm-b', Organization_ID: 'org1', Product_ID: 'pr-hod', Material_ID: 'mat-b', Material_Name: 'Baglama ravna', Quantity: 10, Unit: 'kom', Unit_Price: 2, Total_Price: 20, Status: 'Nije naručeno', Supplier: 'Häfele', Order_ID: '' });
+        mockStore.set('materials/b', { Material_ID: 'mat-b', Organization_ID: 'org1', Name: 'Baglama ravna', Unit: 'kom', Default_Supplier: 'Häfele', Default_Unit_Price: 2 });
+        mockStore.set('suppliers/h', { Supplier_ID: 'sup-h', Organization_ID: 'org1', Name: 'Häfele', Phone: '033 111 222' });
+    });
+
+    it('„naruči 5 baglama za Grbavicu" → nacrt s 5 od 25, ostatak ostaje', async () => {
+        mockSent.length = 0;
+        mockScript.push({ text: 'ok' });
+        await runAssistant({ orgId: 'org1', uid: 'u1', text: 'x', session, now: NOW });
+        const P = grb();
+        mockSent.length = 0;
+
+        const out = await say('Naruči 5 baglama za Grbavicu', [
+            { calls: [{ name: 'find_material', args: { query: 'baglama', project: P } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: 'O1', quantity: 5 }] } }] },
+        ]);
+        // find_material je vratio stanje modelu: 25 potrebno, sve za naručiti.
+        expect(lastToolResult(mockSent[1]).project_materials[0]).toMatch(/treba 25 .*OSTALO ZA NARUČITI 25 \| dobavljač: Häfele \| pozicije: Kuhinja, Hodnik/);
+        expect(mockSent).toHaveLength(2); // potvrdu složio sistem
+
+        const order = docs('orders').find(o => o.Status === 'Nacrt')!;
+        expect(order).toMatchObject({ Supplier_ID: 'sup-h', Supplier_Name: 'Häfele', Name: 'Begović · Zgrada Grbavica · Grbavica', Total_Amount: 10 });
+        const [item] = orderItems(order.Order_ID);
+        expect(item).toMatchObject({ Quantity: 5, Unit: 'kom', Status: 'Na čekanju', Project_ID: 'p-grb', Expected_Price: 10 });
+        expect(Object.values(item.Product_Material_Quantities).reduce((s: number, n: any) => s + n, 0)).toBe(5);
+        expect(out.reply).toMatch(/🧾 Narudžba N2026-10\/\w+ · Häfele \(nacrt\)\n• 5 kom Baglama ravna — .* \(ostaje još 20 kom\)/);
+        expect(out.documents).toEqual([{ orderId: order.Order_ID, draft: true }]);
+        // Materijali se pri nacrtu ne diraju (kao u ERP-u).
+        expect(docs('product_materials').every(m => !m.Ordered_Quantity)).toBe(true);
+        firstOrderId = order.Order_ID;
+        firstTurn = out.buttons[0][0].data.slice(5);
+    });
+
+    it('nacrt se računa: 30 baglama → 20 za projekat + 10 za zalihu', async () => {
+        const P = grb();
+        const out = await say('Naruči još 30 baglama za Grbavicu', [
+            { calls: [{ name: 'find_material', args: { query: 'baglama', project: P } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: 'O1', quantity: 30 }] } }] },
+        ]);
+        expect(lastToolResult(mockSent.at(-1)).project_materials[0]).toMatch(/u nacrtu 5 \| OSTALO ZA NARUČITI 20/);
+        const order = docs('orders').find(o => o.Status === 'Nacrt' && o.Order_ID !== firstOrderId)!;
+        const [item] = orderItems(order.Order_ID);
+        expect(item.Quantity).toBe(30);
+        expect(Object.values(item.Product_Material_Quantities).reduce((s: number, n: any) => s + n, 0)).toBe(20);
+        expect(order.Notes).toMatch(/Višak za zalihu: 10 kom Baglama ravna/);
+        expect(out.reply).toMatch(/20 za projekat \+ 10 za zalihu/);
+    });
+
+    it('„Poslano" pomjera materijale i status; ostatak ostaje za naručivanje', async () => {
+        const result = await sendOrder('org1', firstOrderId);
+        expect(result).toEqual({ ok: true, orderNumber: expect.stringMatching(/^N2026-10\//), materials: 2 });
+        const mats = docs('product_materials').filter(m => m.Product_ID === 'pr-kuh' || m.Product_ID === 'pr-hod');
+        expect(mats.reduce((s, m) => s + (m.Ordered_Quantity || 0), 0)).toBe(5);
+        expect(mats.every(m => m.Status === 'Naručeno' && m.Order_ID === firstOrderId)).toBe(true);
+        expect(docs('products').find(p => p.Product_ID === 'pr-kuh')!.Status).toBe('Materijali naručeni');
+        expect(docs('projects').find(p => p.Project_ID === 'p-grb')!.Status).toBe('U toku'); // samo „Odobreno" ide u proizvodnju
+
+        const rows = await loadProjectMaterials('org1', ['p-grb']);
+        expect(rows.reduce((s, r) => s + r.ordered, 0)).toBe(5);
+        expect(rows.reduce((s, r) => s + r.available, 0)).toBe(0); // 20 je još u drugom nacrtu
+        expect(await sendOrder('org1', firstOrderId)).toEqual({ ok: false, error: expect.stringMatching(/već „Poslano"/) });
+    });
+
+    it('poslana narudžba se ne briše na ↩️ Poništi', async () => {
+        const labels = await undoTurn(firstTurn, 'u1');
+        expect(labels).toEqual([expect.stringMatching(/^narudžba N2026-10\/\w+ \(već poslana/)]);
+        expect(docs('orders').some(o => o.Order_ID === firstOrderId)).toBe(true);
+        expect(orderItems(firstOrderId)).toHaveLength(1);
+    });
+
+    it('katalog bez projekta traži količinu i ide za zalihu', async () => {
+        const out = await say('Naruči 12 baglama za zalihu', [
+            { calls: [{ name: 'find_material', args: { query: 'baglama' } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: 'K1', quantity: 12 }] } }] },
+        ]);
+        expect(out.reply).toMatch(/• 12 kom Baglama ravna — za zalihu/);
+        const order = docs('orders').find(o => o.Name === 'Zaliha')!;
+        expect(orderItems(order.Order_ID)[0]).toMatchObject({ Quantity: 12, Product_Material_ID: '', Project_ID: '' });
+        expect(orderItems(order.Order_ID)[0].Product_Material_Quantities).toBeUndefined();
+    });
+
+    it('narudžba nazivom: jedan poziv modela, bez find_material', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Naruči 4 baglame za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P, quantity: 4 }] } }] },
+        ]);
+        expect(mockSent).toHaveLength(1);
+        // Sve što projekat treba je već naručeno ili u nacrtu → 4 ide za zalihu.
+        expect(out.reply).toMatch(/• 4 kom Baglama ravna — .*\(0 za projekat \+ 4 za zalihu\)/);
+    });
+
+    it('naziv koji pokriva dva materijala → kandidati, model bira', async () => {
+        mockStore.set('product_materials/c', { ID: 'pm-c', Organization_ID: 'org1', Product_ID: 'pr-hod', Material_ID: 'mat-k', Material_Name: 'Baglama kutna', Quantity: 6, Unit: 'kom', Unit_Price: 3, Total_Price: 18, Status: 'Nije naručeno', Supplier: 'Häfele', Order_ID: '' });
+        const P = grb();
+        const before = docs('orders').length;
+        mockSent.length = 0;
+        await say('Naruči 2 baglame za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P, quantity: 2 }] } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: 'O1', quantity: 2 }] } }] },
+        ]);
+        const candidates = JSON.parse(mockSent[1].messages.at(-1).content[0].content).error as string;
+        expect(candidates).toMatch(/nije jednoznačno/);
+        expect(candidates).toMatch(/Baglama kutna/);
+        expect(candidates).toMatch(/Baglama ravna/);
+        expect(docs('orders').length).toBe(before + 1);
+    });
+
+    it('PDF narudžbe: pravi PDF s našim slovima', async () => {
+        const order = await getOrderWithItems('org1', firstOrderId);
+        const pdf = buildOrderPdf({
+            order: { ...order!, Notes: 'Isporuka u četvrtak, ćošak — đak' },
+            supplier: { Phone: '033 111 222' } as any,
+            specs: [],
+            company: { name: 'Lux-co d.o.o.', address: 'Sarajevo' },
+        });
+        expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+        expect(pdf.length).toBeGreaterThan(10_000); // ugrađen font
+    });
+
+    it('oznake se brišu, ali broj narudžbe ostaje', () => {
+        expect(stripAliases('Narudžba N2026-10/T7 je spremna (O1)')).toBe('Narudžba N2026-10/T7 je spremna');
+        expect(stripAliases('Imer W9 i M8 vijci')).toBe('Imer i M8 vijci');
     });
 });
 

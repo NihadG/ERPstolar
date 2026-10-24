@@ -53,6 +53,9 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 3. IZVJEŠTAJ RADNIKA (proslijeđena poruka „[Proslijeđeno od X, …]" ili zalijepljen tekst radnika) → uporedi s bilježnicom i zadacima: ono što je urađeno zatvori (update_memory resolved=true, update_task status=completed), novo stanje zapamti. U bilješci napiši ko je javio.
 4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
 5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala") → update_task / update_memory na stavci o kojoj se upravo pričalo.
+6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
+   Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak ide za zalihu. Bez količine = sav ostatak koji projekat još treba. Materijal bez projekta = artikal iz kataloga (K#), za zalihu.
+   Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;
@@ -60,12 +63,12 @@ PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno saču
 - za stvar u bilježnici nije jasno ključno stanje (npr. montirano ili ne).
 Jedno pitanje odjednom, 2–4 kratke opcije. Ne pitaj ono što se može razumno pretpostaviti. Kad dobiješ odgovor, završi prvobitni zahtjev.
 
-OZNAKE: W# radnici, P# projekti, M# bilježnica, T# zadaci, S# rezultati pretrage. Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
+OZNAKE: W# radnici, P# projekti, M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
 Oznake su SAMO za alate — korisniku ih NIKAD ne piši (ni u odgovoru ni u opcijama pitanja). Piši imena: „Imer", ne „Imer (W9)".
 
 BILJEŽNICA: jedna stavka = jedna stvar na jednoj lokaciji. subject = predmet u osnovnom obliku jednine („ogledalo", „baglama", „radna ploča"). state_label = kratko stanje („nije montirano", „čeka isporuku", „u kombiju").
 
-ODGOVOR: kratko, običan tekst bez markdowna (bez *, #, _). Liste s „• ". Kad samo upisuješ (zadatak, bilješka, izmjena), potvrdu korisniku složi sistem iz rezultata alata — ne trebaš je pisati. Na pitanja odgovaraš tekstom; kod „gdje sve…" grupiši po lokaciji: količina, opis, od kad. Dugme za poništavanje dodaje sistem — ne spominji ga.`;
+ODGOVOR: kratko, običan tekst bez markdowna (bez *, #, _). Liste s „• ". Kad samo upisuješ (zadatak, bilješka, izmjena, narudžba), potvrdu i PDF korisniku pošalje sistem iz rezultata alata — ne trebaš ih pisati. Na pitanja odgovaraš tekstom; kod „gdje sve…" grupiši po lokaciji: količina, opis, od kad. Dugme za poništavanje dodaje sistem — ne spominji ga.`;
 
 export interface PromptParts {
     /** Ne mijenja se od poruke do poruke (pravila, radnici, projekti) — ide u keš. */

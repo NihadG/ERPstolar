@@ -81,6 +81,25 @@ export async function editMessageText(chatId: number | string, messageId: number
     }
 }
 
+/** Fajl kao dokument (PDF narudžbe), s opisom i dugmadima ispod. */
+export async function sendDocument(
+    chatId: number | string,
+    file: { buffer: Buffer; filename: string; mime?: string },
+    caption?: string,
+    buttons?: ButtonRows,
+): Promise<{ message_id: number }> {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('document', new Blob([new Uint8Array(file.buffer)], { type: file.mime || 'application/pdf' }), file.filename);
+    if (caption) form.append('caption', caption.slice(0, 1000));
+    const markup = keyboard(buttons);
+    if (markup) form.append('reply_markup', JSON.stringify(markup));
+    const res = await fetch(`${API}/bot${token()}/sendDocument`, { method: 'POST', body: form, signal: AbortSignal.timeout(30_000) });
+    const data = await res.json().catch(() => null) as { ok?: boolean; result?: { message_id: number }; description?: string } | null;
+    if (!res.ok || !data?.ok) throw new Error(`Telegram sendDocument: ${data?.description || res.status}`);
+    return data.result as { message_id: number };
+}
+
 export async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
     await tg('answerCallbackQuery', { callback_query_id: callbackQueryId, ...(text ? { text } : {}) }).catch(() => undefined);
 }

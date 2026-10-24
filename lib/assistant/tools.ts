@@ -19,7 +19,12 @@ import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from 
 import { memoryLine, taskLine } from './prompt';
 import { getAllTasks } from '@/lib/server/fieldRepo';
 import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
-import type { Material, MemoryItem, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
+import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
+import {
+    createDraftOrder, getOrderWithItems, listOrders, loadProjectMaterials, type DraftLine, type OrderableRow,
+} from '@/lib/server/orderWrites';
+import type { Material, MemoryItem, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -120,11 +125,51 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'find_material',
-        description: 'Traži materijal u katalogu ERP-a (tačan naziv, jedinica). Za narudžbe kad nije jasno koji artikal.',
+        description: 'Stanje materijala: šta projekti još trebaju naručiti (O#: potrebno, naručeno, u nacrtu, ostalo) i artikli kataloga (K#). Za pitanja o stanju; za samu narudžbu nije potreban.',
         input_schema: {
             type: 'object',
-            properties: { query: str },
+            properties: {
+                query: { ...str, description: 'Naziv materijala: „baglama", „iveral bijeli 18".' },
+                project: { ...str, description: 'Oznaka P# ako je rečen projekat.' },
+            },
             required: ['query'],
+        },
+    },
+    {
+        name: 'create_order',
+        description: 'Narudžba materijala (nacrt u ERP Narudžbama) + PDF korisniku. Stavku zadaj nazivom (material + project) — find_material nije potreban; ako naziv nije jednoznačan, alat vrati kandidate s oznakama. Jedan dobavljač = jedna narudžba; više dobavljača se samo razdvoji.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                lines: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            material: { ...str, description: 'Naziv materijala iz poruke: „baglama".' },
+                            project: { ...str, description: 'Oznaka P#; bez projekta = zaliha iz kataloga.' },
+                            ref: { ...str, description: 'Umjesto naziva: O# ili K# iz find_material / kandidata.' },
+                            quantity: { ...num, description: 'Tačno rečena količina. Izostavi za materijal projekta kad treba sav ostatak.' },
+                        },
+                    },
+                },
+                supplier: { ...str, description: 'Dobavljač ako ga je korisnik rekao (inače onaj s materijala).' },
+                expected_delivery: { ...str, description: 'Očekivana isporuka YYYY-MM-DD ako je rečena.' },
+                note: { ...str, description: 'Napomena za dobavljača ako je rečena.' },
+            },
+            required: ['lines'],
+        },
+    },
+    {
+        name: 'order_pdf',
+        description: 'Pošalji PDF postojeće narudžbe. Bez broja → zadnja narudžba (za projekat/dobavljača ako su rečeni).',
+        input_schema: {
+            type: 'object',
+            properties: {
+                number: { ...str, description: 'Broj narudžbe ili njegov dio („K7").' },
+                project: { ...str, description: 'Oznaka P#.' },
+                supplier: str,
+            },
         },
     },
     {
@@ -161,14 +206,30 @@ export interface ToolEnv {
     /** Potvrde za korisnika, po jedna po upisu — od njih se složi odgovor bez drugog poziva modela. */
     summaries: string[];
     question?: { question: string; options: string[] };
+    /** Rezultati find_material: materijali projekata (O#) i katalog (K#). */
+    orderGroups?: Aliased<OrderGroup>[];
+    catalogHits?: Aliased<Material>[];
+    /** Narudžbe čiji PDF ide korisniku poslije odgovora (`draft` = dugme „Poslano"). */
+    documents?: { orderId: string; draft: boolean }[];
+    /** Učitano iz baze tokom ove poruke (materijali projekata, katalog). */
+    cache?: { rows?: { key: string; value: OrderableRow[] }; catalog?: Material[] };
+}
+
+/** Isti materijal na više pozicija jednog projekta = jedan red za naručivanje. */
+export interface OrderGroup {
+    projectId: string;
+    projectName: string;
+    name: string;
+    unit: string;
+    rows: OrderableRow[];
 }
 
 /**
- * Alati koji samo upisuju. Kad je model pozvao samo njih i svi su uspjeli,
- * odgovor složi sistem iz `summaries` — drugi poziv modela bi samo prepričao
- * isto, uz trošak i sekundu-dvije čekanja.
+ * Alati čiji rezultat korisniku pokazuje sam sistem. Kad je model pozvao
+ * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
+ * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'order_pdf']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -464,25 +525,280 @@ async function searchMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     };
 }
 
-async function findMaterialTool(env: ToolEnv, a: Args): Promise<ToolResult> {
-    const query = text(a.query, 80);
-    if (!query) return { ok: false, error: 'Prazan upit.' };
-    const snap = await adminDb().collection('materials').where('Organization_ID', '==', env.orgId).get();
-    const hits = snap.docs
-        .map(d => d.data() as Material)
+// ─── Narudžbe ─────────────────────────────────────────────────────────
+
+const q = (n: number) => formatQty(n);
+
+function groupLine(alias: string, g: OrderGroup): string {
+    const sum = (k: 'needed' | 'onStock' | 'ordered' | 'received' | 'inDrafts' | 'available') => g.rows.reduce((s, r) => s + r[k], 0);
+    const suppliers = Array.from(new Set(g.rows.map(r => r.supplier).filter(Boolean)));
+    const products = Array.from(new Set(g.rows.map(r => r.productName)));
+    return [
+        alias, `${g.name} (${g.unit})`, `projekat: ${g.projectName}`,
+        `treba ${q(sum('needed'))}`,
+        ...(sum('onStock') ? [`na stanju ${q(sum('onStock'))}`] : []),
+        `naručeno ${q(sum('ordered'))}`, `primljeno ${q(sum('received'))}`,
+        ...(sum('inDrafts') ? [`u nacrtu ${q(sum('inDrafts'))}`] : []),
+        `OSTALO ZA NARUČITI ${q(sum('available'))}`,
+        `dobavljač: ${suppliers.join(', ') || '—'}`,
+        `pozicije: ${products.slice(0, 4).join(', ')}${products.length > 4 ? '…' : ''}`,
+    ].join(' | ');
+}
+
+type ProjectRef = AssistantContext['projects'][number]['value'];
+
+/**
+ * Materijali projekata (O#) i katalog (K#) koji odgovaraju upitu, s novim
+ * oznakama. Učitano se pamti za ovu poruku — druga stavka iste narudžbe
+ * ne čita bazu ponovo.
+ */
+async function searchOrderables(env: ToolEnv, query: string, project: ProjectRef | null): Promise<{ groups: Aliased<OrderGroup>[]; catalog: Aliased<Material>[] }> {
+    const projects = project ? [project] : env.ctx.projects.map(p => p.value);
+    const nameOf = new Map(projects.map(p => [p.id, projectLabel(p)]));
+    const key = projects.map(p => p.id).join(',');
+    env.cache = env.cache || {};
+    const cache = env.cache;
+
+    const [rows, catalogAll] = await Promise.all([
+        cache.rows?.key === key ? cache.rows.value : loadProjectMaterials(env.orgId, projects.map(p => p.id)),
+        cache.catalog || adminDb().collection('materials').where('Organization_ID', '==', env.orgId).get()
+            .then(s => s.docs.map(d => d.data() as Material)),
+    ]);
+    cache.rows = { key, value: rows };
+    cache.catalog = catalogAll;
+
+    const groups = new Map<string, OrderGroup>();
+    for (const r of rows) {
+        if (matchScore(query, [r.name]) < 0.7) continue;
+        const key = `${r.projectId}::${materialGroupKey(r.name, r.unit)}`;
+        const g = groups.get(key) || { projectId: r.projectId, projectName: nameOf.get(r.projectId) || 'Projekat', name: r.name, unit: r.unit, rows: [] };
+        g.rows.push(r);
+        groups.set(key, g);
+    }
+    // Prvo ono što još treba naručiti, pa ostalo (da model vidi i „već naručeno").
+    const ranked = Array.from(groups.values())
+        .sort((x, y) => Number(y.rows.some(r => r.available > 0)) - Number(x.rows.some(r => r.available > 0)) || x.projectName.localeCompare(y.projectName, 'bs'))
+        .slice(0, 10);
+    const base = env.orderGroups?.length || 0;
+    const aliased = ranked.map((g, i) => ({ alias: `O${base + i + 1}`, value: g }));
+    env.orderGroups = [...(env.orderGroups || []), ...aliased];
+
+    const catalog = catalogAll
         .map(m => ({ m, s: matchScore(query, [m.Name, `${m.Name} ${m.Category || ''}`]) }))
         .filter(x => x.s >= 0.7)
         .sort((x, y) => y.s - x.s)
         .slice(0, 6);
-    return { ok: true, materials: hits.map(({ m }) => `${m.Name} (${m.Unit || 'kom'}${m.Category ? `, ${m.Category}` : ''})`) };
+    const cbase = env.catalogHits?.length || 0;
+    const catAliased = catalog.map(({ m }, i) => ({ alias: `K${cbase + i + 1}`, value: m }));
+    env.catalogHits = [...(env.catalogHits || []), ...catAliased];
+    return { groups: aliased, catalog: catAliased };
+}
+
+function catalogLine(alias: string, m: Material): string {
+    return `${alias} | ${m.Name} (${m.Unit || 'kom'}) | dobavljač: ${m.Default_Supplier || '—'}`;
+}
+
+async function findMaterialTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const query = text(a.query, 80);
+    if (!query) return { ok: false, error: 'Prazan upit.' };
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const { groups: aliased, catalog: catAliased } = await searchOrderables(env, query, project);
+    return {
+        ok: true,
+        project_materials: aliased.map(g => groupLine(g.alias, g.value)),
+        catalog: catAliased.map(({ alias, value }) => catalogLine(alias, value)),
+        ...(aliased.length || catAliased.length ? {} : { note: 'Nema ni na projektima ni u katalogu. Pitaj korisnika tačan naziv.' }),
+    };
+}
+
+interface PlannedLine extends DraftLine {
+    supplier: string;
+    projectIds: string[];
+    label: string;
+}
+
+function mostCommon(values: string[]): string {
+    const counts = new Map<string, number>();
+    values.filter(Boolean).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
+    return Array.from(counts.entries()).sort((x, y) => y[1] - x[1])[0]?.[0] || '';
+}
+
+/**
+ * Stavka zadata nazivom („baglama" + projekat) umjesto oznakom: kad je
+ * jednoznačna, narudžba nastaje bez prethodnog find_material — jedan poziv
+ * modela manje. Inače se vraćaju kandidati s oznakama, pa model bira ili pita.
+ */
+async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderGroup; item?: Material } | string> {
+    const material = text(line.material, 80);
+    const project = line.project ? resolveAlias(env.ctx.projects, line.project) : null;
+    if (line.project && !project) return `Projekat ${String(line.project)} ne postoji u listi.`;
+    const { groups, catalog } = await searchOrderables(env, material, project);
+    // Dva različita materijala („baglama ravna" / „kutna") = pitanje, ne pogađanje.
+    // Isti materijal na više projekata: bira se jedini koji još nešto treba.
+    const distinct = new Set(groups.map(g => materialGroupKey(g.value.name, g.value.unit)));
+    const open = groups.filter(g => g.value.rows.some(r => r.available > 0));
+    const group = distinct.size !== 1 ? undefined : groups.length === 1 ? groups[0] : open.length === 1 ? open[0] : undefined;
+    if (group) return { group: group.value };
+    if (!project && !groups.length && catalog.length === 1) return { item: catalog[0].value };
+    if (!groups.length && !catalog.length) return `„${material}" nema ni na projektima ni u katalogu. Pitaj korisnika tačan naziv.`;
+    return [
+        `„${material}" nije jednoznačno — ponovi create_order s ref ili pitaj korisnika (ask_user):`,
+        ...groups.map(g => groupLine(g.alias, g.value)),
+        ...catalog.map(c => catalogLine(c.alias, c.value)),
+    ].join('\n');
+}
+
+/** Jedna stavka zahtjeva → raspodjela na materijale projekta + višak za zalihu. */
+async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Promise<PlannedLine | string> {
+    const ref = text(line.ref, 8).toUpperCase();
+    const wanted = number(line.quantity);
+    let group = ref ? resolveAlias(env.orderGroups || [], ref) : null;
+    let byName: Material | undefined;
+    if (!ref && text(line.material)) {
+        const found = await resolveByName(env, line);
+        if (typeof found === 'string') return found;
+        group = found.group || null;
+        byName = found.item;
+    }
+    if (group) {
+        const available = roundQty(group.rows.reduce((s, r) => s + r.available, 0));
+        const quantity = wanted ?? available;
+        if (!(quantity > 0)) return `${group.name} za ${group.projectName}: ništa ne ostaje za naručiti (već naručeno ili u nacrtu). Reci količinu ako je za zalihu.`;
+        const candidates = group.rows.filter(r => r.available > 0);
+        const { allocations, orderOnlyExtra } = planMaterialGroupOrder(quantity,
+            candidates.map(r => ({ id: r.materialId, needed: r.available })), undefined, group.unit === 'kom');
+        const members = (candidates.length ? candidates : group.rows.slice(0, 1)).map(r => ({
+            materialId: r.materialId, productId: r.productId, productName: r.productName, projectId: r.projectId,
+            allocation: allocations[r.materialId] || 0,
+        }));
+        const forProject = roundQty(quantity - orderOnlyExtra);
+        const rest = roundQty(available - forProject);
+        const detail = orderOnlyExtra > 0
+            ? `${q(forProject)} za projekat + ${q(orderOnlyExtra)} za zalihu`
+            : rest > 0 ? `ostaje još ${q(rest)} ${group.unit}` : 'sve što projekat treba';
+        return {
+            materialName: group.name,
+            unit: group.unit,
+            quantity,
+            unitPrice: group.rows[0].unitPrice,
+            members,
+            supplier: supplierOverride || mostCommon(group.rows.map(r => r.supplier)),
+            projectIds: [group.projectId],
+            label: `• ${q(quantity)} ${group.unit} ${group.name} — ${group.projectName} (${detail})`,
+        };
+    }
+    const item = byName || (ref ? resolveAlias(env.catalogHits || [], ref) : null);
+    if (item) {
+        if (!(wanted && wanted > 0)) return `Za ${item.Name} iz kataloga treba količina.`;
+        return {
+            materialName: item.Name,
+            unit: item.Unit || 'kom',
+            quantity: wanted,
+            unitPrice: item.Default_Unit_Price || 0,
+            members: [],
+            supplier: supplierOverride || item.Default_Supplier || '',
+            projectIds: [],
+            label: `• ${q(wanted)} ${item.Unit || 'kom'} ${item.Name} — za zalihu`,
+        };
+    }
+    return `Stavka ${ref || '?'} ne postoji — navedi material (naziv) ili ref iz find_material.`;
+}
+
+function orderName(projectNames: string[]): string {
+    if (!projectNames.length) return 'Zaliha';
+    if (projectNames.length <= 2) return projectNames.join(' + ');
+    return `${projectNames[0]} + još ${projectNames.length - 1}`;
+}
+
+async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const lines = Array.isArray(a.lines) ? (a.lines as Args[]).slice(0, 30) : [];
+    if (!lines.length) return { ok: false, error: 'Nema stavki.' };
+    const supplierText = text(a.supplier, 80);
+    const planned: PlannedLine[] = [];
+    for (const line of lines) {
+        const p = await planLine(env, line, supplierText);
+        if (typeof p === 'string') return { ok: false, error: p };
+        planned.push(p);
+    }
+    const delivery = isIsoDate(a.expected_delivery) ? a.expected_delivery : undefined;
+
+    const supplierSnap = await adminDb().collection('suppliers').where('Organization_ID', '==', env.orgId).get();
+    const suppliers = supplierSnap.docs.map(d => d.data() as Supplier);
+    const resolveSupplier = (name: string) => {
+        const hit = name ? suppliers.find(s => foldText(s.Name) === foldText(name))
+            || suppliers.map(s => ({ s, score: matchScore(name, [s.Name]) })).filter(x => x.score >= 0.85).sort((x, y) => y.score - x.score)[0]?.s : undefined;
+        return { id: hit?.Supplier_ID || '', name: hit?.Name || name || 'Neodređen' };
+    };
+
+    // Kao čarobnjak „odvojeno": jedna narudžba po dobavljaču.
+    const bySupplier = new Map<string, PlannedLine[]>();
+    for (const p of planned) {
+        const key = resolveSupplier(p.supplier).name;
+        bySupplier.set(key, [...(bySupplier.get(key) || []), p]);
+    }
+
+    const projectName = new Map(env.ctx.projects.map(p => [p.value.id, projectLabel(p.value)]));
+    const created: string[] = [];
+    for (const [, group] of Array.from(bySupplier.entries())) {
+        const supplier = resolveSupplier(group[0].supplier);
+        const names = Array.from(new Set(group.flatMap(p => p.projectIds))).map(id => projectName.get(id) || 'Projekat');
+        const extras = group.filter(p => p.members.length && p.quantity > p.members.reduce((s, m) => s + m.allocation, 0));
+        const notes = [
+            text(a.note, 300),
+            ...extras.map(p => `Višak za zalihu: ${q(roundQty(p.quantity - p.members.reduce((s, m) => s + m.allocation, 0)))} ${p.unit} ${p.materialName}.`),
+            'Kreirano preko Telegram asistenta.',
+        ].filter(Boolean).join(' ');
+
+        const draft = await createDraftOrder(env.orgId, {
+            supplierId: supplier.id,
+            supplierName: supplier.name,
+            name: orderName(names),
+            notes,
+            expectedDelivery: delivery,
+            lines: group,
+        });
+        const label = `narudžba ${draft.orderNumber}`;
+        await Promise.all(draft.paths.map(path => recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before: null, label })));
+        env.changes.push(label);
+        env.documents = [...(env.documents || []), { orderId: draft.orderId, draft: true }];
+        env.summaries.push([`🧾 Narudžba ${draft.orderNumber} · ${supplier.name} (nacrt)`, ...group.map(p => p.label)].join('\n'));
+        created.push(`${draft.orderNumber} (${supplier.name})`);
+    }
+    return { ok: true, orders: created, note: 'PDF i dugme „Poslano" sistem šalje korisniku.' };
+}
+
+async function orderPdfTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const wantedNo = foldText(text(a.number, 40)).replace(/\s+/g, '');
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const supplier = text(a.supplier, 80);
+
+    let orders = (await listOrders(env.orgId)).sort((x, y) => String(y.Order_Date).localeCompare(String(x.Order_Date)));
+    if (wantedNo) orders = orders.filter(o => foldText(o.Order_Number).replace(/\s+/g, '').includes(wantedNo));
+    if (supplier) orders = orders.filter(o => matchScore(supplier, [o.Supplier_Name]) >= 0.7);
+    if (project) {
+        const withProject: typeof orders = [];
+        for (const o of orders.slice(0, 40)) {
+            const full = await getOrderWithItems(env.orgId, o.Order_ID);
+            if (full?.items?.some(i => i.Project_ID === project.id)) withProject.push(o);
+            if (withProject.length) break;
+        }
+        orders = withProject;
+    }
+    const order = orders[0];
+    if (!order) return { ok: false, error: 'Nema takve narudžbe.' };
+    env.documents = [...(env.documents || []), { orderId: order.Order_ID, draft: order.Status === 'Nacrt' }];
+    env.summaries.push(`📄 Narudžba ${order.Order_Number} · ${order.Supplier_Name} (${order.Status})`);
+    return { ok: true, order: order.Order_Number, status: order.Status };
 }
 
 /** Oznake (W9, T6…) su interne — „Imer (W9)" → „Imer". Model ih ponekad ipak napiše. */
 export function stripAliases(s: string): string {
     return s
-        .replace(/\s*\((?:[WPMTS]\d+(?:\s*,\s*[WPMTS]\d+)*)\)/g, '')
-        // Golo „W9" se briše, ali ne „M8" — to su vijci, ne oznaka.
-        .replace(/\s*\b[WPTS]\d+\b(?=[\s,.:;)]|$)/g, '')
+        .replace(/\s*\((?:[WPMTSOK]\d+(?:\s*,\s*[WPMTSOK]\d+)*)\)/g, '')
+        // Golo „W9" se briše, ali ne „M8" (vijci) ni „K7" (dio broja narudžbe „N2026-10/K7").
+        .replace(/(^|\s)[WPTSO]\d+\b(?=[\s,.:;)]|$)/g, '$1')
         .replace(/[ \t]{2,}/g, ' ')
         .trim();
 }
@@ -504,6 +820,8 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'update_memory': return await updateMemoryTool(env, args);
             case 'search_memory': return await searchMemoryTool(env, args);
             case 'find_material': return await findMaterialTool(env, args);
+            case 'create_order': return await createOrderTool(env, args);
+            case 'order_pdf': return await orderPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }

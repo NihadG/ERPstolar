@@ -12,9 +12,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { setTaskStatus, taskRef } from '@/lib/server/fieldWrites';
+import { sendOrder } from '@/lib/server/orderWrites';
 import {
-    answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping,
+    answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
+import { sendOrderPdf } from './orderDocuments';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant } from './brain';
@@ -24,7 +26,7 @@ import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
 import {
     addEntry, attachEntryResults, claimUpdate, consumeLinkCode, getLinkByTelegramId,
-    getSession, saveSession, undoTurn, type AssistantLink,
+    getSession, saveSession, undoTurn, type AssistantLink, type AssistantSession,
 } from './store';
 import type { Task } from '@/lib/types';
 
@@ -39,7 +41,9 @@ const HELP =
     '• „Napomeni me da kažem Ameru da povuče ogledala u kombi"\n' +
     '• „U stanu 304 imam 3 ogledala od 1 m" → bilježnica\n' +
     '• Proslijeđenu poruku radnika → ažuriram stanje\n' +
-    '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n\n' +
+    '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n' +
+    '• „Naruči 5 baglama za Stan 304" → narudžba (nacrt) + PDF\n' +
+    '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Komande: /danas · /otvoreno · /pomoc';
 
 type MessageIncoming = Extract<Incoming, { type: 'message' }>;
@@ -54,9 +58,9 @@ export async function handleTelegramUpdate(update: TgUpdate): Promise<void> {
         return;
     }
     // Telegram ponavlja webhook kad odgovor kasni — drugi put se ništa ne radi.
-    if (!(await claimUpdate(inc.updateId))) return;
-
-    const link = await getLinkByTelegramId(inc.from.id);
+    // Veza se čita usporedo: svaki krug do baze je vrijeme koje korisnik čeka.
+    const [claimed, link] = await Promise.all([claimUpdate(inc.updateId), getLinkByTelegramId(inc.from.id)]);
+    if (!claimed) return;
 
     if (inc.type === 'message' && inc.command?.name === 'start') {
         if (inc.command.arg) {
@@ -113,26 +117,30 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         await sendTyping(inc.chatId);
     }
 
-    const entryId = await addEntry({
-        Organization_ID: link.orgId,
-        Owner_UID: link.uid,
-        Channel: 'telegram',
-        Kind: inc.forward ? 'forward' : inc.voice ? 'voice' : 'text',
-        Raw_Text: text,
-        Forward_From: inc.forward?.from,
-        Forward_Date: inc.forward?.date,
-        Telegram_File_ID: inc.voice?.fileId,
-    });
+    const [entryId, session] = await Promise.all([
+        addEntry({
+            Organization_ID: link.orgId,
+            Owner_UID: link.uid,
+            Channel: 'telegram',
+            Kind: inc.forward ? 'forward' : inc.voice ? 'voice' : 'text',
+            Raw_Text: text,
+            Forward_From: inc.forward?.from,
+            Forward_Date: inc.forward?.date,
+            Telegram_File_ID: inc.voice?.fileId,
+        }),
+        getSession(inc.chatId),
+    ]);
 
-    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard });
+    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session });
 }
 
 async function converse(
     link: AssistantLink,
     chatId: number,
-    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string },
+    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession },
 ): Promise<void> {
-    const session = await getSession(chatId);
+    const started = Date.now();
+    const session = input.session || await getSession(chatId);
     const out = await runAssistant({
         orgId: link.orgId,
         uid: link.uid,
@@ -141,12 +149,24 @@ async function converse(
         entryId: input.entryId,
         session,
     });
-    await saveSession(chatId, out.session);
+    // Prvo odgovor korisniku, pa spremanje — sesija i dnevnik ne trebaju da ga čekaju.
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
     await sendMessage(chatId, prefix + out.reply, out.buttons);
-    if (input.entryId) {
-        await attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)));
-    }
+    console.log(`[assistant] odgovor za ${Date.now() - started} ms`);
+    await Promise.all([
+        saveSession(chatId, out.session),
+        input.entryId
+            ? attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)))
+            : Promise.resolve(),
+        ...(out.documents || []).map(async doc => {
+            try {
+                await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
+            } catch (e) {
+                console.error('[assistant] PDF narudžbe pao:', e);
+                await sendMessage(chatId, '📄 Narudžba je sačuvana, ali PDF nije uspio. Otvori je u ERP-u → Narudžbe.');
+            }
+        }),
+    ]);
 }
 
 async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promise<void> {
@@ -171,6 +191,16 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         const undone = await undoTurn(arg, link.uid);
         await answerCallbackQuery(inc.callbackId, undone.length ? 'Poništeno' : 'Već poništeno');
         if (undone.length) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n\n↩️ Poništeno: ${undone.join(', ')}`);
+        return;
+    }
+
+    if (kind === 'ordsent') {
+        const result = await sendOrder(link.orgId, arg);
+        await answerCallbackQuery(inc.callbackId, result.ok ? 'Narudžba je poslana' : result.error);
+        await tg('editMessageReplyMarkup', { chat_id: inc.chatId, message_id: inc.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+        if (result.ok) {
+            await sendMessage(inc.chatId, `📤 Narudžba ${result.orderNumber} je poslana — materijali se sad vode kao naručeni.`);
+        }
         return;
     }
 

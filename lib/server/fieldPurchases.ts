@@ -14,6 +14,8 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from './firebaseAdmin';
+import { orderItemAllocations } from '@/lib/orderMaterialAllocation';
+import { settledMaterialStatus } from '@/lib/materialCoverage';
 import type { OrderItem, ProductMaterial } from '@/lib/types';
 
 const IN_CHUNK = 30;
@@ -22,12 +24,6 @@ function chunk<T>(arr: T[], size = IN_CHUNK): T[][] {
     const out: T[][] = [];
     for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
     return out;
-}
-
-/** Jedna stavka narudžbe može pokrivati više materijala (grupisane narudžbe). */
-function materialIdsOf(item: OrderItem): string[] {
-    if (item.Product_Material_IDs?.length) return item.Product_Material_IDs.filter(Boolean);
-    return item.Product_Material_ID ? [item.Product_Material_ID] : [];
 }
 
 export interface ReceiveResult {
@@ -77,14 +73,13 @@ export async function setItemsReceived(
             : { Status: 'Naručeno', Received_Date: '' });
         changed++;
 
-        const matIds = materialIdsOf(item);
-        const perMaterial = matIds.length > 0 ? (item.Quantity || 0) / matIds.length : 0;
-        for (const matId of matIds) {
+        // Količina po materijalu iz raspodjele stavke (višak za zalihu nije ni na jednom materijalu).
+        for (const [matId, quantity] of Object.entries(orderItemAllocations(item))) {
             const prev = materialDeltas.get(matId) || { status: '', ordered: 0, receivedQty: 0 };
             materialDeltas.set(matId, {
                 status: received ? 'Primljeno' : 'Naručeno',
-                ordered: prev.ordered + (received ? -perMaterial : perMaterial),
-                receivedQty: prev.receivedQty + (received ? perMaterial : -perMaterial),
+                ordered: prev.ordered + (received ? -quantity : quantity),
+                receivedQty: prev.receivedQty + (received ? quantity : -quantity),
             });
         }
 
@@ -108,10 +103,13 @@ export async function setItemsReceived(
             const mat = d.data() as ProductMaterial;
             const delta = materialDeltas.get(mat.ID);
             if (!delta) return;
+            const ordered = Math.max(0, (mat.Ordered_Quantity || 0) + delta.ordered);
+            const receivedQty = Math.max(0, (mat.Received_Quantity || 0) + delta.receivedQty);
             matBatch.update(d.ref, {
-                Status: delta.status,
-                Ordered_Quantity: Math.max(0, (mat.Ordered_Quantity || 0) + delta.ordered),
-                Received_Quantity: Math.max(0, (mat.Received_Quantity || 0) + delta.receivedQty),
+                // Materijal u više narudžbi ostaje „Naručeno" dok sve ne stignu.
+                Status: settledMaterialStatus(delta.status, ordered, receivedQty),
+                Ordered_Quantity: ordered,
+                Received_Quantity: receivedQty,
             });
         });
         await matBatch.commit();

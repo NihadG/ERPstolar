@@ -14,6 +14,7 @@
 
 import type { Project, ProductMaterial } from '../types';
 import type { MaterialOrderPlanGroup } from '../database';
+import { materialCoverage } from '../materialCoverage';
 
 const UNKNOWN_SUPPLIER = 'Nepoznat dobavljač';
 const alphabet = new Intl.Collator('bs', { numeric: true, sensitivity: 'base' });
@@ -44,15 +45,8 @@ export function commandMaterialRows(projects: Project[]): CommandMaterialRow[] {
     const rows: CommandMaterialRow[] = [];
     for (const project of projects) {
         for (const product of project.products || []) {
-            const multiplier = product.Quantity > 0 ? product.Quantity : 1;
             for (const material of product.materials || []) {
-                const needed = (material.Quantity || 0) * multiplier;
-                const onStock = material.On_Stock || 0;
-                const ordered = material.Ordered_Quantity || 0;
-                const received = material.Received_Quantity || 0;
-                const covered = material.Status === 'Primljeno' || material.Status === 'Na stanju'
-                    || (material.Status === 'Naručeno' && !!material.Order_ID);
-                const toOrder = needed - onStock - ordered - received;
+                const { needed, onStock, received, toOrder } = materialCoverage(material, product.Quantity);
                 rows.push({
                     ...material,
                     projectId: project.Project_ID,
@@ -62,8 +56,8 @@ export function commandMaterialRows(projects: Project[]): CommandMaterialRow[] {
                     name: material.Material_Name,
                     needed,
                     remaining: Math.max(0, needed - onStock - received),
-                    toOrder: Math.max(0, toOrder),
-                    orderable: !covered && toOrder > 0,
+                    toOrder,
+                    orderable: toOrder > 0,
                 });
             }
         }

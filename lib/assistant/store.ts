@@ -241,13 +241,29 @@ export async function undoTurn(turnId: string, uid: string): Promise<string[]> {
         .filter(o => o.uid === uid && !o.undone)
         .sort((a, b) => b.at.localeCompare(a.at));
 
+    // Narudžba koja je u međuvremenu poslana već je pomjerila količine na
+    // materijalima — brisanje bi ih ostavilo naduvane. Ona se ne poništava.
+    const sent = new Set<string>();
+    for (const op of ops) {
+        if (op.before || !op.path.startsWith('orders/')) continue;
+        const order = (await db.doc(op.path).get()).data() as { Order_ID?: string; Status?: string } | undefined;
+        if (order?.Order_ID && order.Status !== 'Nacrt') sent.add(order.Order_ID);
+    }
+
     const labels: string[] = [];
     for (const op of ops) {
         const target = db.doc(op.path);
+        if (sent.size && !op.before && (op.path.startsWith('orders/') || op.path.startsWith('order_items/'))) {
+            const orderId = ((await target.get()).data() as { Order_ID?: string } | undefined)?.Order_ID;
+            if (orderId && sent.has(orderId)) {
+                labels.push(`${op.label} (već poslana — vrati je u nacrt u ERP-u)`);
+                continue;
+            }
+        }
         if (op.before) await target.set(op.before);
         else await target.delete();
         await op.ref.update({ undone: true });
         labels.push(op.label);
     }
-    return labels;
+    return Array.from(new Set(labels));
 }
