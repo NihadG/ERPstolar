@@ -18,7 +18,7 @@ import {
     writeBatch,
 } from '../shared/firestoreClient';
 import { v4 as uuidv4 } from 'uuid';
-import { splitDnevnicaByOrder } from '../../laborSplit';
+import { splitWorkerDay } from '../../laborSplit';
 import type { Worker } from '../../types';
 
 // ============================================
@@ -113,27 +113,16 @@ export async function saveWorker(
                             // presence iz zapisa (per radnik-dan); poštuje pola dana
                             let presence = 1;
                             for (const d of docs) { const p = d.data().Presence; if (p === 0.5 || p === 1) { presence = p; break; } }
-                            // DVONIVOVSKA PODJELA: po nalogu pa po proizvodu — isto kao saveDailyWorkBooking.
-                            const orderIds: string[] = [];
-                            const byOrder = new Map<string, typeof docs>();
-                            docs.forEach(d => {
-                                const woId = (d.data().Work_Order_ID as string) || '__none__';
-                                if (!byOrder.has(woId)) { byOrder.set(woId, [] as unknown as typeof docs); orderIds.push(woId); }
-                                (byOrder.get(woId) as typeof docs).push(d);
-                            });
-                            const { amounts, dayFractions } = splitDnevnicaByOrder(newRate, presence, orderIds.map(id => byOrder.get(id)!.length));
+                            // DVONIVOVSKA PODJELA (nalog → proizvod), uz izričit udio dana (Day_Weight) gdje postoji.
+                            const shares = splitWorkerDay(newRate, presence, docs.map(d => d.data() as { Work_Order_ID?: string; Day_Weight?: number }));
                             const batch = writeBatch(db);
-                            orderIds.forEach((woId, oi) => {
-                                const group = byOrder.get(woId)!;
-                                const splitFactor = orderIds.length * group.length;
-                                group.forEach((logDoc, j) => {
-                                    batch.update(logDoc.ref, {
-                                        Daily_Rate: amounts[oi][j],
-                                        Original_Daily_Rate: newRate,
-                                        Day_Fraction: dayFractions[oi][j],
-                                        Split_Factor: splitFactor,
-                                        Modified_At: new Date().toISOString(),
-                                    });
+                            docs.forEach((logDoc, i) => {
+                                batch.update(logDoc.ref, {
+                                    Daily_Rate: shares[i].amount,
+                                    Original_Daily_Rate: newRate,
+                                    Day_Fraction: shares[i].dayFraction,
+                                    Split_Factor: shares[i].splitFactor,
+                                    Modified_At: new Date().toISOString(),
                                 });
                             });
                             await batch.commit();

@@ -30,7 +30,7 @@ import {
     getWorkLogsInRange, getLastPostedWorkLogsBefore, getWorkOrderById,
 } from './fieldRepo';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf } from '@/lib/laborAggregate';
-import { effectiveDailyRate, splitDnevnicaByOrder } from '@/lib/laborSplit';
+import { effectiveDailyRate, splitWorkerDay } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import { resolveAutoProcessNode } from '@/lib/productProcesses';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
@@ -394,45 +394,31 @@ export async function renormalizeWorkerDay(
         return affected;
     }
 
-    // Dvonivovska podjela: dan → nalozi → proizvodi.
-    const orderIds: string[] = [];
-    const byOrder = new Map<string, typeof docs>();
-    for (const d of docs) {
-        const woId = (d.data.Work_Order_ID as string) || '__none__';
-        if (!byOrder.has(woId)) { byOrder.set(woId, []); orderIds.push(woId); }
-        byOrder.get(woId)!.push(d);
-    }
-    const { amounts, dayFractions } = splitDnevnicaByOrder(
-        dnevnica, presence, orderIds.map(id => byOrder.get(id)!.length)
-    );
+    // Dvonivovska podjela (dan → nalozi → proizvodi), uz izričit udio dana (Day_Weight) gdje postoji.
+    const shares = splitWorkerDay(dnevnica, presence, docs.map(d => d.data as { Work_Order_ID?: string; Day_Weight?: number }));
 
     const batch = adminDb().batch();
     let changed = 0;
-    orderIds.forEach((woId, oi) => {
-        const group = byOrder.get(woId)!;
-        const splitFactor = orderIds.length * group.length;
-        group.forEach((d, j) => {
-            const data = d.data;
-            if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
-            const amount = amounts[oi][j];
-            const dayFraction = dayFractions[oi][j];
-            const needsUpdate =
-                Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
-                Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
-                (data.Split_Factor || 0) !== splitFactor ||
-                (data.Original_Daily_Rate || 0) !== dnevnica ||
-                (data.Presence ?? 1) !== presence;
-            if (needsUpdate) {
-                batch.update(d.ref, {
-                    Daily_Rate: amount,
-                    Day_Fraction: dayFraction,
-                    Split_Factor: splitFactor,
-                    Original_Daily_Rate: dnevnica,
-                    Presence: presence,
-                });
-                changed++;
-            }
-        });
+    docs.forEach((d, i) => {
+        const data = d.data;
+        if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
+        const { amount, dayFraction, splitFactor } = shares[i];
+        const needsUpdate =
+            Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
+            Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
+            (data.Split_Factor || 0) !== splitFactor ||
+            (data.Original_Daily_Rate || 0) !== dnevnica ||
+            (data.Presence ?? 1) !== presence;
+        if (needsUpdate) {
+            batch.update(d.ref, {
+                Daily_Rate: amount,
+                Day_Fraction: dayFraction,
+                Split_Factor: splitFactor,
+                Original_Daily_Rate: dnevnica,
+                Presence: presence,
+            });
+            changed++;
+        }
     });
     if (changed > 0) await batch.commit();
     return affected;

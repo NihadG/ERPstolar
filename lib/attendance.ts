@@ -863,7 +863,7 @@ async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: strin
 // Čista logika je u lib/laborSplit.ts (bez Firebase, pokrivena testovima).
 // ════════════════════════════════════════════════════════════════════
 export { splitDnevnica, splitDnevnicaExact, splitDnevnicaByOrder, normalizePresence } from './laborSplit';
-import { splitDnevnicaExact, splitDnevnicaByOrder, effectiveDailyRate } from './laborSplit';
+import { splitDnevnicaExact, splitDnevnicaByOrder, splitWorkerDay, effectiveDailyRate } from './laborSplit';
 import { selectAutoBookItemIds, type AutoBookOrder } from './autoBook';
 
 /**
@@ -932,44 +932,32 @@ export async function renormalizeWorkerDay(
         return affected;
     }
 
-    // DVONIVOVSKA PODJELA: grupiši logove po NALOGU → udio po nalogu, pa po proizvodu.
-    // (jedan nalog → identično ravnomjernoj podjeli; više naloga → svaki nalog dobije jednak udio)
-    const orderIds: string[] = [];
-    const byOrder = new Map<string, typeof docs>();
-    docs.forEach(d => {
-        const woId = (d.data().Work_Order_ID as string) || '__none__';
-        if (!byOrder.has(woId)) { byOrder.set(woId, [] as unknown as typeof docs); orderIds.push(woId); }
-        (byOrder.get(woId) as typeof docs).push(d);
-    });
-    const { amounts, dayFractions } = splitDnevnicaByOrder(dnevnica, presence, orderIds.map(id => byOrder.get(id)!.length));
+    // DVONIVOVSKA PODJELA (nalog → proizvod), uz izričit udio dana (Day_Weight) iz dnevnog upisa
+    // rada gdje postoji — bez težina identično ravnomjernoj podjeli (lib/laborSplit splitWorkerDay).
+    const shares = splitWorkerDay(dnevnica, presence, docs.map(d => d.data() as { Work_Order_ID?: string; Day_Weight?: number }));
 
     const batch = writeBatch(firestore);
     let changed = 0;
-    orderIds.forEach((woId, oi) => {
-        const group = byOrder.get(woId)!;
-        const splitFactor = orderIds.length * group.length;  // efektivni djelitelj za proizvod
-        group.forEach((d, j) => {
-            const data = d.data();
-            if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
-            const amount = amounts[oi][j];
-            const dayFraction = dayFractions[oi][j];
-            const needsUpdate =
-                Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
-                Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
-                (data.Split_Factor || 0) !== splitFactor ||
-                (data.Original_Daily_Rate || 0) !== dnevnica ||
-                (data.Presence ?? 1) !== presence;
-            if (needsUpdate) {
-                batch.update(d.ref, {
-                    Daily_Rate: amount,
-                    Day_Fraction: dayFraction,
-                    Split_Factor: splitFactor,
-                    Original_Daily_Rate: dnevnica,
-                    Presence: presence,
-                });
-                changed++;
-            }
-        });
+    docs.forEach((d, i) => {
+        const data = d.data();
+        if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
+        const { amount, dayFraction, splitFactor } = shares[i];
+        const needsUpdate =
+            Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
+            Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
+            (data.Split_Factor || 0) !== splitFactor ||
+            (data.Original_Daily_Rate || 0) !== dnevnica ||
+            (data.Presence ?? 1) !== presence;
+        if (needsUpdate) {
+            batch.update(d.ref, {
+                Daily_Rate: amount,
+                Day_Fraction: dayFraction,
+                Split_Factor: splitFactor,
+                Original_Daily_Rate: dnevnica,
+                Presence: presence,
+            });
+            changed++;
+        }
     });
     if (changed > 0) await batch.commit();
     return affected;
@@ -1020,34 +1008,23 @@ export async function recalcAllWorkLogSplits(
             for (const d of docs) { const o = d.data().Original_Daily_Rate; if (typeof o === 'number' && o > 0) { dnevnica = o; break; } }
             if (dnevnica <= 0) dnevnica = rateOf.get(docs[0].data().Worker_ID) || 0;
 
-            // DVONIVOVSKA PODJELA: grupiši (radnik,dan) logove po NALOGU → udio po nalogu, pa po proizvodu.
-            const orderIds: string[] = [];
-            const byOrder = new Map<string, LogDoc[]>();
-            docs.forEach(d => {
-                const woId = (d.data().Work_Order_ID as string) || '__none__';
-                if (!byOrder.has(woId)) { byOrder.set(woId, []); orderIds.push(woId); }
-                byOrder.get(woId)!.push(d);
-            });
-            const { amounts, dayFractions } = splitDnevnicaByOrder(dnevnica, presence, orderIds.map(id => byOrder.get(id)!.length));
+            // DVONIVOVSKA PODJELA (nalog → proizvod), uz izričit udio dana (Day_Weight) gdje postoji.
+            const shares = splitWorkerDay(dnevnica, presence, docs.map(d => d.data() as { Work_Order_ID?: string; Day_Weight?: number }));
 
-            orderIds.forEach((woId, oi) => {
-                const group = byOrder.get(woId)!;
-                const splitFactor = orderIds.length * group.length;
-                group.forEach((d, j) => {
-                    const data = d.data();
-                    if (data.Work_Order_ID) affectedWO.add(data.Work_Order_ID);
-                    const itemId = data.Work_Order_Item_ID;
-                    const amount = amounts[oi][j];
-                    if (itemId) itemLabor.set(itemId, Math.round(((itemLabor.get(itemId) || 0) + amount) * 100) / 100);
-                    batch.update(d.ref, {
-                        Daily_Rate: amount,
-                        Day_Fraction: dayFractions[oi][j],
-                        Split_Factor: splitFactor,
-                        Original_Daily_Rate: dnevnica,
-                        Presence: presence,
-                    });
-                    logsUpdated++; ops++;
+            docs.forEach((d, i) => {
+                const data = d.data();
+                if (data.Work_Order_ID) affectedWO.add(data.Work_Order_ID);
+                const itemId = data.Work_Order_Item_ID;
+                const { amount, dayFraction, splitFactor } = shares[i];
+                if (itemId) itemLabor.set(itemId, Math.round(((itemLabor.get(itemId) || 0) + amount) * 100) / 100);
+                batch.update(d.ref, {
+                    Daily_Rate: amount,
+                    Day_Fraction: dayFraction,
+                    Split_Factor: splitFactor,
+                    Original_Daily_Rate: dnevnica,
+                    Presence: presence,
                 });
+                logsUpdated++; ops++;
             });
             if (ops >= 400) await flush();
         }

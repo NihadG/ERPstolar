@@ -1048,6 +1048,10 @@ export interface WorkLog {
     Presence?: number;               // Prisutnost radnika za TAJ DAN: 1 = cijeli dan, 0.5 = pola dana (isto za sve njegove proizvode tog dana)
     Day_Fraction?: number;           // Težina ovog proizvoda u danu = Presence / N (npr. 1 proizvod/cijeli dan = 1, 6 proizvoda = 0.1667)
     Booking_Source?: 'attendance' | 'manual';  // 'manual' = unešeno kroz Dnevnu knjigu rada
+    /** Izričit udio radnikovog dana za ovaj posao (0–1) iz dnevnog upisa — renormalizacija ga poštuje (lib/laborSplit splitWorkerDay). */
+    Day_Weight?: number;
+    /** Odakle je ručni zapis stigao: 'telegram' = dnevni upis preko asistenta (ponovni upis istog dana ga zamjenjuje). */
+    Entry_Source?: 'telegram';
 
     // OBRISAN NALOG — dnevnica je NULIRANA (Daily_Rate = 0, Day_Fraction = 0) i ne ulazi
     // ni u trošak ni u zaradu radnika. Zapis ostaje radi traga; Voided_* čuvaju stari iznos.
