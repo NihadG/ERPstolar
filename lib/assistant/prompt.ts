@@ -56,6 +56,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
    Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak ide za zalihu. Bez količine = sav ostatak koji projekat još treba. Materijal bez projekta = artikal iz kataloga (K#), za zalihu.
    Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
+   PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;

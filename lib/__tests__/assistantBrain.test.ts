@@ -43,7 +43,10 @@ import { fakeDocs as docs, fakeStore as mockStore } from '@/lib/testing/fakeFire
 import Anthropic from '@anthropic-ai/sdk';
 import { failureReason, runAssistant } from '@/lib/assistant/brain';
 import { undoTurn, type AssistantSession } from '@/lib/assistant/store';
-import { stripAliases } from '@/lib/assistant/tools';
+import { runTool, stripAliases } from '@/lib/assistant/tools';
+
+/** Minimalno okruženje za direktan poziv alata (bez modela). */
+const envFor = () => ({ orgId: 'org1', uid: 'u1', tz: 'Europe/Sarajevo', now: new Date('2026-10-23T12:05:00Z'), turnId: 't', dateText: '', reporter: 'ja', searchHits: [], created: { taskIds: [], memoryIds: [] }, changes: [], summaries: [] });
 import { getOrderWithItems, loadProjectMaterials, sendOrder } from '@/lib/server/orderWrites';
 import { buildOrderPdf } from '@/lib/server/orderPdf';
 
@@ -103,7 +106,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'order_pdf', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'list_orders', 'order_pdf', 'ask_user']);
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
         mockSent.length = 0;
@@ -396,6 +399,25 @@ describe('narudžbe preko asistenta', () => {
         expect(candidates).toMatch(/Baglama kutna/);
         expect(candidates).toMatch(/Baglama ravna/);
         expect(docs('orders').length).toBe(before + 1);
+    });
+
+    it('„koje narudžbe imam za Grbavicu" → list_orders vidi i nacrte', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Koje narudžbe imam za Grbavicu?', [
+            { calls: [{ name: 'list_orders', args: { project: P } }] },
+            { text: 'Imaš nacrte i jednu poslanu.' },
+        ]);
+        const result = lastToolResult(mockSent[1]);
+        expect(result.ok).toBe(true);
+        expect(result.orders.some((l: string) => /\| Häfele \| Nacrt \| .*stavke: 30 kom Baglama ravna/.test(l))).toBe(true);
+        expect(result.orders.some((l: string) => /\| Poslano \|.*5 kom Baglama ravna/.test(l))).toBe(true);
+        // Narudžba „Zaliha" nema stavki za ovaj projekat.
+        expect(result.orders.some((l: string) => /Zaliha/.test(l))).toBe(false);
+
+        const open = await runTool({ ...envFor(), ctx: { projects: [] } } as any, 'list_orders', { status: 'otvorene' });
+        expect((open.orders as string[]).every(l => /\| (Nacrt|Poslano) \|/.test(l))).toBe(true);
+        expect(out.reply).toBe('Imaš nacrte i jednu poslanu.');
     });
 
     it('PDF narudžbe: pravi PDF s našim slovima', async () => {

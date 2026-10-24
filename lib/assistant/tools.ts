@@ -22,7 +22,7 @@ import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
 import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
 import {
-    createDraftOrder, getOrderWithItems, listOrders, loadProjectMaterials, type DraftLine, type OrderableRow,
+    createDraftOrder, getOrderWithItems, listOrders, listOrdersWithItems, loadProjectMaterials, type DraftLine, type OrderableRow,
 } from '@/lib/server/orderWrites';
 import type { Material, MemoryItem, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
@@ -158,6 +158,18 @@ export const TOOLS: Anthropic.Tool[] = [
                 note: { ...str, description: 'Napomena za dobavljača ako je rečena.' },
             },
             required: ['lines'],
+        },
+    },
+    {
+        name: 'list_orders',
+        description: 'Postojeće narudžbe iz ERP-a (nacrti, poslane, primljene) sa stavkama. Za pitanja „koje narudžbe imam za…", „šta je naručeno kod…", „šta čeka slanje".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                project: { ...str, description: 'Oznaka P#.' },
+                supplier: str,
+                status: { ...enumOf(['Nacrt', 'Poslano', 'Primljeno', 'otvorene']), description: 'otvorene = nacrt ili poslano (još nije stiglo).' },
+            },
         },
     },
     {
@@ -768,6 +780,30 @@ async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, orders: created, note: 'PDF i dugme „Poslano" sistem šalje korisniku.' };
 }
 
+async function listOrdersTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const supplier = text(a.supplier, 80);
+    const status = text(a.status, 12);
+
+    let orders = (await listOrdersWithItems(env.orgId)).sort((x, y) => String(y.Order_Date).localeCompare(String(x.Order_Date)));
+    if (project) orders = orders.filter(o => o.items?.some(i => i.Project_ID === project.id));
+    if (supplier) orders = orders.filter(o => matchScore(supplier, [o.Supplier_Name]) >= 0.7);
+    if (status === 'otvorene') orders = orders.filter(o => o.Status === 'Nacrt' || o.Status === 'Poslano');
+    else if (status) orders = orders.filter(o => o.Status === status);
+
+    const lines = orders.slice(0, 15).map(o => {
+        const items = (project ? o.items!.filter(i => i.Project_ID === project.id) : o.items || [])
+            .map(i => `${q(i.Quantity)} ${i.Unit} ${i.Material_Name}${i.Status === 'Primljeno' ? ' (stiglo)' : ''}`);
+        return [
+            o.Order_Number, o.Supplier_Name || '—', o.Status, shortDay(o.Order_Date, env.tz),
+            ...(o.Name ? [o.Name] : []),
+            `stavke: ${items.slice(0, 8).join('; ')}${items.length > 8 ? `; … još ${items.length - 8}` : ''}`,
+        ].join(' | ');
+    });
+    return { ok: true, total: orders.length, orders: lines, ...(orders.length > 15 ? { note: `Prikazano 15 najnovijih od ${orders.length}.` } : {}) };
+}
+
 async function orderPdfTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const wantedNo = foldText(text(a.number, 40)).replace(/\s+/g, '');
     const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
@@ -821,6 +857,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'search_memory': return await searchMemoryTool(env, args);
             case 'find_material': return await findMaterialTool(env, args);
             case 'create_order': return await createOrderTool(env, args);
+            case 'list_orders': return await listOrdersTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };

@@ -204,6 +204,20 @@ export async function listOrders(orgId: string): Promise<Order[]> {
     return snap.docs.map(d => d.data() as Order);
 }
 
+/** Sve narudžbe firme sa stavkama — dva upita, bez upita po narudžbi. */
+export async function listOrdersWithItems(orgId: string): Promise<Order[]> {
+    const [orders, items] = await Promise.all([
+        listOrders(orgId),
+        adminDb().collection('order_items').where('Organization_ID', '==', orgId).get(),
+    ]);
+    const byOrder = new Map<string, OrderItem[]>();
+    items.docs.forEach(d => {
+        const item = d.data() as OrderItem;
+        byOrder.set(item.Order_ID, [...(byOrder.get(item.Order_ID) || []), item]);
+    });
+    return orders.map(o => ({ ...o, items: byOrder.get(o.Order_ID) || [] }));
+}
+
 export async function getSupplier(orgId: string, supplierId: string, name: string): Promise<Supplier | undefined> {
     const snap = await adminDb().collection('suppliers').where('Organization_ID', '==', orgId).get();
     const all = snap.docs.map(d => d.data() as Supplier);
