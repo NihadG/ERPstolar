@@ -105,6 +105,89 @@ async function draftAllocations(orgId: string): Promise<Map<string, number>> {
     return out;
 }
 
+// ─── Sastavnica proizvoda (Projekti → proizvod → Materijali) ──────────
+//
+// Profit (lib/projectFinance) čita ŽIVU sastavnicu: trošak materijala
+// proizvoda = Σ Total_Price × količina proizvoda. Zato sve što narudžba
+// doda (novi materijal, količina preko potrebe) ide u sastavnicu — i time
+// odmah u trošak i profit, isto kao „povećaj potrebu" u čarobnjaku narudžbi.
+
+export async function loadProjectProducts(orgId: string, projectId: string): Promise<Product[]> {
+    const snap = await adminDb().collection('products').where('Organization_ID', '==', orgId).where('Project_ID', '==', projectId).get();
+    return snap.docs.map(d => d.data() as Product);
+}
+
+export async function loadProductMaterials(orgId: string, productIds: string[]): Promise<ProductMaterial[]> {
+    return byIds<ProductMaterial>(orgId, 'product_materials', 'Product_ID', productIds);
+}
+
+/** Izmjena za ↩️ Poništi: putanja dokumenta i stanje prije (null = nov dokument). */
+export interface WriteOp { path: string; before: Record<string, unknown> | null }
+
+/** Product.Material_Cost = Σ Total_Price materijala (isto kao recalculateProductCost u ERP-u). */
+async function refreshProductCost(orgId: string, productId: string): Promise<WriteOp | null> {
+    const db = adminDb();
+    const [prod, mats] = await Promise.all([
+        db.collection('products').where('Organization_ID', '==', orgId).where('Product_ID', '==', productId).limit(1).get(),
+        db.collection('product_materials').where('Organization_ID', '==', orgId).where('Product_ID', '==', productId).get(),
+    ]);
+    if (prod.empty) return null;
+    const before = prod.docs[0].data();
+    const cost = Math.round(mats.docs.reduce((s, d) => s + ((d.data() as ProductMaterial).Total_Price || 0), 0) * 100) / 100;
+    if (before.Material_Cost === cost) return null;
+    await prod.docs[0].ref.update({ Material_Cost: cost });
+    return { path: prod.docs[0].ref.path, before };
+}
+
+/**
+ * Novi materijal u sastavnici proizvoda, s naručenom količinom kao potrebom.
+ * Količina u sastavnici je PO KOMADU proizvoda (kao u ERP-u), pa se ukupna
+ * dijeli količinom proizvoda.
+ */
+export async function addMaterialToProduct(orgId: string, input: {
+    product: Pick<Product, 'Product_ID' | 'Quantity'>;
+    catalogId: string;
+    name: string;
+    unit: string;
+    unitPrice: number;
+    supplier: string;
+    totalQuantity: number;
+}): Promise<{ material: ProductMaterial; ops: WriteOp[] }> {
+    const perPiece = Math.round(input.totalQuantity / (input.product.Quantity > 0 ? input.product.Quantity : 1) * 1_000_000) / 1_000_000;
+    const material: ProductMaterial = {
+        ID: uuidv4(),
+        Organization_ID: orgId,
+        Product_ID: input.product.Product_ID,
+        Material_ID: input.catalogId,
+        Material_Name: input.name,
+        Quantity: perPiece,
+        Unit: input.unit,
+        Unit_Price: input.unitPrice,
+        Total_Price: Math.round(perPiece * input.unitPrice * 100) / 100,
+        Status: 'Nije naručeno',
+        Supplier: input.supplier,
+        Order_ID: '',
+    };
+    const ref = adminDb().collection('product_materials').doc();
+    await ref.set(material);
+    const cost = await refreshProductCost(orgId, input.product.Product_ID);
+    return { material, ops: [{ path: ref.path, before: null }, ...(cost ? [cost] : [])] };
+}
+
+/** Potreba materijala raste za `extraTotal` (ukupno, ne po komadu) — kao needIncrease u čarobnjaku. */
+export async function increaseMaterialNeed(orgId: string, materialId: string, extraTotal: number): Promise<WriteOp[]> {
+    const db = adminDb();
+    const snap = await db.collection('product_materials').where('Organization_ID', '==', orgId).where('ID', '==', materialId).limit(1).get();
+    if (snap.empty || !(extraTotal > 0)) return [];
+    const before = snap.docs[0].data() as ProductMaterial;
+    const prod = await db.collection('products').where('Organization_ID', '==', orgId).where('Product_ID', '==', before.Product_ID).limit(1).get();
+    const count = prod.empty ? 1 : ((prod.docs[0].data() as Product).Quantity || 1);
+    const quantity = Math.round(((before.Quantity || 0) + extraTotal / count) * 1_000_000) / 1_000_000;
+    await snap.docs[0].ref.update({ Quantity: quantity, Total_Price: Math.round(quantity * (before.Unit_Price || 0) * 100) / 100 });
+    const cost = await refreshProductCost(orgId, before.Product_ID);
+    return [{ path: snap.docs[0].ref.path, before: before as unknown as Record<string, unknown> }, ...(cost ? [cost] : [])];
+}
+
 // ─── Kreiranje nacrta ─────────────────────────────────────────────────
 
 export interface DraftLine {
@@ -202,6 +285,20 @@ export async function getOrderWithItems(orgId: string, orderId: string): Promise
 export async function listOrders(orgId: string): Promise<Order[]> {
     const snap = await adminDb().collection('orders').where('Organization_ID', '==', orgId).get();
     return snap.docs.map(d => d.data() as Order);
+}
+
+/** Sve narudžbe firme sa stavkama — dva upita, bez upita po narudžbi. */
+export async function listOrdersWithItems(orgId: string): Promise<Order[]> {
+    const [orders, items] = await Promise.all([
+        listOrders(orgId),
+        adminDb().collection('order_items').where('Organization_ID', '==', orgId).get(),
+    ]);
+    const byOrder = new Map<string, OrderItem[]>();
+    items.docs.forEach(d => {
+        const item = d.data() as OrderItem;
+        byOrder.set(item.Order_ID, [...(byOrder.get(item.Order_ID) || []), item]);
+    });
+    return orders.map(o => ({ ...o, items: byOrder.get(o.Order_ID) || [] }));
 }
 
 export async function getSupplier(orgId: string, supplierId: string, name: string): Promise<Supplier | undefined> {

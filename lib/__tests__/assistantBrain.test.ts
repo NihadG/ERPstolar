@@ -43,7 +43,10 @@ import { fakeDocs as docs, fakeStore as mockStore } from '@/lib/testing/fakeFire
 import Anthropic from '@anthropic-ai/sdk';
 import { failureReason, runAssistant } from '@/lib/assistant/brain';
 import { undoTurn, type AssistantSession } from '@/lib/assistant/store';
-import { stripAliases } from '@/lib/assistant/tools';
+import { runTool, stripAliases } from '@/lib/assistant/tools';
+
+/** Minimalno okruženje za direktan poziv alata (bez modela). */
+const envFor = () => ({ orgId: 'org1', uid: 'u1', tz: 'Europe/Sarajevo', now: new Date('2026-10-23T12:05:00Z'), turnId: 't', dateText: '', reporter: 'ja', searchHits: [], created: { taskIds: [], memoryIds: [] }, changes: [], summaries: [] });
 import { getOrderWithItems, loadProjectMaterials, sendOrder } from '@/lib/server/orderWrites';
 import { buildOrderPdf } from '@/lib/server/orderPdf';
 
@@ -103,7 +106,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'order_pdf', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'order_pdf', 'ask_user']);
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
         mockSent.length = 0;
@@ -323,7 +326,7 @@ describe('narudžbe preko asistenta', () => {
         firstTurn = out.buttons[0][0].data.slice(5);
     });
 
-    it('nacrt se računa: 30 baglama → 20 za projekat + 10 za zalihu', async () => {
+    it('nacrt se računa; višak ide u sastavnicu i trošak: 30 → 20 + 10 na kuhinju', async () => {
         const P = grb();
         const out = await say('Naruči još 30 baglama za Grbavicu', [
             { calls: [{ name: 'find_material', args: { query: 'baglama', project: P } }] },
@@ -333,9 +336,13 @@ describe('narudžbe preko asistenta', () => {
         const order = docs('orders').find(o => o.Status === 'Nacrt' && o.Order_ID !== firstOrderId)!;
         const [item] = orderItems(order.Order_ID);
         expect(item.Quantity).toBe(30);
-        expect(Object.values(item.Product_Material_Quantities).reduce((s: number, n: any) => s + n, 0)).toBe(20);
-        expect(order.Notes).toMatch(/Višak za zalihu: 10 kom Baglama ravna/);
-        expect(out.reply).toMatch(/20 za projekat \+ 10 za zalihu/);
+        // Cijela količina je na materijalima projekta — ništa „za zalihu".
+        expect(Object.values(item.Product_Material_Quantities).reduce((s: number, n: any) => s + n, 0)).toBe(30);
+        expect(order.Notes).not.toMatch(/zalih/);
+        expect(out.reply).toMatch(/20 po sastavnici \+ 10 dodano u sastavnicu \(Kuhinja\) — ulazi u trošak/);
+        // Sastavnica (→ profit): kuhinja 15 → 25 kom, trošak 30 → 50.
+        expect(docs('product_materials').find(m => m.ID === 'pm-a')).toMatchObject({ Quantity: 25, Total_Price: 50 });
+        expect(docs('products').find(p => p.Product_ID === 'pr-kuh')!.Material_Cost).toBe(50);
     });
 
     it('„Poslano" pomjera materijale i status; ostatak ostaje za naručivanje', async () => {
@@ -355,7 +362,7 @@ describe('narudžbe preko asistenta', () => {
 
     it('poslana narudžba se ne briše na ↩️ Poništi', async () => {
         const labels = await undoTurn(firstTurn, 'u1');
-        expect(labels).toEqual([expect.stringMatching(/^narudžba N2026-10\/\w+ \(već poslana/)]);
+        expect(labels).toEqual([expect.stringMatching(/^ništa — narudžba N2026-10\/\w+ je već poslana/)]);
         expect(docs('orders').some(o => o.Order_ID === firstOrderId)).toBe(true);
         expect(orderItems(firstOrderId)).toHaveLength(1);
     });
@@ -378,8 +385,62 @@ describe('narudžbe preko asistenta', () => {
             { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P, quantity: 4 }] } }] },
         ]);
         expect(mockSent).toHaveLength(1);
-        // Sve što projekat treba je već naručeno ili u nacrtu → 4 ide za zalihu.
-        expect(out.reply).toMatch(/• 4 kom Baglama ravna — .*\(0 za projekat \+ 4 za zalihu\)/);
+        // Sve što projekat treba je već naručeno ili u nacrtu → 4 povećava potrebu kuhinje.
+        expect(out.reply).toMatch(/• 4 kom Baglama ravna — .*\(0 po sastavnici \+ 4 dodano u sastavnicu \(Kuhinja\)/);
+        expect(docs('product_materials').find(m => m.ID === 'pm-a')!.Quantity).toBe(29);
+
+        // ↩️ Poništi vraća i narudžbu i sastavnicu (trošak).
+        const orders = docs('orders').length;
+        const labels = await undoTurn(out.buttons[0][0].data.slice(5), 'u1');
+        expect(labels).toEqual(expect.arrayContaining([expect.stringMatching(/^sastavnica „Kuhinja"/), expect.stringMatching(/^narudžba /)]));
+        expect(docs('product_materials').find(m => m.ID === 'pm-a')).toMatchObject({ Quantity: 25, Total_Price: 50 });
+        expect(docs('products').find(p => p.Product_ID === 'pr-kuh')!.Material_Cost).toBe(50);
+        expect(docs('orders').length).toBe(orders - 1);
+    });
+
+    it('materijal kojeg nema u sastavnici → pita kojem proizvodu, pa ga doda s količinom', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Naruči 3 ogledala za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'ogledalo', project: P, quantity: 3 }] } }] },
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'ogledalo', project: P, product: 'Hodnik', quantity: 3 }] } }] },
+        ]);
+        const asked = JSON.parse(mockSent[1].messages.at(-1).content[0].content).error as string;
+        expect(asked).toMatch(/Kojem proizvodu/);
+        expect(asked).toMatch(/Kuhinja/);
+        expect(asked).toMatch(/Hodnik/);
+
+        const added = docs('product_materials').find(m => m.Material_Name === 'ogledalo')!;
+        expect(added).toMatchObject({ Product_ID: 'pr-hod', Quantity: 3, Unit: 'kom', Status: 'Nije naručeno', Unit_Price: 0 });
+        const order = docs('orders').filter(o => o.Status === 'Nacrt').find(o => orderItems(o.Order_ID).some(i => i.Material_Name === 'ogledalo'))!;
+        expect(orderItems(order.Order_ID)[0]).toMatchObject({ Product_Material_ID: added.ID, Product_Material_Quantities: { [added.ID]: 3 }, Project_ID: 'p-grb' });
+        expect(out.reply).toMatch(/• 3 kom ogledalo — .*\(novo u sastavnici: Hodnik, cijena nepoznata/);
+    });
+
+    it('novi materijal iz kataloga nosi cijenu u trošak proizvoda', async () => {
+        mockStore.set('materials/v', { Material_ID: 'mat-v', Organization_ID: 'org1', Name: 'Vijak 4x40', Unit: 'kom', Default_Supplier: 'Häfele', Default_Unit_Price: 0.1 });
+        const P = grb();
+        await say('Naruči 100 vijaka 4x40 za kuhinju na Grbavici', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'vijak 4x40', project: P, product: 'Kuhinja', quantity: 100 }] } }] },
+        ]);
+        const vijak = docs('product_materials').find(m => m.Material_ID === 'mat-v')!;
+        expect(vijak).toMatchObject({ Product_ID: 'pr-kuh', Quantity: 100, Unit_Price: 0.1, Total_Price: 10, Supplier: 'Häfele' });
+        const kuhinja = docs('product_materials').filter(m => m.Product_ID === 'pr-kuh');
+        expect(docs('products').find(p => p.Product_ID === 'pr-kuh')!.Material_Cost).toBe(kuhinja.reduce((s, m) => s + m.Total_Price, 0));
+    });
+
+    it('„koje materijale ima kuhinja" → product_materials čita sastavnicu', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        await say('Koje materijale ima kuhinja na Grbavici?', [
+            { calls: [{ name: 'product_materials', args: { project: P, product: 'kuhinja' } }] },
+            { text: 'Kuhinja ima baglame i vijke.' },
+        ]);
+        const result = lastToolResult(mockSent[1]);
+        expect(result.products).toHaveLength(1);
+        expect(result.products[0]).toMatch(/^Kuhinja ×1 \| materijal 60 ukupno/);
+        expect(result.products[0]).toMatch(/• Baglama ravna \| 25 kom \| cijena 2 \| Naručeno \| naručeno \d+, primljeno 0, za naručiti \d+ \| Häfele/);
+        expect(result.products[0]).toMatch(/• Vijak 4x40 \| 100 kom \| cijena 0\.1 \| Nije naručeno/);
     });
 
     it('naziv koji pokriva dva materijala → kandidati, model bira', async () => {
@@ -396,6 +457,25 @@ describe('narudžbe preko asistenta', () => {
         expect(candidates).toMatch(/Baglama kutna/);
         expect(candidates).toMatch(/Baglama ravna/);
         expect(docs('orders').length).toBe(before + 1);
+    });
+
+    it('„koje narudžbe imam za Grbavicu" → list_orders vidi i nacrte', async () => {
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Koje narudžbe imam za Grbavicu?', [
+            { calls: [{ name: 'list_orders', args: { project: P } }] },
+            { text: 'Imaš nacrte i jednu poslanu.' },
+        ]);
+        const result = lastToolResult(mockSent[1]);
+        expect(result.ok).toBe(true);
+        expect(result.orders.some((l: string) => /\| Häfele \| Nacrt \| .*stavke: 30 kom Baglama ravna/.test(l))).toBe(true);
+        expect(result.orders.some((l: string) => /\| Poslano \|.*5 kom Baglama ravna/.test(l))).toBe(true);
+        // Narudžba „Zaliha" nema stavki za ovaj projekat.
+        expect(result.orders.some((l: string) => /Zaliha/.test(l))).toBe(false);
+
+        const open = await runTool({ ...envFor(), ctx: { projects: [] } } as any, 'list_orders', { status: 'otvorene' });
+        expect((open.orders as string[]).every(l => /\| (Nacrt|Poslano) \|/.test(l))).toBe(true);
+        expect(out.reply).toBe('Imaš nacrte i jednu poslanu.');
     });
 
     it('PDF narudžbe: pravi PDF s našim slovima', async () => {

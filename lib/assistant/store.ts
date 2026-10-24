@@ -250,16 +250,16 @@ export async function undoTurn(turnId: string, uid: string): Promise<string[]> {
         if (order?.Order_ID && order.Status !== 'Nacrt') sent.add(order.Order_ID);
     }
 
+    // Ista poruka je možda mijenjala i sastavnicu (višak, novi materijal) — ni
+    // ona se ne vraća, inače naručena količina ne bi imala pokriće u sastavnici.
+    if (sent.size) {
+        const orderLabels = ops.filter(o => !o.before && o.path.startsWith('orders/')).map(o => o.label);
+        return Array.from(new Set(orderLabels)).map(l => `ništa — ${l} je već poslana; vrati je u nacrt u ERP-u`);
+    }
+
     const labels: string[] = [];
     for (const op of ops) {
         const target = db.doc(op.path);
-        if (sent.size && !op.before && (op.path.startsWith('orders/') || op.path.startsWith('order_items/'))) {
-            const orderId = ((await target.get()).data() as { Order_ID?: string } | undefined)?.Order_ID;
-            if (orderId && sent.has(orderId)) {
-                labels.push(`${op.label} (već poslana — vrati je u nacrt u ERP-u)`);
-                continue;
-            }
-        }
         if (op.before) await target.set(op.before);
         else await target.delete();
         await op.ref.update({ undone: true });
