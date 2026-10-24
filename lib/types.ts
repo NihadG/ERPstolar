@@ -439,6 +439,9 @@ export interface OrderItem {
     Received_Quantity: number;
     Status: string;
     Received_Date?: string;
+    /** Šta je narudžba (Telegram asistent) dodala u sastavnicu: višak na postojeći materijal ili nov materijal.
+     *  Brisanje narudžbe to vraća, da trošak/profit ne ostane naduvan. Extra je UKUPNA količina. */
+    Bom_Change?: { Material_ID: string; Extra: number; Added?: boolean };
 }
 
 export interface Supplier {

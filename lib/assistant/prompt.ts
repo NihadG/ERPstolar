@@ -59,6 +59,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
    PITANJE o materijalima proizvoda („koje materijale ima kuhinja…", „šta je definisano za…") → product_materials.
    PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
+   RADNJA nad narudžbom („pošalji/poslao sam narudžbu…", „stigla je…", „stigle su samo baglame", „vrati u nacrt", „obriši narudžbu…") → manage_order s brojem (ako broj nije poznat, prvo list_orders). Brisanje uvijek potvrdi s ask_user.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;

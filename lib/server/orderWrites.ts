@@ -17,8 +17,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { adminDb } from './firebaseAdmin';
 import { nextOrderNumber } from '@/lib/orderNumber';
 import { orderItemAllocations } from '@/lib/orderMaterialAllocation';
-import { materialCoverage } from '@/lib/materialCoverage';
-import { roundQty } from '@/lib/orderItemGroups';
+import { materialCoverage, settledMaterialStatus } from '@/lib/materialCoverage';
+import { formatQty, roundQty } from '@/lib/orderItemGroups';
 import type { AluDoorItem, GlassItem, Order, OrderItem, Product, ProductMaterial, Supplier } from '@/lib/types';
 
 const IN_CHUNK = 30;
@@ -197,6 +197,8 @@ export interface DraftLine {
     unitPrice: number;
     /** Materijali proizvoda kojima ide dio količine; prazno = samo za zalihu. */
     members: { materialId: string; productId: string; productName: string; projectId: string; allocation: number }[];
+    /** Šta je ova stavka dodala u sastavnicu (vraća se pri brisanju narudžbe). */
+    bomChange?: OrderItem['Bom_Change'];
 }
 
 export interface DraftInput {
@@ -236,6 +238,7 @@ export function draftOrderItem(line: DraftLine, orderId: string, orgId: string):
         Actual_Price: 0,
         Received_Quantity: 0,
         Status: 'Na čekanju',
+        ...(line.bomChange ? { Bom_Change: line.bomChange } : {}),
     };
 }
 
@@ -322,59 +325,244 @@ export async function loadOrderSpecs(orgId: string, order: Order): Promise<Produ
     }) as ProductMaterial);
 }
 
-export type SendResult =
-    | { ok: true; orderNumber: string; materials: number }
+// ─── Životni ciklus narudžbe (bilo koje — i one napravljene u ERP-u) ──
+//
+// Iste kaskade kao updateOrderStatus / markMaterialsReceived / deleteOrder
+// u ERP-u, uz jednu razliku: svaki dokument se prije izmjene preda `before`,
+// da ↩️ Poništi u Telegramu može vratiti tačno stanje (narudžba, stavke,
+// materijali, proizvod, projekat).
+
+/** Prima putanju i stanje dokumenta PRIJE prve izmjene u ovoj radnji. */
+export type BeforeHook = (path: string, data: Record<string, unknown>) => void;
+
+type Snap = FirebaseFirestore.QueryDocumentSnapshot;
+
+async function orderDocs(orgId: string, orderId: string): Promise<{ order: Snap; items: Snap[] } | null> {
+    const db = adminDb();
+    const [orderSnap, itemsSnap] = await Promise.all([
+        db.collection('orders').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).limit(1).get(),
+        db.collection('order_items').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).get(),
+    ]);
+    if (orderSnap.empty) return null;
+    return { order: orderSnap.docs[0], items: itemsSnap.docs };
+}
+
+/** Promjena količina na materijalima; status se izvodi iz stanja (materijal može biti u više narudžbi). */
+async function applyMaterialDeltas(
+    orgId: string,
+    deltas: Map<string, { ordered: number; received: number }>,
+    requested: string,
+    orderId: string,
+    before?: BeforeHook,
+): Promise<string[]> {
+    const db = adminDb();
+    const productIds: string[] = [];
+    for (const part of chunks(Array.from(deltas.keys()))) {
+        const snap = await db.collection('product_materials').where('Organization_ID', '==', orgId).where('ID', 'in', part).get();
+        const batch = db.batch();
+        snap.docs.forEach(d => {
+            const m = d.data() as ProductMaterial;
+            const delta = deltas.get(m.ID)!;
+            before?.(d.ref.path, d.data());
+            const ordered = Math.max(0, roundQty((m.Ordered_Quantity || 0) + delta.ordered));
+            const received = Math.max(0, roundQty((m.Received_Quantity || 0) + delta.received));
+            const status = settledMaterialStatus(requested, ordered, received);
+            batch.update(d.ref, {
+                Status: status,
+                Order_ID: status === requested ? orderId : (m.Order_ID || orderId),
+                Ordered_Quantity: ordered,
+                Received_Quantity: received,
+            });
+            productIds.push(m.Product_ID);
+        });
+        await batch.commit();
+    }
+    return Array.from(new Set(productIds));
+}
+
+async function setStatusWhere(orgId: string, col: 'products' | 'projects', field: string, id: string, from: string[], to: string, before?: BeforeHook): Promise<void> {
+    const p = await adminDb().collection(col).where('Organization_ID', '==', orgId).where(field, '==', id).limit(1).get();
+    if (p.empty || !from.includes(p.docs[0].data().Status)) return;
+    before?.(p.docs[0].ref.path, p.docs[0].data());
+    await p.docs[0].ref.update({ Status: to });
+}
+
+export type OrderActionResult =
+    | { ok: true; orderNumber: string; materials: number; detail?: string }
     | { ok: false; error: string };
 
 /** Nacrt → Poslano, ista kaskada kao updateOrderStatus u ERP-u. */
-export async function sendOrder(orgId: string, orderId: string): Promise<SendResult> {
-    const db = adminDb();
-    const orderSnap = await db.collection('orders').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).limit(1).get();
-    if (orderSnap.empty) return { ok: false, error: 'Narudžba više ne postoji.' };
-    const order = orderSnap.docs[0].data() as Order;
+export async function sendOrder(orgId: string, orderId: string, before?: BeforeHook): Promise<OrderActionResult> {
+    const docs = await orderDocs(orgId, orderId);
+    if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
+    const order = docs.order.data() as Order;
     if (order.Status !== 'Nacrt') return { ok: false, error: `Narudžba ${order.Order_Number} je već „${order.Status}".` };
+    if (!docs.items.length) return { ok: false, error: `Narudžba ${order.Order_Number} nema stavki.` };
 
-    const itemsSnap = await db.collection('order_items').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).get();
-    const deltas = new Map<string, number>();
+    const deltas = new Map<string, { ordered: number; received: number }>();
     const productIds = new Set<string>();
     const projectIds = new Set<string>();
-    const batch = db.batch();
-    batch.update(orderSnap.docs[0].ref, { Status: 'Poslano' });
-    for (const d of itemsSnap.docs) {
+    const batch = adminDb().batch();
+    before?.(docs.order.ref.path, docs.order.data());
+    batch.update(docs.order.ref, { Status: 'Poslano' });
+    for (const d of docs.items) {
         const item = d.data() as OrderItem;
         if (item.Status === 'Primljeno') continue;
-        for (const [id, q] of Object.entries(orderItemAllocations(item))) deltas.set(id, (deltas.get(id) || 0) + q);
+        for (const [id, q] of Object.entries(orderItemAllocations(item))) {
+            deltas.set(id, { ordered: (deltas.get(id)?.ordered || 0) + q, received: 0 });
+        }
+        before?.(d.ref.path, d.data());
         batch.update(d.ref, { Status: 'Naručeno' });
         if (item.Product_ID) productIds.add(item.Product_ID);
         if (item.Project_ID) projectIds.add(item.Project_ID);
     }
     await batch.commit();
-
-    for (const part of chunks(Array.from(deltas.keys()))) {
-        const snap = await db.collection('product_materials').where('Organization_ID', '==', orgId).where('ID', 'in', part).get();
-        const matBatch = db.batch();
-        snap.docs.forEach(d => {
-            const m = d.data() as ProductMaterial;
-            const ordered = Math.max(0, (m.Ordered_Quantity || 0) + (deltas.get(m.ID) || 0));
-            matBatch.update(d.ref, {
-                Status: 'Naručeno',
-                Order_ID: orderId,
-                Ordered_Quantity: ordered,
-            });
-        });
-        await matBatch.commit();
-    }
-
+    await applyMaterialDeltas(orgId, deltas, 'Naručeno', orderId, before);
     await Promise.all([
-        ...Array.from(productIds).map(async id => {
-            const p = await db.collection('products').where('Organization_ID', '==', orgId).where('Product_ID', '==', id).limit(1).get();
-            if (!p.empty && p.docs[0].data().Status === 'Na čekanju') await p.docs[0].ref.update({ Status: 'Materijali naručeni' });
-        }),
-        ...Array.from(projectIds).map(async id => {
-            const p = await db.collection('projects').where('Organization_ID', '==', orgId).where('Project_ID', '==', id).limit(1).get();
-            if (!p.empty && p.docs[0].data().Status === 'Odobreno') await p.docs[0].ref.update({ Status: 'U proizvodnji' });
-        }),
+        ...Array.from(productIds).map(id => setStatusWhere(orgId, 'products', 'Product_ID', id, ['Na čekanju'], 'Materijali naručeni', before)),
+        ...Array.from(projectIds).map(id => setStatusWhere(orgId, 'projects', 'Project_ID', id, ['Odobreno'], 'U proizvodnji', before)),
     ]);
-
     return { ok: true, orderNumber: order.Order_Number, materials: deltas.size };
 }
+
+/** Poslano → Nacrt: naručeno se skida s materijala (primljene stavke ostaju primljene). */
+export async function revertOrderToDraft(orgId: string, orderId: string, before?: BeforeHook): Promise<OrderActionResult> {
+    const docs = await orderDocs(orgId, orderId);
+    if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
+    const order = docs.order.data() as Order;
+    if (order.Status !== 'Poslano') return { ok: false, error: `Narudžba ${order.Order_Number} je „${order.Status}" — u nacrt se vraća samo poslana.` };
+
+    const deltas = new Map<string, { ordered: number; received: number }>();
+    const batch = adminDb().batch();
+    before?.(docs.order.ref.path, docs.order.data());
+    batch.update(docs.order.ref, { Status: 'Nacrt' });
+    for (const d of docs.items) {
+        const item = d.data() as OrderItem;
+        if (item.Status === 'Primljeno') continue;
+        for (const [id, q] of Object.entries(orderItemAllocations(item))) {
+            deltas.set(id, { ordered: (deltas.get(id)?.ordered || 0) - q, received: 0 });
+        }
+        before?.(d.ref.path, d.data());
+        batch.update(d.ref, { Status: 'Na čekanju' });
+    }
+    await batch.commit();
+    await applyMaterialDeltas(orgId, deltas, 'Nije naručeno', '', before);
+    return { ok: true, orderNumber: order.Order_Number, materials: deltas.size };
+}
+
+/**
+ * Prijem stavki (sve ili samo neke). Narudžba mora biti poslana — kao u ERP-u,
+ * prijem nacrta bi preskočio „naručeno" na materijalima.
+ */
+export async function receiveOrderItems(orgId: string, orderId: string, itemIds: string[] | 'all', before?: BeforeHook): Promise<OrderActionResult> {
+    const docs = await orderDocs(orgId, orderId);
+    if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
+    const order = docs.order.data() as Order;
+    if (order.Status === 'Nacrt') return { ok: false, error: `Narudžba ${order.Order_Number} je još nacrt — prvo je pošalji, pa primi.` };
+    if (order.Status === 'Primljeno') return { ok: false, error: `Narudžba ${order.Order_Number} je već primljena.` };
+
+    const wanted = itemIds === 'all' ? null : new Set(itemIds);
+    const deltas = new Map<string, { ordered: number; received: number }>();
+    const nowIso = new Date().toISOString();
+    const batch = adminDb().batch();
+    let changed = 0;
+    for (const d of docs.items) {
+        const item = d.data() as OrderItem;
+        if (item.Status === 'Primljeno' || (wanted && !wanted.has(item.ID))) continue;
+        for (const [id, q] of Object.entries(orderItemAllocations(item))) {
+            const prev = deltas.get(id) || { ordered: 0, received: 0 };
+            deltas.set(id, { ordered: prev.ordered - q, received: prev.received + q });
+        }
+        before?.(d.ref.path, d.data());
+        batch.update(d.ref, { Status: 'Primljeno', Received_Date: nowIso, Received_Quantity: item.Quantity });
+        changed++;
+    }
+    if (!changed) return { ok: false, error: 'Nema neprimljenih stavki za prijem.' };
+    const remaining = docs.items.filter(d => (d.data() as OrderItem).Status !== 'Primljeno').length - changed;
+    if (remaining === 0) {
+        before?.(docs.order.ref.path, docs.order.data());
+        batch.update(docs.order.ref, { Status: 'Primljeno' });
+    }
+    await batch.commit();
+
+    const productIds = await applyMaterialDeltas(orgId, deltas, 'Primljeno', orderId, before);
+    // Svi materijali proizvoda tu → „Materijali spremni" (kao ERP).
+    await Promise.all(productIds.map(async id => {
+        const mats = await adminDb().collection('product_materials').where('Organization_ID', '==', orgId).where('Product_ID', '==', id).get();
+        if (mats.docs.every(m => ['Primljeno', 'Na stanju'].includes((m.data() as ProductMaterial).Status))) {
+            await setStatusWhere(orgId, 'products', 'Product_ID', id, ['Na čekanju', 'Materijali naručeni'], 'Materijali spremni', before);
+        }
+    }));
+    return {
+        ok: true, orderNumber: order.Order_Number, materials: deltas.size,
+        detail: remaining === 0 ? 'cijela narudžba primljena' : `primljeno ${changed}, čeka još ${remaining}`,
+    };
+}
+
+/**
+ * Brisanje: nacrt se samo obriše; poslanoj se naručeno skida s materijala
+ * (kao ERP „vrati materijale"), a već primljene stavke ostaju primljene.
+ */
+export async function deleteOrderWithItems(orgId: string, orderId: string, before?: BeforeHook): Promise<OrderActionResult> {
+    const docs = await orderDocs(orgId, orderId);
+    if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
+    const order = docs.order.data() as Order;
+    const deltas = new Map<string, { ordered: number; received: number }>();
+    if (order.Status !== 'Nacrt') {
+        for (const d of docs.items) {
+            const item = d.data() as OrderItem;
+            if (item.Status === 'Primljeno') continue;
+            for (const [id, q] of Object.entries(orderItemAllocations(item))) {
+                deltas.set(id, { ordered: (deltas.get(id)?.ordered || 0) - q, received: 0 });
+            }
+        }
+        await applyMaterialDeltas(orgId, deltas, 'Nije naručeno', '', before);
+    }
+    const batch = adminDb().batch();
+    for (const d of [...docs.items, docs.order]) {
+        before?.(d.ref.path, d.data());
+        batch.delete(d.ref);
+    }
+    await batch.commit();
+    const reverted = await revertBomChanges(orgId, docs.items.map(d => d.data() as OrderItem), before);
+    return {
+        ok: true, orderNumber: order.Order_Number, materials: deltas.size,
+        ...(reverted.length ? { detail: `iz sastavnice skinuto: ${reverted.join(', ')}` } : {}),
+    };
+}
+
+/**
+ * Brisanje narudžbe vraća ono što je ona dodala u sastavnicu (višak ili nov
+ * materijal) — inače bi trošak i profit ostali naduvani za nešto što se ne
+ * naručuje. Nov materijal se briše samo ako na njemu nema ničeg naručenog ni
+ * primljenog (npr. iz druge narudžbe).
+ */
+async function revertBomChanges(orgId: string, items: OrderItem[], before?: BeforeHook): Promise<string[]> {
+    const db = adminDb();
+    const labels: string[] = [];
+    const products = new Set<string>();
+    for (const item of items) {
+        const change = item.Bom_Change;
+        if (!change || item.Status === 'Primljeno') continue;
+        const snap = await db.collection('product_materials').where('Organization_ID', '==', orgId).where('ID', '==', change.Material_ID).limit(1).get();
+        if (snap.empty) continue;
+        const m = snap.docs[0].data() as ProductMaterial;
+        const prod = await db.collection('products').where('Organization_ID', '==', orgId).where('Product_ID', '==', m.Product_ID).limit(1).get();
+        const count = prod.empty ? 1 : ((prod.docs[0].data() as Product).Quantity || 1);
+        const quantity = Math.max(0, Math.round(((m.Quantity || 0) - change.Extra / count) * 1_000_000) / 1_000_000);
+        before?.(snap.docs[0].ref.path, snap.docs[0].data());
+        if (change.Added && quantity <= 0 && !(m.Ordered_Quantity || 0) && !(m.Received_Quantity || 0)) {
+            await snap.docs[0].ref.delete();
+        } else {
+            await snap.docs[0].ref.update({ Quantity: quantity, Total_Price: Math.round(quantity * (m.Unit_Price || 0) * 100) / 100 });
+        }
+        labels.push(`${formatQty(change.Extra)} ${m.Unit || 'kom'} ${m.Material_Name}`);
+        products.add(m.Product_ID);
+    }
+    for (const id of Array.from(products)) {
+        const op = await refreshProductCost(orgId, id);
+        if (op) before?.(op.path, op.before as Record<string, unknown>);
+    }
+    return labels;
+}
+
