@@ -54,8 +54,10 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
 5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala") → update_task / update_memory na stavci o kojoj se upravo pričalo.
 6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
-   Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak ide za zalihu. Bez količine = sav ostatak koji projekat još treba. Materijal bez projekta = artikal iz kataloga (K#), za zalihu.
+   Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak se dodaje u sastavnicu proizvoda (ulazi u trošak i profit). Bez količine = sav ostatak koji projekat još treba.
+   Materijal kojeg nema u sastavnici projekta → create_order ga sam doda proizvodu s naručenom količinom; ako pita kojem proizvodu, pitaj korisnika (ask_user s imenima proizvoda) pa ponovi s product. Samo narudžba BEZ projekta ide za zalihu (katalog, K#).
    Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
+   PITANJE o materijalima proizvoda („koje materijale ima kuhinja…", „šta je definisano za…") → product_materials.
    PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:

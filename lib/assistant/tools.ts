@@ -21,10 +21,12 @@ import { getAllTasks } from '@/lib/server/fieldRepo';
 import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
 import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
+import { materialCoverage } from '@/lib/materialCoverage';
 import {
-    createDraftOrder, getOrderWithItems, listOrders, listOrdersWithItems, loadProjectMaterials, type DraftLine, type OrderableRow,
+    addMaterialToProduct, createDraftOrder, getOrderWithItems, increaseMaterialNeed, listOrders, listOrdersWithItems,
+    loadProductMaterials, loadProjectMaterials, loadProjectProducts, type DraftLine, type OrderableRow, type WriteOp,
 } from '@/lib/server/orderWrites';
-import type { Material, MemoryItem, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -148,6 +150,8 @@ export const TOOLS: Anthropic.Tool[] = [
                         properties: {
                             material: { ...str, description: 'Naziv materijala iz poruke: „baglama".' },
                             project: { ...str, description: 'Oznaka P#; bez projekta = zaliha iz kataloga.' },
+                            product: { ...str, description: 'Naziv proizvoda ako je rečen (ili odgovor na pitanje kojem proizvodu) — tu ide novi materijal ili višak.' },
+                            unit: { ...str, description: 'Jedinica za materijal kojeg nema ni u katalogu (kom, m, m2…).' },
                             ref: { ...str, description: 'Umjesto naziva: O# ili K# iz find_material / kandidata.' },
                             quantity: { ...num, description: 'Tačno rečena količina. Izostavi za materijal projekta kad treba sav ostatak.' },
                         },
@@ -158,6 +162,19 @@ export const TOOLS: Anthropic.Tool[] = [
                 note: { ...str, description: 'Napomena za dobavljača ako je rečena.' },
             },
             required: ['lines'],
+        },
+    },
+    {
+        name: 'product_materials',
+        description: 'Sastavnica iz Projekti → proizvod → Materijali: materijali proizvoda s količinom, cijenom, statusom i naručeno/primljeno. Za „koje materijale ima kuhinja…", „šta je definisano za…".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                project: { ...str, description: 'Oznaka P#.' },
+                product: { ...str, description: 'Naziv proizvoda (neobavezno — bez njega svi proizvodi projekta).' },
+                material: { ...str, description: 'Samo materijali ovog naziva (neobavezno).' },
+            },
+            required: ['project'],
         },
     },
     {
@@ -624,10 +641,24 @@ async function findMaterialTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     };
 }
 
+/** Izmjena sastavnice koju narudžba nosi — upisuje se tek kad su sve stavke ispravne. */
+type BomChange =
+    | { kind: 'increase'; materialId: string; extra: number; productName: string }
+    | { kind: 'add'; product: Product; catalogId: string; name: string; unit: string; unitPrice: number; supplier: string; quantity: number; projectId: string };
+
 interface PlannedLine extends DraftLine {
     supplier: string;
     projectIds: string[];
     label: string;
+    bom?: BomChange;
+}
+
+function pickProduct(products: Product[], name: string): Product | undefined {
+    if (!name) return products.length === 1 ? products[0] : undefined;
+    return products
+        .map(p => ({ p, s: matchScore(name, [p.Name || '']) }))
+        .filter(x => x.s >= 0.7)
+        .sort((x, y) => y.s - x.s)[0]?.p;
 }
 
 function mostCommon(values: string[]): string {
@@ -641,7 +672,7 @@ function mostCommon(values: string[]): string {
  * jednoznačna, narudžba nastaje bez prethodnog find_material — jedan poziv
  * modela manje. Inače se vraćaju kandidati s oznakama, pa model bira ili pita.
  */
-async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderGroup; item?: Material } | string> {
+async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderGroup; item?: Material; fresh?: { project: ProjectRef; name: string } } | string> {
     const material = text(line.material, 80);
     const project = line.project ? resolveAlias(env.ctx.projects, line.project) : null;
     if (line.project && !project) return `Projekat ${String(line.project)} ne postoji u listi.`;
@@ -652,8 +683,14 @@ async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderG
     const open = groups.filter(g => g.value.rows.some(r => r.available > 0));
     const group = distinct.size !== 1 ? undefined : groups.length === 1 ? groups[0] : open.length === 1 ? open[0] : undefined;
     if (group) return { group: group.value };
+    // Projekat je rečen, a materijala nema u sastavnici → dodaje se proizvodu.
+    if (project && !groups.length) {
+        const exact = catalog.find(c => foldText(c.value.Name) === foldText(material));
+        if (exact || catalog.length === 1) return { item: (exact || catalog[0]).value, fresh: { project, name: material } };
+        if (!catalog.length) return { fresh: { project, name: material } };
+    }
     if (!project && !groups.length && catalog.length === 1) return { item: catalog[0].value };
-    if (!groups.length && !catalog.length) return `„${material}" nema ni na projektima ni u katalogu. Pitaj korisnika tačan naziv.`;
+    if (!groups.length && !catalog.length) return `„${material}" nema ni na projektima ni u katalogu. Reci projekat (dodaće se u sastavnicu) ili pitaj tačan naziv.`;
     return [
         `„${material}" nije jednoznačno — ponovi create_order s ref ili pitaj korisnika (ask_user):`,
         ...groups.map(g => groupLine(g.alias, g.value)),
@@ -661,33 +698,53 @@ async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderG
     ].join('\n');
 }
 
-/** Jedna stavka zahtjeva → raspodjela na materijale projekta + višak za zalihu. */
+/**
+ * Jedna stavka zahtjeva → raspodjela na materijale projekta. Količina preko
+ * potrebe povećava potrebu materijala (sastavnica → trošak → profit), isto
+ * kao „povećaj potrebu" u čarobnjaku; samo narudžba bez projekta ide za zalihu.
+ */
 async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Promise<PlannedLine | string> {
     const ref = text(line.ref, 8).toUpperCase();
     const wanted = number(line.quantity);
     let group = ref ? resolveAlias(env.orderGroups || [], ref) : null;
     let byName: Material | undefined;
+    let fresh: { project: ProjectRef; name: string } | undefined;
     if (!ref && text(line.material)) {
         const found = await resolveByName(env, line);
         if (typeof found === 'string') return found;
         group = found.group || null;
         byName = found.item;
+        fresh = found.fresh;
+    }
+    // K# uz projekat = novi materijal u sastavnici tog projekta.
+    if (ref && !group && line.project) {
+        const project = resolveAlias(env.ctx.projects, line.project);
+        if (!project) return `Projekat ${String(line.project)} ne postoji u listi.`;
+        byName = resolveAlias(env.catalogHits || [], ref) || undefined;
+        if (byName) fresh = { project, name: byName.Name };
     }
     if (group) {
         const available = roundQty(group.rows.reduce((s, r) => s + r.available, 0));
         const quantity = wanted ?? available;
-        if (!(quantity > 0)) return `${group.name} za ${group.projectName}: ništa ne ostaje za naručiti (već naručeno ili u nacrtu). Reci količinu ako je za zalihu.`;
+        if (!(quantity > 0)) return `${group.name} za ${group.projectName}: ništa ne ostaje za naručiti (već naručeno ili u nacrtu). Reci količinu ako treba više — dodaće se u sastavnicu.`;
         const candidates = group.rows.filter(r => r.available > 0);
-        const { allocations, orderOnlyExtra } = planMaterialGroupOrder(quantity,
-            candidates.map(r => ({ id: r.materialId, needed: r.available })), undefined, group.unit === 'kom');
-        const members = (candidates.length ? candidates : group.rows.slice(0, 1)).map(r => ({
+        // Višak ide materijalu rečenog proizvoda, inače onom s najvećom potrebom.
+        const named = text(line.product, 80);
+        const assigned = (named && group.rows.find(r => matchScore(named, [r.productName]) >= 0.7))
+            || [...(candidates.length ? candidates : group.rows)].sort((x, y) => y.needed - x.needed)[0];
+        const planRows = candidates.some(r => r.materialId === assigned.materialId) ? candidates : [...candidates, assigned];
+        const { allocations, needIncrease } = planMaterialGroupOrder(quantity,
+            planRows.map(r => ({ id: r.materialId, needed: r === assigned && !candidates.includes(r) ? 0 : r.available })),
+            assigned.materialId, group.unit === 'kom');
+        const extra = needIncrease[assigned.materialId] || 0;
+        const members = planRows.map(r => ({
             materialId: r.materialId, productId: r.productId, productName: r.productName, projectId: r.projectId,
             allocation: allocations[r.materialId] || 0,
         }));
-        const forProject = roundQty(quantity - orderOnlyExtra);
-        const rest = roundQty(available - forProject);
-        const detail = orderOnlyExtra > 0
-            ? `${q(forProject)} za projekat + ${q(orderOnlyExtra)} za zalihu`
+        const forBom = roundQty(quantity - extra);
+        const rest = roundQty(available - forBom);
+        const detail = extra > 0
+            ? `${q(forBom)} po sastavnici + ${q(extra)} dodano u sastavnicu (${assigned.productName}) — ulazi u trošak`
             : rest > 0 ? `ostaje još ${q(rest)} ${group.unit}` : 'sve što projekat treba';
         return {
             materialName: group.name,
@@ -698,6 +755,29 @@ async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Pro
             supplier: supplierOverride || mostCommon(group.rows.map(r => r.supplier)),
             projectIds: [group.projectId],
             label: `• ${q(quantity)} ${group.unit} ${group.name} — ${group.projectName} (${detail})`,
+            ...(extra > 0 ? { bom: { kind: 'increase' as const, materialId: assigned.materialId, extra, productName: assigned.productName } } : {}),
+        };
+    }
+    if (fresh) {
+        if (!(wanted && wanted > 0)) return `Koliko „${fresh.name}" da naručim za ${projectLabel(fresh.project)}?`;
+        const products = await loadProjectProducts(env.orgId, fresh.project.id);
+        const product = pickProduct(products, text(line.product, 80));
+        if (!product) {
+            return `„${fresh.name}" nije u sastavnici projekta ${projectLabel(fresh.project)}. Kojem proizvodu da ga dodam? Pitaj korisnika (ask_user), pa ponovi s product. Proizvodi: ${products.map(p => p.Name).join(', ') || '— (projekat nema proizvoda)'}`;
+        }
+        const unit = byName?.Unit || text(line.unit, 12) || 'kom';
+        const unitPrice = byName?.Default_Unit_Price || 0;
+        const supplier = supplierOverride || byName?.Default_Supplier || '';
+        return {
+            materialName: byName?.Name || fresh.name,
+            unit,
+            quantity: wanted,
+            unitPrice,
+            members: [],
+            supplier,
+            projectIds: [fresh.project.id],
+            label: `• ${q(wanted)} ${unit} ${byName?.Name || fresh.name} — ${projectLabel(fresh.project)} (novo u sastavnici: ${product.Name}${unitPrice ? '' : ', cijena nepoznata — dopuni u ERP-u'})`,
+            bom: { kind: 'add', product, catalogId: byName?.Material_ID || '', name: byName?.Name || fresh.name, unit, unitPrice, supplier, quantity: wanted, projectId: fresh.project.id },
         };
     }
     const item = byName || (ref ? resolveAlias(env.catalogHits || [], ref) : null);
@@ -734,6 +814,28 @@ async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         planned.push(p);
     }
     const delivery = isIsoDate(a.expected_delivery) ? a.expected_delivery : undefined;
+
+    // Sastavnica prije narudžbe: novi materijal dobije ID koji stavka narudžbe nosi.
+    for (const p of planned) {
+        if (!p.bom) continue;
+        let ops: WriteOp[];
+        let label: string;
+        if (p.bom.kind === 'add') {
+            const added = await addMaterialToProduct(env.orgId, {
+                product: p.bom.product, catalogId: p.bom.catalogId, name: p.bom.name, unit: p.bom.unit,
+                unitPrice: p.bom.unitPrice, supplier: p.bom.supplier, totalQuantity: p.bom.quantity,
+            });
+            p.members = [{ materialId: added.material.ID, productId: p.bom.product.Product_ID, productName: p.bom.product.Name, projectId: p.bom.projectId, allocation: p.quantity }];
+            ops = added.ops;
+            label = `sastavnica „${p.bom.product.Name}"`;
+        } else {
+            ops = await increaseMaterialNeed(env.orgId, p.bom.materialId, p.bom.extra);
+            label = `sastavnica „${p.bom.productName}"`;
+        }
+        await Promise.all(ops.map(op => recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: op.path, before: op.before, label })));
+        env.changes.push(label);
+        if (env.cache) delete env.cache.rows;   // sastavnica se promijenila
+    }
 
     const supplierSnap = await adminDb().collection('suppliers').where('Organization_ID', '==', env.orgId).get();
     const suppliers = supplierSnap.docs.map(d => d.data() as Supplier);
@@ -778,6 +880,40 @@ async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         created.push(`${draft.orderNumber} (${supplier.name})`);
     }
     return { ok: true, orders: created, note: 'PDF i dugme „Poslano" sistem šalje korisniku.' };
+}
+
+async function productMaterialsTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const project = resolveAlias(env.ctx.projects, a.project);
+    if (!project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const productName = text(a.product, 80);
+    const materialName = text(a.material, 80);
+
+    let products = await loadProjectProducts(env.orgId, project.id);
+    if (productName) products = products.filter(p => matchScore(productName, [p.Name || '']) >= 0.7);
+    if (!products.length) return { ok: false, error: productName ? `Projekat nema proizvod „${productName}".` : 'Projekat nema proizvoda.' };
+    const materials = await loadProductMaterials(env.orgId, products.map(p => p.Product_ID));
+
+    const lines = products
+        .sort((x, y) => (x.Name || '').localeCompare(y.Name || '', 'bs'))
+        .slice(0, 15)
+        .map(p => {
+            const count = p.Quantity > 0 ? p.Quantity : 1;
+            const own = materials.filter(m => m.Product_ID === p.Product_ID);
+            const shown = materialName ? own.filter(m => matchScore(materialName, [m.Material_Name]) >= 0.7) : own;
+            const unitCost = own.reduce((s, m) => s + (m.Total_Price || 0), 0);
+            const rows = shown.slice(0, 30).map(m => {
+                const c = materialCoverage(m, count);
+                return [
+                    `  • ${m.Material_Name}`, `${q(c.needed)} ${m.Unit || 'kom'}${count > 1 ? ` (${q(m.Quantity)}/kom)` : ''}`,
+                    `cijena ${q(m.Unit_Price || 0)}`, m.Status || 'Nije naručeno',
+                    `naručeno ${q(c.ordered)}, primljeno ${q(c.received)}${c.onStock ? `, na stanju ${q(c.onStock)}` : ''}, za naručiti ${q(c.toOrder)}`,
+                    m.Supplier || '—',
+                ].join(' | ');
+            });
+            return [`${p.Name} ×${count} | materijal ${q(unitCost * count)} ukupno (${q(unitCost)}/kom) | ${own.length} stavki`, ...rows,
+                ...(shown.length > 30 ? [`  … još ${shown.length - 30}`] : [])].join('\n');
+        });
+    return { ok: true, project: projectLabel(project), products: lines, ...(products.length > 15 ? { note: `Prikazano 15 od ${products.length} proizvoda — suzi s product.` } : {}) };
 }
 
 async function listOrdersTool(env: ToolEnv, a: Args): Promise<ToolResult> {
@@ -857,6 +993,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'search_memory': return await searchMemoryTool(env, args);
             case 'find_material': return await findMaterialTool(env, args);
             case 'create_order': return await createOrderTool(env, args);
+            case 'product_materials': return await productMaterialsTool(env, args);
             case 'list_orders': return await listOrdersTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
