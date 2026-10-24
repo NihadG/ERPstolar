@@ -58,6 +58,15 @@ class FakeCollection extends FakeQuery {
 
 export const fakeDb = {
     collection: (name: string) => new FakeCollection(name),
+    batch: () => {
+        const ops: (() => Promise<void>)[] = [];
+        return {
+            set: (r: FakeDoc, d: Data) => { ops.push(() => r.set(d)); },
+            update: (r: FakeDoc, p: Data) => { ops.push(() => r.update(p)); },
+            delete: (r: FakeDoc) => { ops.push(() => r.delete()); },
+            commit: async () => { for (const op of ops) await op(); },
+        };
+    },
     doc: (path: string) => { const [c, id] = path.split('/'); return new FakeDoc(c, id); },
     runTransaction: async <T>(fn: (tx: any) => Promise<T>) => fn({
         get: (x: FakeDoc | FakeQuery) => x.get(),

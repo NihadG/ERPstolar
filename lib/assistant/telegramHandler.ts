@@ -12,9 +12,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { setTaskStatus, taskRef } from '@/lib/server/fieldWrites';
+import { sendOrder } from '@/lib/server/orderWrites';
 import {
-    answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping,
+    answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
+import { sendOrderPdf } from './orderDocuments';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant } from './brain';
@@ -39,7 +41,9 @@ const HELP =
     '• „Napomeni me da kažem Ameru da povuče ogledala u kombi"\n' +
     '• „U stanu 304 imam 3 ogledala od 1 m" → bilježnica\n' +
     '• Proslijeđenu poruku radnika → ažuriram stanje\n' +
-    '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n\n' +
+    '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n' +
+    '• „Naruči 5 baglama za Stan 304" → narudžba (nacrt) + PDF\n' +
+    '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Komande: /danas · /otvoreno · /pomoc';
 
 type MessageIncoming = Extract<Incoming, { type: 'message' }>;
@@ -144,6 +148,14 @@ async function converse(
     await saveSession(chatId, out.session);
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
     await sendMessage(chatId, prefix + out.reply, out.buttons);
+    for (const doc of out.documents || []) {
+        try {
+            await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
+        } catch (e) {
+            console.error('[assistant] PDF narudžbe pao:', e);
+            await sendMessage(chatId, '📄 Narudžba je sačuvana, ali PDF nije uspio. Otvori je u ERP-u → Narudžbe.');
+        }
+    }
     if (input.entryId) {
         await attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)));
     }
@@ -171,6 +183,16 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         const undone = await undoTurn(arg, link.uid);
         await answerCallbackQuery(inc.callbackId, undone.length ? 'Poništeno' : 'Već poništeno');
         if (undone.length) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n\n↩️ Poništeno: ${undone.join(', ')}`);
+        return;
+    }
+
+    if (kind === 'ordsent') {
+        const result = await sendOrder(link.orgId, arg);
+        await answerCallbackQuery(inc.callbackId, result.ok ? 'Narudžba je poslana' : result.error);
+        await tg('editMessageReplyMarkup', { chat_id: inc.chatId, message_id: inc.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+        if (result.ok) {
+            await sendMessage(inc.chatId, `📤 Narudžba ${result.orderNumber} je poslana — materijali se sad vode kao naručeni.`);
+        }
         return;
     }
 

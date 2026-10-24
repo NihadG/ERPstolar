@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
+    experimental: {
+        // PDF narudžbe za Telegram crta se na serveru fontom iz assets/fonts (čita se fs-om).
+        outputFileTracingIncludes: {
+            '/api/telegram/webhook': ['./assets/fonts/**/*'],
+        },
+    },
     webpack: (config, { isServer, dev }) => {
         // Handle undici with externals for server
         if (isServer) {

@@ -41,6 +41,7 @@ import ProjectCommand from './ProjectCommand';
 import ProjectMaterialGroups from './ProjectMaterialGroups';
 import TaskEditorModal from './TaskEditorModal';
 import { groupProjectMaterials, projectMaterialRows } from '@/lib/projectCommand';
+import { materialCoverage } from '@/lib/materialCoverage';
 import './ProjectOverviewScreen.css';
 
 // ── Paleta troškovnih segmenata (fiksne, kontrastne) ────────────────
@@ -118,16 +119,12 @@ export default function ProjectOverviewScreen({
         return m;
     }, [materials]);
 
-    // Materijali projekta koji NISU naručeni (za kreiranje narudžbe).
+    // Materijali projekta koje još treba naručiti (i ostatak djelimično naručenih).
     const orderableMaterials = useMemo<OrderableMaterial[]>(() => {
         const out: OrderableMaterial[] = [];
         for (const product of project.products || []) {
-            const productQty = product.Quantity && product.Quantity > 0 ? product.Quantity : 1;
             for (const mat of product.materials || []) {
-                if (mat.Status !== 'Nije naručeno' || mat.Order_ID) continue;
-                const needed = (mat.Quantity || 0) * productQty;
-                const coverage = (mat.On_Stock || 0) + (mat.Ordered_Quantity || 0) + (mat.Received_Quantity || 0);
-                const qtyToOrder = Math.round((needed - coverage) * 100) / 100;
+                const qtyToOrder = Math.round(materialCoverage(mat, product.Quantity).toOrder * 100) / 100;
                 if (qtyToOrder <= 0) continue;
                 const unitPrice = mat.Unit_Price || 0;
                 out.push({

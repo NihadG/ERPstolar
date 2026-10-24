@@ -12,7 +12,8 @@ import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import { SlidersHorizontal, Plus } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
-import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
+import { ORDER_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
+import { isMaterialOrderable, materialCoverage } from '@/lib/materialCoverage';
 import { formatCurrency, formatDate, getStatusClass, plural } from '@/lib/utils';
 import { daysUntil } from '@/lib/planning';
 import { useIsCompact } from '@/hooks/useIsCompact';
@@ -139,6 +140,12 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             }
         }
         return materials;
+    }, [projects]);
+
+    const productQtyById = useMemo(() => {
+        const map = new Map<string, number>();
+        projects.forEach(project => (project.products || []).forEach(product => map.set(product.Product_ID, product.Quantity || 1)));
+        return map;
     }, [projects]);
 
     // Handle pending order materials from Overview tab
@@ -366,8 +373,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
-        return allProductMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
-    }, [allProductMaterials]);
+        // Iz količina: djelimično naručen materijal (5 od 25) i dalje nudi ostatak.
+        return allProductMaterials.filter(m => isMaterialOrderable(m, productQtyById.get(m.Product_ID)));
+    }, [allProductMaterials, productQtyById]);
 
     // Get products from selected projects
     const availableProducts = useMemo(() => {
@@ -497,10 +505,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }).map(m => {
             const product = availableProducts.find(p => p.Product_ID === m.Product_ID);
             const productQty = product?.Quantity || 1;
+            // Ono što je već naručeno ili primljeno se ne nudi ponovo; zaliha ostaje
+            // u računici jer je čarobnjak unosi posebno (korak „na stanju").
+            const { needed, open } = materialCoverage(m, productQty);
             return {
                 ...m,
-                Quantity: m.Quantity * productQty,
-                Total_Price: m.Total_Price * productQty,
+                Quantity: open,
+                Total_Price: needed > 0 ? m.Total_Price * productQty * open / needed : 0,
                 Product_Name: product?.Name || '',
                 Project_Name: product?.Project_Name || '',
             };

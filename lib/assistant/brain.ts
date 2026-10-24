@@ -52,6 +52,8 @@ export interface AssistantTurnOutput {
     buttons: ButtonRows;
     session: AssistantSession;
     created: { taskIds: string[]; memoryIds: string[] };
+    /** PDF-ovi narudžbi koji idu poslije odgovora. */
+    documents?: { orderId: string; draft: boolean }[];
     degraded?: boolean;
 }
 
@@ -231,5 +233,5 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
     }
     const buttons: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
-    return finish(reply, buttons, null, reply, { created: env.created });
+    return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents });
 }
