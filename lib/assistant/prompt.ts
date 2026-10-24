@@ -35,7 +35,7 @@ export function memoryLine(alias: string, m: MemoryItem, tz: string): string {
 export function taskLine(alias: string, t: Task, tz: string, now: Date): string {
     const parts = [alias, t.Title];
     if (t.Reminder_At) parts.push(`podsjetnik ${formatReminder(t.Reminder_At, tz, now)}${t.Reminder_Pending ? '' : ' (poslan)'}`);
-    if (t.Due_Date) parts.push(`rok ${t.Due_Date}`);
+    if (t.Due_Date) parts.push(`rok ${t.Due_Date.slice(0, 10)}`);
     if (t.Assigned_Worker_Name) parts.push(`radnik: ${t.Assigned_Worker_Name}`);
     const project = t.Links?.find(l => l.Entity_Type === 'project');
     if (project) parts.push(`projekat: ${project.Entity_Name}`);

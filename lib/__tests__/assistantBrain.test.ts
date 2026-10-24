@@ -40,7 +40,8 @@ jest.mock('@anthropic-ai/sdk', () => {
 jest.mock('@/lib/server/firebaseAdmin', () => require('@/lib/testing/fakeFirestore').firebaseAdminMock);
 
 import { fakeDocs as docs, fakeStore as mockStore } from '@/lib/testing/fakeFirestore';
-import { runAssistant } from '@/lib/assistant/brain';
+import Anthropic from '@anthropic-ai/sdk';
+import { failureReason, runAssistant } from '@/lib/assistant/brain';
 import { undoTurn, type AssistantSession } from '@/lib/assistant/store';
 
 const NOW = new Date('2026-10-23T12:05:00Z'); // petak 14:05 u Sarajevu
@@ -249,5 +250,23 @@ describe('asistent od poruke do baze', () => {
         expect(out.degraded).toBe(true);
         expect(out.reply).toMatch(/ANTHROPIC_API_KEY/);
         process.env.ANTHROPIC_API_KEY = 'test';
+    });
+
+    it('kad model padne, korisnik vidi razlog', async () => {
+        const out = await say('nešto', []); // prazna skripta → mock baca grešku
+        expect(out.degraded).toBe(true);
+        expect(out.reply).toMatch(/Razlog: skripta je prazna/);
+    });
+});
+
+describe('failureReason', () => {
+    const apiError = (status: number, message: string) => Object.assign(Object.create(Anthropic.APIError.prototype), { status, message });
+
+    it('prevodi česte greške Anthropica', () => {
+        expect(failureReason(apiError(401, 'invalid x-api-key'))).toMatch(/ključ nije ispravan/);
+        expect(failureReason(apiError(400, 'Your credit balance is too low to access the Anthropic API.'))).toMatch(/nema kredita/);
+        expect(failureReason(apiError(404, 'model not found'))).toMatch(/claude-haiku-5-5 nije dostupan/);
+        expect(failureReason(apiError(529, 'Overloaded'))).toMatch(/preopterećen/);
+        expect(failureReason(apiError(400, 'tools.0: bad schema'))).toBe('400: tools.0: bad schema');
     });
 });
