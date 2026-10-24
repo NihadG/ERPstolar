@@ -84,6 +84,7 @@ export function failureReason(e: unknown): string {
         const msg = String(e.message || '');
         if (e.status === 401) return 'Anthropic ključ nije ispravan (401) — provjeri ANTHROPIC_API_KEY na Vercelu';
         if (e.status === 403) return 'ključ nema pristup (403)';
+        if (/not scoped to a workspace/i.test(msg)) return 'ključ nije vezan za workspace — napravi ključ unutar workspacea ili postavi ANTHROPIC_WORKSPACE_ID na Vercelu';
         if (/credit balance/i.test(msg)) return 'nema kredita na Anthropic nalogu (console.anthropic.com → Billing)';
         if (e.status === 404) return `model ${model()} nije dostupan (404)`;
         if (e.status === 429) return 'previše zahtjeva ili dostignut limit potrošnje (429)';
@@ -151,7 +152,12 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         summaries: [],
     };
 
-    const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 1 });
+    // Ključ koji nije vezan za workspace traži workspace u zaglavlju svakog zahtjeva.
+    const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+    const client = new Anthropic({
+        apiKey, timeout: TIMEOUT_MS, maxRetries: 1,
+        ...(workspace ? { defaultHeaders: { 'anthropic-workspace-id': workspace } } : {}),
+    });
     const prompt = buildPromptParts(ctx, now, tz);
     const system: Anthropic.TextBlockParam[] = [
         // Tačka keša na kraju stabilnog dijela: alati + pravila + imena se čitaju iz keša.
