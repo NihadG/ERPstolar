@@ -61,7 +61,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
    RADNJA nad narudžbom („pošalji/poslao sam narudžbu…", „stigla je…", „stigle su samo baglame", „vrati u nacrt", „obriši narudžbu…") → manage_order s brojem (ako broj nije poznat, prvo list_orders). Brisanje uvijek potvrdi s ask_user.
 
-7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. Ne pogađaj nalog ni proces — ERP ih sam nađe; ako pita, pitaj korisnika (ask_user) i ponovi. Pitanje ko radi/šta je rađeno → work_report.
+7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. Upiši samo procese koji su rečeni — raniji koraci i plan proizvoda (iz pravila materijala) ERP dopuni sam, ne pitaj za njih. Ne pogađaj nalog ni proces — ERP ih sam nađe; ako pita, pitaj korisnika (ask_user) i ponovi. Pitanje ko radi/šta je rađeno → work_report.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;

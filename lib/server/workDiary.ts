@@ -20,9 +20,13 @@ import { recalcOrderLabor, renormalizeWorkerDay } from './fieldAttendance';
 import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
-    diaryTargets, ensureGraphNode, markItemProcess, matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
+    applyPlanToItem, completeUpstream, diaryTargets, ensureGraphNode, graphFromStages, itemHasPlan,
+    markItemProcess, matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
 } from '@/lib/workDiary';
-import type { ProcessCatalogItem, ProcessGraph, Project, WorkLog, WorkOrder, WorkOrderItem } from '@/lib/types';
+import { buildGraphFromRules, planToStages } from '@/lib/productProcesses';
+import type {
+    ProcessCatalogItem, ProcessGraph, ProcessMaterialRule, Product, ProductMaterial, Project, WorkLog, WorkOrder, WorkOrderItem,
+} from '@/lib/types';
 
 export type TrackHook = (path: string, data: Record<string, unknown> | null) => void;
 
@@ -58,8 +62,20 @@ export interface DiaryRow {
     graphAdded: boolean;
 }
 
+/** Procesi dodani ili pretpostavljeni na dijelu naloga (proizvodi prazni = cijeli nalog). */
+export interface DiaryProcessNote {
+    workOrderName: string;
+    products: string[];
+    processes: string[];
+    /** Samo za plan: odakle je plan došao. */
+    source?: 'product' | 'rules';
+}
+
 export type DiaryResult =
-    | { ok: true; rows: DiaryRow[]; absences: { worker: string; status: string }[]; affectedWorkOrders: string[]; newCatalog: string[] }
+    | {
+        ok: true; rows: DiaryRow[]; absences: { worker: string; status: string }[]; affectedWorkOrders: string[]; newCatalog: string[];
+        planned: DiaryProcessNote[]; assumedDone: DiaryProcessNote[];
+    }
     | { ok: false; issues: DiaryIssue[] };
 
 interface ResolvedLine {
@@ -81,12 +97,14 @@ export async function bookWorkDiary(
     track: TrackHook = () => undefined,
 ): Promise<DiaryResult> {
     const db = adminDb();
-    const [orders, workers, projectsSnap, catalogSnap] = await Promise.all([
+    const [orders, workers, projectsSnap, catalogSnap, rulesSnap] = await Promise.all([
         getBookableWorkOrders(orgId),
         getWorkers(orgId),
         db.collection('projects').where('Organization_ID', '==', orgId).get(),
         db.collection('process_catalog').where('Organization_ID', '==', orgId).get(),
+        db.collection('process_material_rules').where('Organization_ID', '==', orgId).get(),
     ]);
+    const rules = rulesSnap.docs.map(d => d.data() as ProcessMaterialRule);
     attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
     const projectName = new Map(projectsSnap.docs.map(d => { const p = d.data() as Project; return [p.Project_ID, p.Name || p.Client_Name || '']; }));
     const targets = diaryTargets(orders, id => projectName.get(id) || '');
@@ -94,6 +112,7 @@ export async function bookWorkDiary(
     const vocabulary = Array.from(new Set([
         ...catalog.map(c => c.Name),
         ...orders.flatMap(o => (o.Process_Graph?.nodes || []).map(n => n.name)),
+        ...rules.flatMap(r => r.Processes || []),
     ].filter(n => n && n.trim().toLowerCase() !== 'rad')));
     const workerById = new Map(workers.map(w => [w.Worker_ID, w]));
 
@@ -146,20 +165,44 @@ export async function bookWorkDiary(
     const atIso = `${date}T15:00:00.000Z`;
     const rows: DiaryRow[] = [];
     const graphAdded = new Set<string>();
+    const graphOf = (woId: string) => (graphs.has(woId) ? graphs.get(woId) : orderById.get(woId)?.Process_Graph);
+    const processesOf = (itemId: string) => (itemProcesses.has(itemId) ? itemProcesses.get(itemId) : itemById.get(itemId)?.Processes);
+
+    // Proizvod bez ikakvog plana dobije plan (kartica proizvoda ili pravila materijala)
+    // prije čekiranja — tek tada „brušenje" zna šta je bilo prije njega.
+    const worked = Array.from(new Map(resolved.filter(r => r.process || r.also.length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
+    const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
+    const plans = await loadItemPlans(orgId, bare, rules);
+    const plannedByItem = new Map<string, { processes: string[]; source: 'product' | 'rules' }>();
+    for (const item of bare) {
+        const plan = plans.get(item.ID);
+        if (!plan) continue;
+        const res = applyPlanToItem(graphOf(item.Work_Order_ID), processesOf(item.ID), item.ID, plan.graph, uuidv4);
+        graphs.set(item.Work_Order_ID, res.graph);
+        itemProcesses.set(item.ID, res.processes);
+        if (res.added.length) plannedByItem.set(item.ID, { processes: res.added, source: plan.source });
+    }
+
+    const assumedByItem = new Map<string, string[]>();
     for (const r of resolved) {
         const done = r.input.done === true;
         for (const name of [r.process, ...r.also].filter(Boolean) as string[]) {
             for (const t of r.items) {
-                const wo = orderById.get(t.workOrderId)!;
-                const current = graphs.has(wo.Work_Order_ID) ? graphs.get(wo.Work_Order_ID) : wo.Process_Graph;
-                const res = ensureGraphNode(current, t.itemId, name, uuidv4);
-                graphs.set(wo.Work_Order_ID, res.graph);
+                const res = ensureGraphNode(graphOf(t.workOrderId), t.itemId, name, uuidv4);
+                graphs.set(t.workOrderId, res.graph);
                 nodeFor.set(`${t.itemId}|${name}`, res.nodeId);
                 if (res.added) graphAdded.add(`${r.workOrderId}|${name}`);
                 const worker = workerById.get(r.input.workerIds[0])!;
-                const prev = itemProcesses.has(t.itemId) ? itemProcesses.get(t.itemId) : itemById.get(t.itemId)?.Processes;
-                const marked = markItemProcess(prev, name, done && name === r.process, { id: worker.Worker_ID, name: worker.Name }, atIso);
-                itemProcesses.set(t.itemId, marked.processes);
+                const marked = markItemProcess(processesOf(t.itemId), name, done && name === r.process, { id: worker.Worker_ID, name: worker.Name }, atIso);
+                let processes = marked.processes;
+                // Raniji koraci se pretpostavljaju samo za proces koji je već bio u planu;
+                // nov proces (dodan na kraj) ne smije „završiti" cijeli plan.
+                if (res.covered) {
+                    const up = completeUpstream(res.graph, t.itemId, res.nodeId, processes, atIso);
+                    processes = up.processes;
+                    if (up.completed.length) assumedByItem.set(t.itemId, [...(assumedByItem.get(t.itemId) || []), ...up.completed]);
+                }
+                itemProcesses.set(t.itemId, processes);
             }
         }
     }
@@ -295,7 +338,69 @@ export async function bookWorkDiary(
         await recalcOrderLabor(orgId, woId);
     }
 
-    return { ok: true, rows, absences: absenceRows, affectedWorkOrders: Array.from(affected), newCatalog };
+    // Isti procesi na više proizvoda istog naloga = jedna napomena.
+    const notes = (byItem: Map<string, { processes: string[]; source?: 'product' | 'rules' }>): DiaryProcessNote[] => {
+        const groups = new Map<string, DiaryProcessNote & { woId: string }>();
+        byItem.forEach((v, itemId) => {
+            const item = itemById.get(itemId)!;
+            const processes = Array.from(new Set(v.processes));
+            const key = `${item.Work_Order_ID}|${v.source || ''}|${processes.join('|')}`;
+            const g = groups.get(key) || { woId: item.Work_Order_ID, workOrderName: targets.find(t => t.itemId === itemId)?.workOrderName || '', products: [], processes, ...(v.source ? { source: v.source } : {}) };
+            g.products.push(item.Product_Name);
+            groups.set(key, g);
+        });
+        return Array.from(groups.values()).map(({ woId, ...g }) => ({
+            ...g, products: g.products.length < (orderById.get(woId)?.items || []).length ? g.products : [],
+        }));
+    };
+    const assumedNotes = new Map(Array.from(assumedByItem.entries()).map(([id, processes]) => [id, { processes }]));
+
+    return {
+        ok: true, rows, absences: absenceRows, affectedWorkOrders: Array.from(affected), newCatalog,
+        planned: notes(plannedByItem), assumedDone: notes(assumedNotes),
+    };
+}
+
+/**
+ * Plan za stavke bez plana, istim redom kao čarobnjak naloga: snimak grafa na
+ * stavci → graf / faze s kartice proizvoda → pravila materijal→proces nad
+ * materijalima proizvoda. Bez ičega → stavka ostaje bez plana.
+ */
+async function loadItemPlans(
+    orgId: string,
+    items: WorkOrderItem[],
+    rules: ProcessMaterialRule[],
+): Promise<Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>> {
+    const out = new Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>();
+    const productIds = Array.from(new Set(items.map(i => i.Product_ID).filter(Boolean)));
+    if (!items.length) return out;
+    const [products, materials] = await Promise.all([
+        byProductIds<Product>(orgId, 'products', productIds),
+        rules.length ? byProductIds<ProductMaterial>(orgId, 'product_materials', productIds) : Promise.resolve([]),
+    ]);
+    for (const item of items) {
+        const product = products.find(p => p.Product_ID === item.Product_ID);
+        const own = [item.Process_Graph, product?.Process_Graph].find(g => g?.nodes?.length)
+            || [planToStages(item.Process_Stages), planToStages(product?.Process_Stages, product?.Process_Plan)]
+                .filter(s => s.length).map(graphFromStages)[0];
+        if (own) {
+            out.set(item.ID, { graph: own, source: 'product' });
+            continue;
+        }
+        const mats = materials.filter(m => m.Product_ID === item.Product_ID);
+        const fromRules = mats.length ? buildGraphFromRules(mats, rules).graph : undefined;
+        if (fromRules?.nodes.length) out.set(item.ID, { graph: fromRules, source: 'rules' });
+    }
+    return out;
+}
+
+async function byProductIds<T>(orgId: string, col: string, ids: string[]): Promise<T[]> {
+    const out: T[] = [];
+    for (let i = 0; i < ids.length; i += 30) {
+        const snap = await adminDb().collection(col).where('Organization_ID', '==', orgId).where('Product_ID', 'in', ids.slice(i, i + 30)).get();
+        snap.docs.forEach(d => out.push(d.data() as T));
+    }
+    return out;
 }
 
 /** Jedan zapis prisustva po (radnik, dan) — isto pravilo kao setAttendance, uz snimak za poništavanje. */

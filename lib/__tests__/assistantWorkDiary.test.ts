@@ -205,3 +205,68 @@ describe('dnevni upis: cijela poruka u jednom pozivu', () => {
         expect(wo('z21').Process_Graph.nodes).toHaveLength(1);
     });
 });
+
+describe('plan iz pravila materijala + podrazumijevano završeni raniji koraci', () => {
+    const statuses = (id: string) => Object.fromEntries(item(id).Processes.map((p: any) => [p.Process_Name, `${p.Status}${p.Assumed_Done ? '*' : ''}`]));
+    let day1: ToolEnv;
+    let day2: ToolEnv;
+
+    beforeAll(async () => {
+        store.set('process_material_rules/r1', { ID: 'r1', Organization_ID: 'org1', Match_Kind: 'material_type_combo', Match_Value: '', Match_Types: ['furnir', 'mdf'],
+            Processes: ['Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje', 'Brušenje', 'Lakiranje'] });
+        store.set('projects/b', { Project_ID: 'pb', Organization_ID: 'org1', Name: 'Begović kuća', Client_Name: 'Begović' });
+        store.set('work_orders/r9', { Work_Order_ID: 'r9', Organization_ID: 'org1', Name: 'Begović - Vrata', Status: 'Na čekanju', Work_Order_Type: 'Proizvodnja' });
+        const it = (id: string, product: string) => store.set(`work_order_items/${id}`, { ID: id, Organization_ID: 'org1', Work_Order_ID: 'r9', Product_ID: `p-${id}`, Product_Name: product, Project_ID: 'pb', Status: 'Na čekanju' });
+        it('v1', 'Vrata ulazna'); it('v2', 'Vrata sobna');
+        // v1: plan iz pravila (MDF + furnir u materijalima); v2: plan s kartice proizvoda.
+        store.set('product_materials/m1', { ID: 'm1', Organization_ID: 'org1', Product_ID: 'p-v1', Material_Name: 'MDF 18mm' });
+        store.set('product_materials/m2', { ID: 'm2', Organization_ID: 'org1', Product_ID: 'p-v1', Material_Name: 'Furnir hrast' });
+        store.set('products/v2', { Product_ID: 'p-v2', Organization_ID: 'org1', Name: 'Vrata sobna',
+            Process_Stages: [{ processes: ['Krojenje MDF-a'] }, { processes: ['Brušenje'] }, { processes: ['Lakiranje'] }] });
+
+        day1 = env();
+        const res = await runTool(day1, 'log_work', { date: '2026-10-22', lines: [{ workers: ['W1'], work: 'vrata Begović', process: 'krojili MDF' }] });
+        expect(res).toMatchObject({ ok: true });
+    });
+
+    it('proizvod bez procesa dobije plan; upisani proces u toku, ostali čekaju', () => {
+        expect(statuses('v1')).toEqual({
+            'Krojenje MDF-a': 'U toku', 'Priprema furnira': 'Na čekanju', Furniranje: 'Na čekanju', Srezivanje: 'Na čekanju', Brušenje: 'Na čekanju', Lakiranje: 'Na čekanju',
+        });
+        expect(statuses('v2')).toEqual({ 'Krojenje MDF-a': 'U toku', Brušenje: 'Na čekanju', Lakiranje: 'Na čekanju' });
+        const g = wo('r9').Process_Graph;
+        expect(g.nodes.filter((n: any) => n.name === 'Krojenje MDF-a')).toEqual([expect.objectContaining({ itemIds: ['v1', 'v2'] })]);
+        expect(wo('r9').Status).toBe('U toku');
+    });
+
+    it('sutra „brušenje" → raniji koraci završeni pretpostavkom, dnevnica samo na brušenje', async () => {
+        day2 = env();
+        expect(await runTool(day2, 'log_work', { date: '2026-10-23', lines: [{ workers: ['W2'], work: 'vrata Begović', process: 'brusili' }] })).toMatchObject({ ok: true });
+        expect(statuses('v1')).toEqual({
+            'Krojenje MDF-a': 'Završeno*', 'Priprema furnira': 'Završeno*', Furniranje: 'Završeno*', Srezivanje: 'Završeno*', Brušenje: 'U toku', Lakiranje: 'Na čekanju',
+        });
+        expect(statuses('v2')).toEqual({ 'Krojenje MDF-a': 'Završeno*', Brušenje: 'U toku', Lakiranje: 'Na čekanju' });
+        const logs = docs('work_logs').filter(l => l.Worker_ID === 'kerim' && l.Date === '2026-10-23');
+        expect(logs.map(l => l.Process_Name)).toEqual(['Brušenje', 'Brušenje']);
+    });
+
+    it('rezime kaže odakle je plan i šta se podrazumijeva', () => {
+        const s = day2.summaries[0];
+        expect(day1.summaries[0]).toMatch(/📋 Plan iz pravila materijala · Begović - Vrata \(Vrata ulazna\): Krojenje MDF-a → Priprema furnira → Furniranje → Srezivanje → Brušenje → Lakiranje/);
+        expect(day1.summaries[0]).toMatch(/📋 Plan s kartice proizvoda · Begović - Vrata \(Vrata sobna\): Krojenje MDF-a → Brušenje → Lakiranje/);
+        expect(s).toMatch(/☑️ Podrazumijeva se završeno · Begović - Vrata \(Vrata ulazna\): Krojenje MDF-a, Priprema furnira, Furniranje, Srezivanje/);
+        expect(s).toMatch(/☑️ Podrazumijeva se završeno · Begović - Vrata \(Vrata sobna\): Krojenje MDF-a/);
+    });
+
+    it('nov proces (nije bio u planu) ne završava ostatak plana', async () => {
+        const e = env();
+        expect(await runTool(e, 'log_work', { date: '2026-10-23', lines: [{ workers: ['W3'], work: 'vrata Begović', process: 'pakovanje', new_process: true }] })).toMatchObject({ ok: true });
+        expect(statuses('v1')).toMatchObject({ Brušenje: 'U toku', Lakiranje: 'Na čekanju', Pakovanje: 'U toku' });
+        expect(e.summaries[0]).not.toMatch(/Podrazumijeva/);
+    });
+
+    it('↩️ Poništi vraća korake na stanje prije', async () => {
+        await undoTurn(day2.turnId, 'u1');
+        expect(statuses('v1')).toMatchObject({ 'Krojenje MDF-a': 'U toku', Srezivanje: 'Na čekanju', Brušenje: 'Na čekanju' });
+    });
+});
