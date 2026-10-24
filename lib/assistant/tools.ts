@@ -23,7 +23,8 @@ import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
 import { materialCoverage } from '@/lib/materialCoverage';
 import {
-    addMaterialToProduct, createDraftOrder, getOrderWithItems, increaseMaterialNeed, listOrders, listOrdersWithItems,
+    addMaterialToProduct, createDraftOrder, deleteOrderWithItems, getOrderWithItems, increaseMaterialNeed, listOrders,
+    listOrdersWithItems, receiveOrderItems, revertOrderToDraft, sendOrder,
     loadProductMaterials, loadProjectMaterials, loadProjectProducts, type DraftLine, type OrderableRow, type WriteOp,
 } from '@/lib/server/orderWrites';
 import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
@@ -190,6 +191,20 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'manage_order',
+        description: 'Radnja nad postojećom narudžbom (i onom napravljenom u ERP-u): send = poslano dobavljaču, receive = stiglo (sve ili samo neki materijali), draft = vrati u nacrt, delete = obriši. Broj iz list_orders.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                number: { ...str, description: 'Broj narudžbe ili njegov dio („K7").' },
+                action: enumOf(['send', 'receive', 'draft', 'delete']),
+                materials: { ...strList, description: 'receive: samo ovi materijali (djelimičan prijem). Bez toga = sve stavke.' },
+                confirmed: { ...bool, description: 'delete: true tek kad je korisnik potvrdio brisanje.' },
+            },
+            required: ['number', 'action'],
+        },
+    },
+    {
         name: 'order_pdf',
         description: 'Pošalji PDF postojeće narudžbe. Bez broja → zadnja narudžba (za projekat/dobavljača ako su rečeni).',
         input_schema: {
@@ -258,7 +273,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'order_pdf']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -705,6 +720,10 @@ async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderG
  */
 async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Promise<PlannedLine | string> {
     const ref = text(line.ref, 8).toUpperCase();
+    // Rečena količina mora biti pozitivna — „-5" ili 0 nije „sav ostatak".
+    if (line.quantity != null && !(typeof line.quantity === 'number' && line.quantity > 0)) {
+        return `Količina „${String(line.quantity)}" nije ispravna. Pitaj korisnika koliko.`;
+    }
     const wanted = number(line.quantity);
     let group = ref ? resolveAlias(env.orderGroups || [], ref) : null;
     let byName: Material | undefined;
@@ -826,10 +845,12 @@ async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
                 unitPrice: p.bom.unitPrice, supplier: p.bom.supplier, totalQuantity: p.bom.quantity,
             });
             p.members = [{ materialId: added.material.ID, productId: p.bom.product.Product_ID, productName: p.bom.product.Name, projectId: p.bom.projectId, allocation: p.quantity }];
+            p.bomChange = { Material_ID: added.material.ID, Extra: p.quantity, Added: true };
             ops = added.ops;
             label = `sastavnica „${p.bom.product.Name}"`;
         } else {
             ops = await increaseMaterialNeed(env.orgId, p.bom.materialId, p.bom.extra);
+            p.bomChange = { Material_ID: p.bom.materialId, Extra: p.bom.extra };
             label = `sastavnica „${p.bom.productName}"`;
         }
         await Promise.all(ops.map(op => recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: op.path, before: op.before, label })));
@@ -940,6 +961,56 @@ async function listOrdersTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, total: orders.length, orders: lines, ...(orders.length > 15 ? { note: `Prikazano 15 najnovijih od ${orders.length}.` } : {}) };
 }
 
+const ORDER_ACTIONS = {
+    send: { run: sendOrder, done: (n: string) => `📤 Narudžba ${n} poslana — materijali se vode kao naručeni` },
+    receive: { run: null, done: (n: string) => `📦 Narudžba ${n}` },
+    draft: { run: revertOrderToDraft, done: (n: string) => `↩ Narudžba ${n} vraćena u nacrt — naručeno skinuto s materijala` },
+    delete: { run: deleteOrderWithItems, done: (n: string) => `🗑 Narudžba ${n} obrisana` },
+} as const;
+
+async function manageOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const wantedNo = foldText(text(a.number, 40)).replace(/\s+/g, '');
+    const action = oneOf<keyof typeof ORDER_ACTIONS>(a.action, Object.keys(ORDER_ACTIONS), 'send');
+    if (!wantedNo || !Object.keys(ORDER_ACTIONS).includes(String(a.action))) return { ok: false, error: 'Treba broj narudžbe i radnja.' };
+
+    const orders = (await listOrdersWithItems(env.orgId)).filter(o => foldText(o.Order_Number).replace(/\s+/g, '').includes(wantedNo));
+    // Tačan broj ima prednost pred djelimičnim („K7" ne smije pogoditi i „K71").
+    const exact = orders.filter(o => foldText(o.Order_Number).replace(/\s+/g, '').endsWith(wantedNo));
+    const pool = exact.length === 1 ? exact : orders;
+    if (!pool.length) return { ok: false, error: `Nema narudžbe s brojem „${text(a.number, 40)}". Pogledaj list_orders.` };
+    if (pool.length > 1) return { ok: false, error: `Više narudžbi odgovara — pitaj koju: ${pool.slice(0, 6).map(o => `${o.Order_Number} (${o.Supplier_Name}, ${o.Status})`).join('; ')}` };
+    const order = pool[0];
+
+    if (action === 'delete' && a.confirmed !== true) {
+        const items = (order.items || []).length;
+        return { ok: false, error: `Brisanje traži potvrdu: pitaj korisnika (ask_user „Obrisati narudžbu ${order.Order_Number} (${order.Supplier_Name}, ${order.Status}, ${items} stavki)?" Da/Ne), pa ponovi s confirmed=true.` };
+    }
+
+    const befores = new Map<string, Record<string, unknown>>();
+    const before = (path: string, data: Record<string, unknown>) => { if (!befores.has(path)) befores.set(path, data); };
+    let result;
+    if (action === 'receive') {
+        const names = Array.isArray(a.materials) ? a.materials.map(m => text(m, 80)).filter(Boolean) : [];
+        let ids: string[] | 'all' = 'all';
+        if (names.length) {
+            ids = (order.items || []).filter(i => names.some(n => matchScore(n, [i.Material_Name]) >= 0.7)).map(i => i.ID);
+            if (!ids.length) return { ok: false, error: `U narudžbi ${order.Order_Number} nema tih materijala. Stavke: ${(order.items || []).map(i => i.Material_Name).join(', ')}` };
+        }
+        result = await receiveOrderItems(env.orgId, order.Order_ID, ids, before);
+    } else {
+        result = await ORDER_ACTIONS[action].run(env.orgId, order.Order_ID, before);
+    }
+    if (!result.ok) return { ok: false, error: result.error };
+
+    const label = `narudžba ${order.Order_Number}`;
+    await Promise.all(Array.from(befores.entries()).map(([path, data]) =>
+        recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before: data, label })));
+    env.changes.push(label);
+    env.summaries.push(`${ORDER_ACTIONS[action].done(order.Order_Number)}${result.detail ? `: ${result.detail}` : ''}${result.materials ? ` (${result.materials} materijala ažurirano)` : ''}.`);
+    if (env.cache) delete env.cache.rows;
+    return { ok: true, order: order.Order_Number, action, ...(result.detail ? { detail: result.detail } : {}) };
+}
+
 async function orderPdfTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const wantedNo = foldText(text(a.number, 40)).replace(/\s+/g, '');
     const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
@@ -995,6 +1066,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'create_order': return await createOrderTool(env, args);
             case 'product_materials': return await productMaterialsTool(env, args);
             case 'list_orders': return await listOrdersTool(env, args);
+            case 'manage_order': return await manageOrderTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
