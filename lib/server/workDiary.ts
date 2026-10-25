@@ -36,6 +36,8 @@ export interface DiaryLineInput {
     target: string;
     /** Nalog izabran nakon pitanja (kandidati iz prethodnog pokušaja). */
     workOrderId?: string;
+    /** Tačni proizvodi (potvrđen prijedlog dana) — bez prepoznavanja po tekstu. */
+    itemIds?: string[];
     process?: string;
     alsoProcesses?: string[];
     /** Udio dana (0–1) ako je rečen: „pola dana" = 0.5. */
@@ -121,8 +123,11 @@ export async function bookWorkDiary(
     const resolved: ResolvedLine[] = [];
     lines.forEach((line, i) => {
         line.workerIds.filter(id => !workerById.has(id)).forEach(workerId => issues.push({ kind: 'worker', line: i, workerId }));
-        const pool = line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
-        const match = pool.length ? matchTarget(line.target || pool[0]?.workOrderName || '', pool) : { kind: 'none' as const };
+        const exact = line.itemIds?.length ? targets.filter(t => line.itemIds!.includes(t.itemId)) : [];
+        const pool = exact.length ? exact : line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
+        const match = exact.length && new Set(exact.map(t => t.workOrderId)).size === 1
+            ? { kind: 'ok' as const, workOrderId: exact[0].workOrderId, workOrderName: exact[0].workOrderName, items: exact }
+            : pool.length ? matchTarget(line.target || pool[0]?.workOrderName || '', pool) : { kind: 'none' as const };
         const fallback = line.workOrderId && pool.length && match.kind !== 'ok'
             ? { kind: 'ok' as const, workOrderId: line.workOrderId, workOrderName: pool[0].workOrderName, items: pool }
             : match;

@@ -27,7 +27,8 @@ import {
     listOrdersWithItems, receiveOrderItems, revertOrderToDraft, sendOrder,
     loadProductMaterials, loadProjectMaterials, loadProjectProducts, type DraftLine, type OrderableRow, type WriteOp,
 } from '@/lib/server/orderWrites';
-import { bookWorkDiary, workLogReport, type DiaryAbsenceInput, type DiaryLineInput, type DiaryProcessNote } from '@/lib/server/workDiary';
+import { bookWorkDiary, workLogReport, type DiaryAbsenceInput, type DiaryLineInput } from '@/lib/server/workDiary';
+import { dayLabel, diarySummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
@@ -1067,13 +1068,6 @@ async function manageOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
 const ABSENCE = ['Bolovanje', 'Odmor', 'Odsutan'];
 
-function dayLabel(f: number): string {
-    if (Math.abs(f - 1) < 0.01) return '1 dan';
-    if (Math.abs(f - 0.5) < 0.01) return '½ dana';
-    return `${q(f)} dana`;
-}
-
-const noteWhere = (n: DiaryProcessNote) => `${n.workOrderName}${n.products.length ? ` (${n.products.join(', ')})` : ''}`;
 
 async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const today = toZoned(env.now, env.tz).date;
@@ -1141,14 +1135,7 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
     env.changes.push(label);
     const dayName = date === today ? 'danas' : formatReminder(`${date}T10:00:00Z`, env.tz, env.now).replace(/ u \d\d:\d\d$/, '');
-    env.summaries.push([
-        `🗓 Rad ${dayName}:`,
-        ...result.rows.map(r => `• ${r.worker} — ${dayLabel(r.dayFraction)} · ${r.process ? `${r.process}${r.done ? ' ✔' : ''} · ` : ''}${r.workOrderName}${r.products.length ? ` (${r.products.join(', ')})` : ''}${r.graphAdded ? ' · novo u grafu' : ''}`),
-        ...result.absences.map(x => `• ${x.worker} — ${x.status}`),
-        ...result.planned.map(n => `📋 Plan ${n.source === 'rules' ? 'iz pravila materijala' : 's kartice proizvoda'} · ${noteWhere(n)}: ${n.processes.join(' → ')}`),
-        ...result.assumedDone.map(n => `☑️ Podrazumijeva se završeno · ${noteWhere(n)}: ${n.processes.join(', ')}`),
-        ...(result.newCatalog.length ? [`➕ U katalog procesa: ${result.newCatalog.join(', ')}`] : []),
-    ].join('\n'));
+    env.summaries.push(diarySummary(result, dayName));
     return { ok: true, rows: result.rows.length, absences: result.absences.length };
 }
 

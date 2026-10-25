@@ -35,6 +35,8 @@ export interface AssistantLink {
     linkedAt: string;
     /** Zadnji dan (lokalno) kad je poslan jutarnji pregled. */
     digestDate?: string;
+    /** Zadnji dan (lokalno) kad je poslan večernji prijedlog rada. */
+    proposalDate?: string;
 }
 
 export async function getLinkByTelegramId(telegramUserId: number): Promise<AssistantLink | null> {
@@ -54,6 +56,10 @@ export async function listLinks(): Promise<AssistantLink[]> {
 
 export async function setDigestDate(telegramUserId: number, date: string): Promise<void> {
     await adminDb().collection(COLLECTIONS.ASSISTANT_LINKS).doc(String(telegramUserId)).update({ digestDate: date });
+}
+
+export async function setProposalDate(telegramUserId: number, date: string): Promise<void> {
+    await adminDb().collection(COLLECTIONS.ASSISTANT_LINKS).doc(String(telegramUserId)).update({ proposalDate: date });
 }
 
 // Bez 0/O/1/I — kod se prekucava s ekrana.
