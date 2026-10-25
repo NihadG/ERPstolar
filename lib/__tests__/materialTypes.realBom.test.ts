@@ -19,7 +19,7 @@ const BOM = [
 describe('stvarna sastavnica — šta taksonomija prepozna', () => {
     test.each([
         ['KT / Textil F416 22 / 1', 'kant'],
-        ['Oblikovna špera', 'sper'],
+        ['Oblikovna špera', 'oblikovna'],
         ['MDF 18', 'mdf'],
         ['Vodilice Blum 350', 'vodilice'],
         ['Furnir / Jasen', 'furnir'],

@@ -10,6 +10,7 @@
 // je jedan čvor, pa se grane tu spajaju (kutije od iverala čekaju fronte na
 // probnoj montaži). Pravila s jednim procesom (Okivanje, Izrada ladica) dobiju
 // mjesto po redoslijedu kataloga (buildGraphFromRules s katalogom).
+// Vrste proizvoda s vlastitim tokom (sobna vrata) idu kroz šablon toka, ne pravila.
 // jest: lib/__tests__/processStandard.test.ts
 // ════════════════════════════════════════════════════════════════════
 
@@ -23,6 +24,7 @@ export const STANDARD_CATALOG: string[] = [
     'Krojenje iverala',
     'Krojenje leđa',
     'Krojenje MDF-a',
+    'Krojenje šperploče',
     'Priprema furnira',
     'Furniranje',
     'Srezivanje na tačnu mjeru',
@@ -33,6 +35,7 @@ export const STANDARD_CATALOG: string[] = [
     'Izrada fronti',
     'Sklapanje kutija',
     'Postavljanje leđa',
+    'Izrada cokla',
     'Izrada ladica',
     'Probna montaža',
     'Brušenje',
@@ -59,22 +62,27 @@ export const STANDARD_RENAMES: { canonical: string; members: string[] }[] = [
     { canonical: 'Izrada ladica', members: ['Okivanje ladica', 'Priprema ladica'] },
 ];
 
-export type StandardRule = Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Processes'> & { note: string };
+export type StandardRule = Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'> & { note: string };
 
-const rule = (types: string[], processes: string[], note: string, exclude: string[] = []): StandardRule => ({
+const rule = (types: string[], processes: string[], note: string, exclude: string[] = [], keywords: string[] = []): StandardRule => ({
     ...(types.length === 1
         ? { Match_Kind: 'material_type' as const, Match_Value: types[0] }
         : { Match_Kind: 'material_type_combo' as const, Match_Value: '', Match_Types: types }),
     ...(exclude.length ? { Exclude_Types: exclude } : {}),
+    ...(keywords.length ? { Product_Keywords: keywords } : {}),
     Processes: processes,
     note,
 });
+
+/** Ormari dobijaju cokl od jele/smreke (riječ naziva počinje ovim). */
+const ORMAR = ['ormar', 'garderob', 'plakar'];
 
 export const STANDARD_RULES: StandardRule[] = [
     rule(['iveral'], ['Krojenje iverala', 'Kantiranje', 'Sklapanje kutija'], 'Kutije od iverala — sklope se jednom, bez probne montaže'),
     rule(['mdf'], ['Krojenje MDF-a', 'Probna montaža', 'Brušenje', 'Farbanje', 'Završno sklapanje'], 'Farbani MDF', ['furnir']),
     rule(['furnir', 'mdf'], ['Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje fronti', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Furnir na MDF-u'),
-    rule(['sper', 'furnir'], ['Priprema furnira', 'Izrada zaobljenih dijelova', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Oblikovna šperploča + furnir — zaobljeni dijelovi'),
+    rule(['sper', 'furnir'], ['Krojenje šperploče', 'Priprema furnira', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje fronti', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Ravna šperploča s furnirom — kao furnir na MDF-u'),
+    rule(['oblikovna', 'furnir'], ['Priprema furnira', 'Izrada zaobljenih dijelova', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Oblikovna šperploča + furnir — zaobljeni dijelovi'),
     rule(['iveral', 'mdf'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju fronte'),
     rule(['iveral', 'furnir'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju furnirane fronte'),
     rule(['vodilice'], ['Izrada ladica'], 'Ladice — svi sitni procesi u jednom koraku'),
@@ -82,6 +90,16 @@ export const STANDARD_RULES: StandardRule[] = [
     rule(['vodilice', 'mdf'], ['Izrada ladica', 'Probna montaža'], 'Ladice gotove prije probne montaže'),
     rule(['vodilice', 'furnir'], ['Izrada ladica', 'Probna montaža'], 'Ladice gotove prije probne montaže'),
     rule(['okov'], ['Okivanje'], 'Bilo koji okov osim vodilica'),
+    rule(['masiv'], ['Priprema masive'], 'Vidljivi masiv (hrast, tik, jasen) — priprema'),
+    rule(['masiv', 'furnir'], ['Priprema masive', 'Probna montaža'], 'Masivni detalji uz furnirane dijelove — probaju se zajedno'),
+    rule(['jela'], ['Priprema masive'], 'Jela/smreka — letve i podkonstrukcije'),
+    rule(['jela', 'iveral'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', [], ORMAR),
+    rule(['jela', 'furnir'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', [], ORMAR),
+];
+
+/** Vrste proizvoda: šablon toka (po nazivu šablona) i riječi naziva proizvoda koje ga biraju. */
+export const STANDARD_TEMPLATE_KEYWORDS: { template: string; keywords: string[]; note: string }[] = [
+    { template: 'Furnirana vrata (obična)', keywords: ['vrata'], note: 'Tok sa Šišić vrata: krila, štokovi, lajsne' },
 ];
 
 // ─── Pregled izmjena prije primjene ───────────────────────────────────
@@ -95,14 +113,22 @@ export interface StandardizationPlan {
     order: string[];
     rulesToRemove: number;
     rulesToAdd: StandardRule[];
+    /** Šabloni vrste proizvoda koji postoje i dobijaju ključne riječi. */
+    templates: { template: string; keywords: string[]; note: string }[];
 }
 
 /**
  * @param catalog trenutni katalog
  * @param usedNames svi nazivi procesa koji se igdje koriste (katalog, planovi, nalozi, pravila, dnevnice)
  * @param ruleCount broj postojećih pravila (sva se zamjenjuju standardnim)
+ * @param flowTemplateNames nazivi postojećih šablona toka (vrste proizvoda)
  */
-export function planStandardization(catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[], usedNames: string[], ruleCount: number): StandardizationPlan {
+export function planStandardization(
+    catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
+    usedNames: string[],
+    ruleCount: number,
+    flowTemplateNames: string[] = [],
+): StandardizationPlan {
     const used = new Set(usedNames.map(normKey));
     const renames = STANDARD_RENAMES
         .map(g => ({ canonical: g.canonical, members: g.members.filter(m => used.has(normKey(m))) }))
@@ -121,5 +147,6 @@ export function planStandardization(catalog: Pick<ProcessCatalogItem, 'Name' | '
         order: [...STANDARD_CATALOG, ...others],
         rulesToRemove: ruleCount,
         rulesToAdd: STANDARD_RULES,
+        templates: STANDARD_TEMPLATE_KEYWORDS.filter(t => flowTemplateNames.some(n => normKey(n) === normKey(t.template))),
     };
 }
