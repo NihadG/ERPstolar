@@ -5603,60 +5603,71 @@ export async function applyProcessConsolidation(
         return { success: true, message: `Konsolidacija primijenjena (${total} izmjena)`, stats };
     } catch (e) {
         console.error('applyProcessConsolidation error:', e);
-        return { success: false, message: 'Greška pri konsolidaciji procesa' };
+        return { success: false, message: `Greška pri konsolidaciji procesa: ${e instanceof Error ? e.message : String(e)}` };
     }
 }
 
 /**
- * STANDARDNI PROCESI (lib/processStandard.ts) jednim potezom:
- *  1) stari nazivi → kanonski u cijeloj bazi (applyProcessConsolidation),
- *  2) kanonski procesi u katalogu + kanonski redoslijed (ostali iza, stabilno),
- *  3) sva pravila materijal→proces zamijenjena standardnim,
- *  4) opcionalno: automatski planovi proizvoda ('auto') preračunati po novim pravilima.
+ * STANDARDNI PROCESI (lib/processStandard.ts) jednim potezom, od malih upisa ka velikim
+ * (ako teški korak padne, pravila i katalog su već tu, a ponovni klik je bezopasan):
+ *  1) sva pravila materijal→proces zamijenjena standardnim + vrste proizvoda (šabloni),
+ *  2) kanonski procesi u katalogu,
+ *  3) stari nazivi → kanonski u cijeloj bazi (applyProcessConsolidation) — najduži korak,
+ *  4) kanonski redoslijed kataloga (ostali iza, stabilno),
+ *  5) opcionalno: automatski planovi proizvoda ('auto') preračunati po novim pravilima.
+ * `onStep` javlja korak (za prikaz); greška nosi korak i poruku Firestorea.
  */
 export async function applyStandardProcesses(
     organizationId: string,
-    opts: { recomputeAutoPlans?: boolean } = {}
+    opts: { recomputeAutoPlans?: boolean; onStep?: (text: string) => void } = {}
 ): Promise<{ success: boolean; message: string; recomputed?: number }> {
     if (!organizationId) return { success: false, message: 'Nedostaje organizacija' };
+    let step = 'priprema';
+    const at = (text: string) => { step = text; opts.onStep?.(text); };
     try {
         const db = getDb();
         const { STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES, STANDARD_TEMPLATE_KEYWORDS } = await import('./processStandard');
         const { normKey } = await import('./processConsolidation');
 
-        const consolidated = await applyProcessConsolidation(STANDARD_RENAMES, organizationId);
-        if (!consolidated.success) return consolidated;
-
-        for (const name of STANDARD_CATALOG) {
-            const res = await saveProcessCatalogItem(name, organizationId);
-            if (!res.success) return res;
-        }
-        const catalog = await getProcessCatalog(organizationId);
-        const rank = new Map(STANDARD_CATALOG.map((n, i) => [normKey(n), i]));
-        const ordered = catalog
-            .map((c, i) => ({ c, i, r: rank.get(normKey(c.Name)) ?? STANDARD_CATALOG.length + i }))
-            .sort((a, b) => a.r - b.r);
-        const reordered = await reorderProcessCatalog(ordered.map(x => x.c.ID), organizationId);
-        if (!reordered.success) return reordered;
-
+        at('Pravila materijal → procesi');
         const oldRules = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('Organization_ID', '==', organizationId)));
         const batch = writeBatch(db);
         oldRules.docs.forEach(d => batch.delete(d.ref));
         await batch.commit();
         for (const { note: _note, ...r } of STANDARD_RULES) {
             const res = await saveProcessMaterialRule({ ...r, Organization_ID: organizationId }, organizationId);
-            if (!res.success) return res;
+            if (!res.success) return { success: false, message: `${step}: ${res.message}` };
         }
 
-        // Vrste proizvoda: postojeći šablon toka dobija riječi naziva koje ga biraju.
+        at('Vrste proizvoda');
         const flowTemplates = await listProcessTemplates(organizationId);
         for (const t of STANDARD_TEMPLATE_KEYWORDS) {
             const tpl = flowTemplates.find(x => normKey(x.name) === normKey(t.template));
             if (tpl) await updateProcessTemplateKeywords(tpl.id, t.keywords, organizationId);
         }
 
+        at('Katalog procesa');
+        for (const name of STANDARD_CATALOG) {
+            const res = await saveProcessCatalogItem(name, organizationId);
+            if (!res.success) return { success: false, message: `${step}: ${res.message}` };
+        }
+
+        at('Preimenovanje starih naziva u cijeloj bazi (traje do minute)');
+        const consolidated = await applyProcessConsolidation(STANDARD_RENAMES, organizationId);
+        if (!consolidated.success) return { success: false, message: `${step}: ${consolidated.message}` };
+
+        at('Redoslijed kataloga');
+        const catalog = await getProcessCatalog(organizationId);
+        const rank = new Map(STANDARD_CATALOG.map((n, i) => [normKey(n), i]));
+        const ordered = catalog
+            .map((c, i) => ({ c, i, r: rank.get(normKey(c.Name)) ?? STANDARD_CATALOG.length + i }))
+            .sort((a, b) => a.r - b.r);
+        const reordered = await reorderProcessCatalog(ordered.map(x => x.c.ID), organizationId);
+        if (!reordered.success) return { success: false, message: `${step}: ${reordered.message}` };
+
         let recomputed = 0;
         if (opts.recomputeAutoPlans) {
+            at('Automatski planovi proizvoda');
             const prods = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Organization_ID', '==', organizationId)));
             for (const d of prods.docs) {
                 const p = d.data() as Product;
@@ -5667,11 +5678,11 @@ export async function applyStandardProcesses(
         }
         return {
             success: true, recomputed,
-            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila, ${STANDARD_CATALOG.length} procesa u katalogu${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
+            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila, ${STANDARD_CATALOG.length} procesa u katalogu${consolidated.stats ? `, ${consolidated.stats.workLogsUpdated + consolidated.stats.workOrdersUpdated + consolidated.stats.productsUpdated} zapisa preimenovano` : ''}${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
         };
     } catch (e) {
-        console.error('applyStandardProcesses error:', e);
-        return { success: false, message: 'Greška pri primjeni standardnih procesa' };
+        console.error('applyStandardProcesses error:', step, e);
+        return { success: false, message: `Greška (${step}): ${e instanceof Error ? e.message : String(e)}` };
     }
 }
 

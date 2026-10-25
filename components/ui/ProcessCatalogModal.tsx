@@ -92,6 +92,8 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const [stdOpen, setStdOpen] = useState(false);
     const [stdRecompute, setStdRecompute] = useState(true);
     const [stdBusy, setStdBusy] = useState(false);
+    const [stdStep, setStdStep] = useState('');
+    const [stdError, setStdError] = useState('');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -195,11 +197,14 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     async function applyStandard() {
         if (stdBusy) return;
         setStdBusy(true);
+        setStdError('');
         try {
-            const res = await applyStandardProcesses(organizationId, { recomputeAutoPlans: stdRecompute });
+            const res = await applyStandardProcesses(organizationId, { recomputeAutoPlans: stdRecompute, onStep: setStdStep });
             showToast(res.message, res.success ? 'success' : 'error');
             if (res.success) { setStdOpen(false); await refreshAll(); }
-        } finally { setStdBusy(false); }
+            // Greška ostaje u prozoru (toast nestane) — da se može prepisati i ponoviti.
+            else setStdError(res.message);
+        } finally { setStdBusy(false); setStdStep(''); }
     }
 
     // ── TEST PRAVILA (live) ─────────────────────────────────────────────
@@ -308,7 +313,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     return (
         <Modal
             isOpen
-            onClose={onClose}
+            onClose={() => { if (!stdBusy) onClose(); }}
             size="xl"
             title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Layers size={18} style={{ color: 'var(--accent)' }} /> Proizvodni procesi</span>}
             footer={<button className="btn btn-secondary" onClick={onClose}>Zatvori</button>}
@@ -638,6 +643,13 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                 {stdPlan.templates.map(t => <li key={t.template}>Naziv sadrži <b>{t.keywords.join(', ')}</b> <ArrowRight size={12} className="pcm2-arrow" /> šablon „{t.template}" <span className="pcm2-dim">· {t.note}</span></li>)}
                             </ul>
                         </>)}
+                        {stdBusy && (
+                            <div className="pcm2-std-progress">
+                                <Loader2 size={14} className="pcm2-spin" /> {stdStep || 'Počinjem…'}
+                                <span className="pcm2-dim">Ne zatvaraj prozor dok ne završi.</span>
+                            </div>
+                        )}
+                        {stdError && !stdBusy && <div className="pcm2-std-error">{stdError}</div>}
                         <label className="pcm2-std-check">
                             <input type="checkbox" checked={stdRecompute} onChange={e => setStdRecompute(e.target.checked)} />
                             Preračunaj automatske planove proizvoda po novim pravilima (ručno uređeni planovi se ne diraju)
@@ -753,6 +765,8 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                 .pcm2-std { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-primary); }
                 .pcm2-std h4 { margin: 8px 0 0; font-size: 13px; font-weight: 700; }
                 .pcm2-std ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; line-height: 1.45; }
+                .pcm2-std-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-light); color: var(--accent); font-weight: 600; }
+                .pcm2-std-error { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--error-bg); color: var(--error); font-weight: 600; word-break: break-word; }
                 .pcm2-std-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
                 .pcm2-adv { display: flex; gap: 8px; flex-wrap: wrap; }
                 .pcm2-adv select, .pcm2-adv input {
