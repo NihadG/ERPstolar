@@ -19,16 +19,17 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
-import type { ProcessCatalogItem, ProcessMaterialRule, ProcessStageTemplate } from '@/lib/types';
+import type { ProcessCatalogItem, ProcessFlowTemplate, ProcessMaterialRule, ProcessStageTemplate } from '@/lib/types';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
 import {
     getProcessCatalog, saveProcessCatalogItem, renameProcessCatalogItem,
     deleteProcessCatalogItem, reorderProcessCatalog,
     getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
     getProcessStageTemplates, getProcessUsageData, applyStandardProcesses,
+    listProcessTemplates, updateProcessTemplateKeywords,
 } from '@/lib/services';
 import { planStandardization } from '@/lib/processStandard';
-import { ruleLabel } from '@/lib/productProcesses';
+import { nameHasKeyword, ruleLabel } from '@/lib/productProcesses';
 import type { ProcessUsage } from '@/lib/processConsolidation';
 import { MATERIAL_TYPES, buildAutoPlan } from '@/lib/processAutoPlan';
 import Modal from '@/components/ui/Modal';
@@ -61,16 +62,20 @@ interface Builder {
     id: string | null;                                            // null = novo pravilo
     types: string[];                                              // 1 tip = obično, 2+ = kombinacija
     exclude: string[];                                            // „osim ako ima" — pravilo tad ne okida
+    keywords: string;                                             // „samo za proizvode čiji naziv sadrži" (zarezom)
     advanced: { kind: 'category' | 'name_contains'; value: string } | null;
     processes: string[];
 }
-const emptyBuilder = (): Builder => ({ id: null, types: [], exclude: [], advanced: null, processes: [] });
+const emptyBuilder = (): Builder => ({ id: null, types: [], exclude: [], keywords: '', advanced: null, processes: [] });
+const splitWords = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
 
 export default function ProcessCatalogModal({ organizationId, onClose, onChanged, showToast, zIndex }: ProcessCatalogModalProps) {
     const [loading, setLoading] = useState(true);
     const [catalog, setCatalog] = useState<ProcessCatalogItem[]>([]);
     const [rules, setRules] = useState<ProcessMaterialRule[]>([]);
     const [templates, setTemplates] = useState<ProcessStageTemplate[]>([]);
+    const [flowTemplates, setFlowTemplates] = useState<ProcessFlowTemplate[]>([]);
+    const [kwDraft, setKwDraft] = useState<Record<string, string>>({});
     const [usageByKey, setUsageByKey] = useState<Map<string, ProcessUsage> | null>(null);
 
     const [builder, setBuilder] = useState<Builder>(emptyBuilder());
@@ -78,6 +83,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const [saving, setSaving] = useState(false);
 
     const [testTypes, setTestTypes] = useState<string[]>([]);
+    const [testName, setTestName] = useState('');
 
     const [newName, setNewName] = useState('');
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -90,12 +96,14 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [cat, r, tpl] = await Promise.all([
+            const [cat, r, tpl, flows] = await Promise.all([
                 getProcessCatalog(organizationId),
                 getProcessMaterialRules(organizationId),
                 getProcessStageTemplates(organizationId),
+                listProcessTemplates(organizationId),
             ]);
-            setCatalog(cat); setRules(r); setTemplates(tpl);
+            setCatalog(cat); setRules(r); setTemplates(tpl); setFlowTemplates(flows);
+            setKwDraft(Object.fromEntries(flows.map(t => [t.id, (t.Product_Keywords || []).join(', ')])));
         } catch (e) {
             console.error('catalog load error', e);
             showToast('Greška pri učitavanju', 'error');
@@ -136,9 +144,10 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     }
     function editRule(r: ProcessMaterialRule) {
         const exclude = [...(r.Exclude_Types || [])];
-        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], exclude, advanced: null, processes: [...r.Processes] });
-        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], exclude, advanced: null, processes: [...r.Processes] });
-        else { setBuilder({ id: r.ID, types: [], exclude, advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
+        const keywords = (r.Product_Keywords || []).join(', ');
+        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], exclude, keywords, advanced: null, processes: [...r.Processes] });
+        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], exclude, keywords, advanced: null, processes: [...r.Processes] });
+        else { setBuilder({ id: r.ID, types: [], exclude, keywords, advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
         if (typeof document !== 'undefined') document.getElementById('pcm-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     async function saveBuilder() {
@@ -154,6 +163,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                 ...(builder.id ? { ID: builder.id } : {}),
                 ...payload,
                 Exclude_Types: builder.exclude,
+                Product_Keywords: splitWords(builder.keywords),
                 Processes: builder.processes,
                 Organization_ID: organizationId,
             }, organizationId);
@@ -175,7 +185,13 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         catalog,
         usageByKey ? Array.from(usageByKey.values()).flatMap(u => u.displays) : catalog.map(c => c.Name),
         rules.length,
-    ), [catalog, usageByKey, rules.length]);
+        flowTemplates.map(t => t.name),
+    ), [catalog, usageByKey, rules.length, flowTemplates]);
+    async function saveKeywords(t: ProcessFlowTemplate) {
+        const res = await updateProcessTemplateKeywords(t.id, splitWords(kwDraft[t.id] || ''), organizationId);
+        showToast(res.message, res.success ? 'success' : 'error');
+        if (res.success) await refreshAll();
+    }
     async function applyStandard() {
         if (stdBusy) return;
         setStdBusy(true);
@@ -189,20 +205,21 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     // ── TEST PRAVILA (live) ─────────────────────────────────────────────
     // Lažni materijali iz odabranih tipova (pattern[0] = naziv) → ista logika kao pravi auto-plan.
     const testResult = useMemo(() => {
-        if (!testTypes.length) return null;
+        if (!testTypes.length && !testName.trim()) return null;
         const fakeMaterials = testTypes.map(t => ({ Material_Name: MATERIAL_TYPES.find(x => x.key === t)?.patterns[0] || t }));
-        return buildAutoPlan(fakeMaterials, rules, catalog, templates);
-    }, [testTypes, rules, catalog, templates]);
+        return buildAutoPlan(fakeMaterials, rules, catalog, templates, { name: testName, flowTemplates });
+    }, [testTypes, testName, rules, catalog, templates, flowTemplates]);
 
     /** Da li pravilo okida za trenutno odabrane TEST tipove (highlight u listi). */
     const ruleFires = useCallback((r: ProcessMaterialRule): boolean => {
         if (!testTypes.length) return false;
         const present = new Set(testTypes);
         if ((r.Exclude_Types || []).some(t => present.has(t))) return false;
+        if ((r.Product_Keywords || []).length && !nameHasKeyword(testName, r.Product_Keywords)) return false;
         if (r.Match_Kind === 'material_type') return present.has(r.Match_Value);
         if (r.Match_Kind === 'material_type_combo') return (r.Match_Types || []).length > 0 && (r.Match_Types || []).every(t => present.has(t));
         return false;   // category/name_contains — test radi po tipovima
-    }, [testTypes]);
+    }, [testTypes, testName]);
 
     // ── KATALOG ─────────────────────────────────────────────────────────
     const orderByName = useMemo(() => new Map(catalog.map(c => [norm(c.Name), c.Order])), [catalog]);
@@ -260,9 +277,10 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     };
 
     // Čip pravila u listi: tipovi ili napredni uslov
-    const Except = ({ r }: { r: ProcessMaterialRule }) => (r.Exclude_Types || []).length ? (
-        <span className="pcm2-except">osim {(r.Exclude_Types || []).map(typeLabel).join(', ')}</span>
-    ) : null;
+    const Except = ({ r }: { r: ProcessMaterialRule }) => (<>
+        {(r.Exclude_Types || []).length > 0 && <span className="pcm2-except">osim {(r.Exclude_Types || []).map(typeLabel).join(', ')}</span>}
+        {(r.Product_Keywords || []).length > 0 && <span className="pcm2-only">samo: {(r.Product_Keywords || []).join(', ')}</span>}
+    </>);
     const RuleCondition = ({ r }: { r: ProcessMaterialRule }) => {
         if (r.Match_Kind === 'material_type' || r.Match_Kind === 'material_type_combo') {
             const keys = r.Match_Kind === 'material_type' ? [r.Match_Value] : (r.Match_Types || []);
@@ -346,6 +364,13 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                                 })}
                                             </div>
                                         </div>
+                                    )}
+                                    {(builder.types.length > 0 || builder.advanced) && (
+                                        <label className="pcm2-kw-row">
+                                            <span className="pcm2-step-label">samo za proizvode čiji naziv sadrži <span className="pcm2-dim">(zarezom; prazno = svi)</span></span>
+                                            <input value={builder.keywords} placeholder="npr. ormar, garderob"
+                                                onChange={e => setBuilder(b => ({ ...b, keywords: e.target.value }))} />
+                                        </label>
                                     )}
                                     <button className="pcm2-adv-toggle" onClick={() => setAdvancedOpen(o => !o)}>
                                         {advancedOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />} napredno (kategorija / dio naziva)
@@ -447,6 +472,8 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                 <FlaskConical size={15} />
                                 <span>Provjeri pravila — šta dobija proizvod koji sadrži:</span>
                             </div>
+                            <input className="pcm2-test-name" value={testName} onChange={e => setTestName(e.target.value)}
+                                placeholder="naziv proizvoda (opcionalno), npr. Garderober ormar ili Sobna vrata" />
                             <div className="pcm2-mat-grid">
                                 {MATERIAL_TYPES.map(t => {
                                     const on = testTypes.includes(t.key);
@@ -461,7 +488,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                     <button className="pcm2-adv-toggle" onClick={() => setTestTypes([])}><X size={12} /> očisti</button>
                                 )}
                             </div>
-                            {testTypes.length > 0 && (
+                            {(testTypes.length > 0 || testName.trim()) && (
                                 <div className="pcm2-test-out">
                                     {!testResult || testResult.stages.length === 0 ? (
                                         <span className="pcm2-dim">Nijedno pravilo ne okida za ovu kombinaciju — plan bi ostao prazan.</span>
@@ -475,7 +502,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                                     </span>
                                                 ))}
                                             </div>
-                                            {testResult.templateName && <div className="pcm2-dim" style={{ marginTop: 6 }}>faze prema šablonu „{testResult.templateName}"</div>}
+                                            {testResult.templateName && <div className="pcm2-dim" style={{ marginTop: 6 }}>{testResult.source === 'template' ? 'vrsta proizvoda' : 'faze prema šablonu'} „{testResult.templateName}"</div>}
                                         </>
                                     )}
                                 </div>
@@ -547,6 +574,30 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                             title="Nađi duplikate i slične nazive u cijeloj bazi i spoji ih — mijenja katalog, planove, naloge i dnevnike">
                             <Combine size={15} /> Sredi duplikate
                         </button>
+
+                        <header className="pcm2-sec-head pcm2-types-head">
+                            <h3>Vrste proizvoda <span className="pcm2-sec-sub">šablon toka</span></h3>
+                            <span className="pcm2-hint">Proizvod čiji naziv sadrži riječ dobija ovaj tok umjesto pravila materijala (npr. „vrata").</span>
+                        </header>
+                        {flowTemplates.length === 0 ? (
+                            <div className="pcm2-empty small">Nema šablona toka — snimaju se iz grafa naloga.</div>
+                        ) : (
+                            <div className="pcm2-types">
+                                {flowTemplates.map(t => (
+                                    <div key={t.id} className="pcm2-type-row">
+                                        <span className="pcm2-type-name" title={(t.nodes || []).map(n => n.name).filter(Boolean).join(' · ')}>{t.name}</span>
+                                        <div className="pcm2-type-edit">
+                                            <input value={kwDraft[t.id] ?? ''} placeholder="riječi naziva, zarezom"
+                                                onChange={e => setKwDraft(d => ({ ...d, [t.id]: e.target.value }))}
+                                                onKeyDown={e => { if (e.key === 'Enter') saveKeywords(t); }} />
+                                            {(kwDraft[t.id] ?? '') !== (t.Product_Keywords || []).join(', ') && (
+                                                <button className="pcm2-icon" onClick={() => saveKeywords(t)} title="Spremi"><Check size={14} /></button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </aside>
                 </div>
             )}
@@ -581,6 +632,12 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                 <li key={i}><b>{ruleLabel(r, typeLabel)}</b> <ArrowRight size={12} className="pcm2-arrow" /> {r.Processes.join(' → ')} <span className="pcm2-dim">· {r.note}</span></li>
                             ))}
                         </ul>
+                        {stdPlan.templates.length > 0 && (<>
+                            <h4>Vrste proizvoda</h4>
+                            <ul>
+                                {stdPlan.templates.map(t => <li key={t.template}>Naziv sadrži <b>{t.keywords.join(', ')}</b> <ArrowRight size={12} className="pcm2-arrow" /> šablon „{t.template}" <span className="pcm2-dim">· {t.note}</span></li>)}
+                            </ul>
+                        </>)}
                         <label className="pcm2-std-check">
                             <input type="checkbox" checked={stdRecompute} onChange={e => setStdRecompute(e.target.checked)} />
                             Preračunaj automatske planove proizvoda po novim pravilima (ručno uređeni planovi se ne diraju)
@@ -676,6 +733,22 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                 .pcm2-mat-chip.off { border-color: var(--error); background: var(--error-bg); color: var(--error); }
                 .pcm2-except { font-size: 11.5px; font-weight: 600; color: var(--error); margin-left: 4px; }
                 .pcm2-chain { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+                .pcm2-test-name {
+                    font: inherit; font-size: 12.5px; padding: 6px 9px; margin: 2px 0 8px; width: 100%; box-sizing: border-box;
+                    border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--background); color: var(--text-primary);
+                }
+                .pcm2-only { font-size: 11.5px; font-weight: 600; color: var(--accent); margin-left: 4px; }
+                .pcm2-kw-row { display: flex; flex-direction: column; gap: 6px; }
+                .pcm2-kw-row input, .pcm2-type-edit input {
+                    font: inherit; font-size: 12.5px; padding: 6px 9px; border-radius: var(--radius-sm);
+                    border: 1px solid var(--border); background: var(--background); color: var(--text-primary); min-width: 0;
+                }
+                .pcm2-types-head { margin-top: 18px; }
+                .pcm2-types { display: flex; flex-direction: column; gap: 8px; }
+                .pcm2-type-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); }
+                .pcm2-type-name { font-size: 12.5px; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .pcm2-type-edit { display: flex; gap: 6px; align-items: center; }
+                .pcm2-type-edit input { flex: 1; }
                 :global(.pcm2-std-btn) { margin-left: 10px; font-size: 12px; padding: 4px 10px; vertical-align: middle; }
                 .pcm2-std { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-primary); }
                 .pcm2-std h4 { margin: 8px 0 0; font-size: 13px; font-weight: 700; }

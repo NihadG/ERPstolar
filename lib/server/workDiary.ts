@@ -23,9 +23,12 @@ import {
     applyPlanToItem, completeUpstream, diaryTargets, ensureGraphNode, graphFromStages, itemHasPlan,
     markItemProcess, matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
 } from '@/lib/workDiary';
-import { buildGraphFromRules, planToStages } from '@/lib/productProcesses';
+import { planGraphForProduct, planToStages } from '@/lib/productProcesses';
+
+/** Odakle je plan stavke: kartica proizvoda, šablon vrste proizvoda ili pravila materijala. */
+type PlanSource = 'product' | 'template' | 'rules';
 import type {
-    Material, ProcessCatalogItem, ProcessGraph, ProcessMaterialRule, Product, ProductMaterial, Project, WorkLog, WorkOrder, WorkOrderItem,
+    Material, ProcessCatalogItem, ProcessFlowTemplate, ProcessGraph, ProcessMaterialRule, Product, ProductMaterial, Project, WorkLog, WorkOrder, WorkOrderItem,
 } from '@/lib/types';
 
 export type TrackHook = (path: string, data: Record<string, unknown> | null) => void;
@@ -70,7 +73,7 @@ export interface DiaryProcessNote {
     products: string[];
     processes: string[];
     /** Samo za plan: odakle je plan došao. */
-    source?: 'product' | 'rules';
+    source?: PlanSource;
 }
 
 export type DiaryResult =
@@ -178,7 +181,7 @@ export async function bookWorkDiary(
     const worked = Array.from(new Map(resolved.filter(r => r.process || r.also.length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
     const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
     const plans = await loadItemPlans(orgId, bare, rules, catalog);
-    const plannedByItem = new Map<string, { processes: string[]; source: 'product' | 'rules' }>();
+    const plannedByItem = new Map<string, { processes: string[]; source: PlanSource }>();
     for (const item of bare) {
         const plan = plans.get(item.ID);
         if (!plan) continue;
@@ -344,7 +347,7 @@ export async function bookWorkDiary(
     }
 
     // Isti procesi na više proizvoda istog naloga = jedna napomena.
-    const notes = (byItem: Map<string, { processes: string[]; source?: 'product' | 'rules' }>): DiaryProcessNote[] => {
+    const notes = (byItem: Map<string, { processes: string[]; source?: PlanSource }>): DiaryProcessNote[] => {
         const groups = new Map<string, DiaryProcessNote & { woId: string }>();
         byItem.forEach((v, itemId) => {
             const item = itemById.get(itemId)!;
@@ -367,23 +370,25 @@ export async function bookWorkDiary(
 }
 
 /**
- * Plan za stavke bez plana, istim redom kao čarobnjak naloga: snimak grafa na
- * stavci → graf / faze s kartice proizvoda → pravila materijal→proces nad
- * materijalima proizvoda. Bez ičega → stavka ostaje bez plana.
+ * Plan za stavke bez plana: snimak grafa na stavci → graf / faze s kartice
+ * proizvoda → šablon vrste proizvoda (po nazivu, npr. „vrata") → pravila
+ * materijal→proces nad materijalima proizvoda. Bez ičega → stavka ostaje bez plana.
  */
 async function loadItemPlans(
     orgId: string,
     items: WorkOrderItem[],
     rules: ProcessMaterialRule[],
     catalog: ProcessCatalogItem[],
-): Promise<Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>> {
-    const out = new Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>();
+): Promise<Map<string, { graph: ProcessGraph; source: PlanSource }>> {
+    const out = new Map<string, { graph: ProcessGraph; source: PlanSource }>();
     const productIds = Array.from(new Set(items.map(i => i.Product_ID).filter(Boolean)));
     if (!items.length) return out;
-    const [products, materials] = await Promise.all([
+    const [products, materials, templatesSnap] = await Promise.all([
         byProductIds<Product>(orgId, 'products', productIds),
         rules.length ? byProductIds<ProductMaterial>(orgId, 'product_materials', productIds) : Promise.resolve([]),
+        adminDb().collection('process_flow_templates').where('Organization_ID', '==', orgId).get(),
     ]);
+    const flowTemplates = templatesSnap.docs.map(d => d.data() as ProcessFlowTemplate);
     // Kategorija („Okovi") živi na katalogu materijala — pravilo „bilo koji okov" je treba.
     const categoryOf = new Map((await byField<Material>(orgId, 'materials', 'Material_ID', Array.from(new Set(materials.map(m => m.Material_ID).filter(Boolean)))))
         .map(m => [m.Material_ID, m.Category || '']));
@@ -398,8 +403,8 @@ async function loadItemPlans(
         }
         const mats = materials.filter(m => m.Product_ID === item.Product_ID)
             .map(m => ({ Material_Name: m.Material_Name, Category: categoryOf.get(m.Material_ID) || '' }));
-        const fromRules = mats.length ? buildGraphFromRules(mats, rules, undefined, catalog).graph : undefined;
-        if (fromRules?.nodes.length) out.set(item.ID, { graph: fromRules, source: 'rules' });
+        const plan = planGraphForProduct({ productName: product?.Name || item.Product_Name, materials: mats, rules, catalog, flowTemplates });
+        if (plan.graph.nodes.length) out.set(item.ID, { graph: plan.graph, source: plan.source === 'template' ? 'template' : 'rules' });
     }
     return out;
 }

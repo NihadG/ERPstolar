@@ -118,7 +118,7 @@ export {
 export type { MaterialOrderPlanGroup, MaterialOrderPlanItem } from '../database';
 
 // Graf procesa (po nalogu) + templejti toka
-export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
+export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate, updateProcessTemplateKeywords } from '../database';
 export { getProductMaterials } from '../database';
 
 // Katalog procesa (org) + pravila materijal→proces + plan procesa proizvoda
