@@ -6,7 +6,9 @@
 //   /danas /otvoreno    brzi pregledi bez AI-ja
 //   tekst / glas        → dnevnik (assistant_entries) → mozak → odgovor
 //   proslijeđena poruka isto, ali uz „od koga i kad" (radnikov izvještaj)
-//   dugme               odgovor na pitanje, ↩️ Poništi, ✅ Urađeno, ⏰ odgodi
+//   dugme               odgovor na pitanje, ↩️ Poništi, ✅ Urađeno, ⏰ odgodi,
+//                       prijedlog dana (dp:), rupa iz jutarnjeg pregleda (gap:)
+//   /prijedlog          prijedlog rada za danas na zahtjev
 //
 // Nepovezan Telegram korisnik ne dobija ništa osim uputstva za povezivanje.
 // ════════════════════════════════════════════════════════════════════
@@ -21,7 +23,10 @@ import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/up
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant } from './brain';
 import { loadNames } from './context';
-import { assistantTimezone, formatReminder } from './datetime';
+import { assistantTimezone, formatReminder, toZoned } from './datetime';
+import { createProposalMessage, handleProposalButton } from './dayProposals';
+import { shortDate } from './dayProposalText';
+import { isIsoDate } from '@/lib/voice/dates';
 import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
 import {
@@ -45,7 +50,8 @@ const HELP =
     '• „Naruči 5 baglama za Stan 304" → narudžba (nacrt) + PDF\n' +
     '• „Amer i Kerim krojili iveral za kuhinju Čorluka, Edin kantirao — završio" → dnevni rad\n' +
     '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
-    'Komande: /danas · /otvoreno · /pomoc';
+    'Radnim danom u 16:30 stiže prijedlog rada za taj dan — potvrdiš ga jednim klikom.\n\n' +
+    'Komande: /danas · /otvoreno · /prijedlog · /pomoc';
 
 type MessageIncoming = Extract<Incoming, { type: 'message' }>;
 type CallbackIncoming = Extract<Incoming, { type: 'callback' }>;
@@ -96,6 +102,12 @@ async function handleCommand(inc: MessageIncoming, link: AssistantLink): Promise
         case 'otvoreno':
             await sendMessage(inc.chatId, await buildOpenMemory(link.orgId, link.uid));
             return;
+        case 'prijedlog': {
+            const today = toZoned(new Date(), tz).date;
+            const msg = await createProposalMessage(link, today, today);
+            await sendMessage(inc.chatId, msg?.text || 'Nema prijedloga za danas — svi su upisani ili nema ranijeg upisa. Izdiktiraj dan porukom.', msg?.buttons);
+            return;
+        }
         default:
             await sendMessage(inc.chatId, HELP);
     }
@@ -192,6 +204,25 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         const undone = await undoTurn(arg, link.uid);
         await answerCallbackQuery(inc.callbackId, undone.length ? 'Poništeno' : 'Već poništeno');
         if (undone.length) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n\n↩️ Poništeno: ${undone.join(', ')}`);
+        return;
+    }
+
+    if (kind === 'dp') {
+        const reply = await handleProposalButton(link, arg, extra, inc.data.split(':')[3] || '', toZoned(new Date(), tz).date);
+        await answerCallbackQuery(inc.callbackId, reply?.toast);
+        if (reply?.text) await editMessageText(inc.chatId, inc.messageId, reply.text, reply.buttons);
+        return;
+    }
+
+    if (kind === 'gap') {
+        const today = toZoned(new Date(), tz).date;
+        if (!isIsoDate(arg) || arg > today) {
+            await answerCallbackQuery(inc.callbackId, 'Nepoznat dan.');
+            return;
+        }
+        await answerCallbackQuery(inc.callbackId);
+        const msg = await createProposalMessage(link, arg, today);
+        await sendMessage(inc.chatId, msg?.text || `Za ${shortDate(arg)} nema prijedloga — nijedan radnik nema raniji upis. Izdiktiraj taj dan porukom.`, msg?.buttons);
         return;
     }
 

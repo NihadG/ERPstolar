@@ -13,13 +13,17 @@ import { sendMessage, type ButtonRows } from '@/lib/telegram/api';
 import { addDays } from '@/lib/voice/dates';
 import { toZoned, zonedToUtcMs } from './datetime';
 import { buildTodayDigest } from './digest';
-import { getLinkByUid, listLinks, setDigestDate, type AssistantLink } from './store';
+import { createProposalMessage, gapsForDigest, isWorkingDayFor } from './dayProposals';
+import { getLinkByUid, listLinks, setDigestDate, setProposalDate, type AssistantLink } from './store';
 import type { Task } from '@/lib/types';
 
 const BATCH = 50;
 /** Jutarnji pregled: od 07:00, ali ne kasnije od 11:00 (pregled u podne nema smisla). */
 const DIGEST_FROM_HOUR = 7;
 const DIGEST_UNTIL_HOUR = 11;
+/** Večernji prijedlog rada: 16:30–20:00 (u minutama od ponoći). */
+const PROPOSAL_FROM_MIN = 16 * 60 + 30;
+const PROPOSAL_UNTIL_MIN = 20 * 60;
 
 export function reminderButtons(taskId: string): ButtonRows {
     return [
@@ -93,13 +97,43 @@ export async function sendMorningDigests(now: Date, tz: string): Promise<number>
         if (link.digestDate === local.date) continue;
         // Datum se upisuje i kad nema šta poslati — da se ne provjerava svake minute.
         await setDigestDate(link.telegramUserId, local.date);
-        const digest = await buildTodayDigest(link.orgId, now, tz);
-        if (!digest) continue;
         try {
-            await sendMessage(link.chatId, `Dobro jutro ☀️\n\n${digest}`);
+            // Rupe u upisu rada idu u isti pregled; njihova greška ne smije ugasiti zadatke.
+            const [digest, gaps] = await Promise.all([
+                buildTodayDigest(link.orgId, now, tz),
+                gapsForDigest(link.orgId, local.date).catch(e => { console.error('[reminders] rupe nisu izračunate:', e); return null; }),
+            ]);
+            if (!digest && !gaps) continue;
+            await sendMessage(link.chatId, ['Dobro jutro ☀️', digest, gaps?.text].filter(Boolean).join('\n\n'), gaps?.buttons);
             sent++;
         } catch (e) {
             console.error('[reminders] jutarnji pregled nije poslan:', e);
+        }
+    }
+    return sent;
+}
+
+/**
+ * Večernji prijedlog rada: radnim danom od 16:30 do 20:00, jednom dnevno.
+ * Subota/nedjelja samo kad je neko po šihtarici radio. Prazan prijedlog se ne šalje.
+ */
+export async function sendDayProposals(now: Date, tz: string): Promise<number> {
+    const local = toZoned(now, tz);
+    const minutes = local.hour * 60 + local.minute;
+    if (minutes < PROPOSAL_FROM_MIN || minutes >= PROPOSAL_UNTIL_MIN) return 0;
+
+    let sent = 0;
+    for (const link of await listLinks()) {
+        if (link.proposalDate === local.date) continue;
+        await setProposalDate(link.telegramUserId, local.date);
+        try {
+            if (!(await isWorkingDayFor(link.orgId, local.date))) continue;
+            const msg = await createProposalMessage(link, local.date, local.date);
+            if (!msg) continue;
+            await sendMessage(link.chatId, msg.text, msg.buttons);
+            sent++;
+        } catch (e) {
+            console.error('[reminders] večernji prijedlog nije poslan:', e);
         }
     }
     return sent;
