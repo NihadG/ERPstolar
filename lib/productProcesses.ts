@@ -12,6 +12,9 @@ import { computeGraphDepths } from './processLayout';
 
 const norm = (s: string) => (s || '').trim().toLowerCase();
 
+/** Polja pravila materijal→proces koja motor čita (bez ID-a i organizacije). */
+export type RuleLite = Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Exclude_Product_Keywords' | 'Processes'>;
+
 /** Sortiraj nazive procesa po kanonskom redoslijedu kataloga (nepoznati na kraj, stabilno). */
 export function orderByCatalog(names: string[], catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[]): string[] {
     const orderOf = new Map(catalog.map(c => [norm(c.Name), c.Order]));
@@ -37,12 +40,17 @@ export interface MaterialType {
     patterns: string[];
 }
 export const MATERIAL_TYPES: MaterialType[] = [
+    // HPL ima dekore (i drvo) — „HPL / Hrast" je HPL, ne furnir, pa ide prvi.
+    { key: 'hpl', label: 'HPL', patterns: ['hpl'] },
     { key: 'iveral', label: 'Iveral', patterns: ['iveral', 'ivera', 'univer'] },
+    // OSB = podkonstrukcija (krojenje OSB-a, izrada podkonstrukcije).
+    { key: 'osb', label: 'OSB', patterns: ['osb'] },
     { key: 'mdf', label: 'MDF', patterns: ['mdf'] },
     { key: 'furnir', label: 'Furnir', patterns: ['furnir'] },
     // Jela/smreka („J / s masiv") = konstrukcijski masiv: letve, podkonstrukcije, cokl.
     // Ispred 'masiv' namjerno — vidljivi masiv (hrast, tik, jasen) ima drugu ulogu.
-    { key: 'jela', label: 'Jela / smreka', patterns: ['j / s', 'j/s', 'jela', 'smrek'] },
+    // „^jela" = samo početak riječi: „Kerrock / 101 Bijela" nije jela.
+    { key: 'jela', label: 'Jela / smreka', patterns: ['j / s', 'j/s', '^jela', 'smrek'] },
     { key: 'masiv', label: 'Masiv (vidljivi)', patterns: ['masiv'] },
     // Oblikovna špera = zaobljeni dijelovi; ravna šperploča se tretira kao MDF.
     { key: 'oblikovna', label: 'Oblikovna šperploča', patterns: ['oblikovn'] },
@@ -53,7 +61,13 @@ export const MATERIAL_TYPES: MaterialType[] = [
     { key: 'sper', label: 'Šperploča / multipleks', patterns: ['šper', 'sperploc', 'sperploč', 'multipleks', 'multiplex'] },
     // Ljepilo prati presovanje/lameliranje — nosi isti signal o složenosti posla.
     { key: 'ljepilo', label: 'Ljepilo', patterns: ['ljepil', 'lijepil', 'ljepak', 'lepak'] },
+    // Akrilni kamen: krojenje, lijepljenje, brušenje, montaža (iza ljepila: „Kerrock ljepilo" je ljepilo).
+    { key: 'kerrock', label: 'Kerrock', patterns: ['kerrock', 'kerock'] },
+    { key: 'corian', label: 'Corian', patterns: ['corian', 'korian'] },
     { key: 'lak', label: 'Lak / boja', patterns: ['lak', 'farb', 'boja'] },
+    // Boja (farbanje) kao signal za pravila: iza laka, pa prvi pogodak „Boja za MDF" ostaje 'lak';
+    // ruleMaterialTypes je doda samo boji/farbi — „Lakiranje" nije farbanje.
+    { key: 'boja', label: 'Boja (farbanje)', patterns: ['boja', 'farb'] },
     // Sistemi ladica (Blum LEGRABOX/TANDEMBOX/MOVENTO, Antaro) nose vodilice u sebi.
     { key: 'vodilice', label: 'Vodilice', patterns: ['vodilic', 'legrabox', 'tandembox', 'antaro', 'movento'] },
     // "baglama" = uobičajen bosanski naziv za šarku (korisnikovi materijali: "Baglama ravna/paralelna")
@@ -83,6 +97,16 @@ const LEADING_TYPE: [RegExp, string][] = [
     [/^(boja|lak|farba)\b/, 'lak'],
 ];
 
+/** Pattern s „^" hvata samo početak riječi; ostali su podniz naziva. */
+function patternHit(n: string, p: string): boolean {
+    if (!p.startsWith('^')) return n.includes(p);
+    const w = p.slice(1);
+    for (let i = n.indexOf(w); i >= 0; i = n.indexOf(w, i + 1)) {
+        if (i === 0 || !/\p{L}/u.test(n[i - 1])) return true;
+    }
+    return false;
+}
+
 /**
  * SVI tipovi iz naziva jednog materijala. Jedan artikal zna nositi VIŠE signala:
  * „Furnirana šperploča" je i furnir i špera — a špera je ta koja nagovještava
@@ -95,7 +119,7 @@ export function materialTypesFromName(
 ): string[] {
     const n = norm(name || '');
     if (!n) return [];
-    return types.filter(t => t.patterns.some(p => n.includes(p))).map(t => t.key);
+    return types.filter(t => t.patterns.some(p => patternHit(n, p))).map(t => t.key);
 }
 
 /** Tip materijala iz naziva (PRVI tip čiji pattern se javlja u nazivu); null ako nijedan.
@@ -110,7 +134,7 @@ export function materialTypeFromName(
     const leading = LEADING_TYPE.find(([re]) => re.test(n));
     if (leading && types.some(t => t.key === leading[1])) return leading[1];
     for (const t of types) {
-        if (t.patterns.some(p => n.includes(p))) return t.key;
+        if (t.patterns.some(p => patternHit(n, p))) return t.key;
     }
     return null;
 }
@@ -133,7 +157,8 @@ const OKOV_TYPES = new Set(['sarke', 'rucke', 'nogice', 'okov']);
  *  • 'sper' / 'oblikovna' i kad naziv počinje drugim tipom („Furnirana šperploča" = furnir +
  *    ravna šperploča, tretira se kao furnir na MDF-u; „oblikovna" = zaobljeni dijelovi);
  *  • 'okov' za svaki okov OSIM vodilica (kategorija „Okovi" ili šarke/ručke/nogice) — vodilice
- *    imaju svoj proces (Izrada ladica), pa same ne okidaju okivanje.
+ *    imaju svoj proces (Izrada ladica), pa same ne okidaju okivanje;
+ *  • 'boja' uz 'lak' kad je to boja/farba („Boja za MDF") — dio MDF-a se farba i uz furnir.
  * Svi tipovi iz naziva se namjerno ne uzimaju: „Ogledalo" nosi i 'led' (og-led-alo).
  */
 export function ruleMaterialTypes(materials: RuleMaterialLite[]): Set<string> {
@@ -142,6 +167,7 @@ export function ruleMaterialTypes(materials: RuleMaterialLite[]): Set<string> {
         const first = materialTypeFromName(m.Material_Name);
         if (first) out.add(first);
         const all = materialTypesFromName(m.Material_Name);
+        if (first === 'lak' && all.includes('boja')) out.add('boja');
         // Oblikovna je posebna vrsta šperploče — ne broji se i kao ravna.
         if (all.includes('oblikovna')) out.add('oblikovna');
         else if (all.includes('sper')) out.add('sper');
@@ -158,7 +184,7 @@ export function ruleMaterialTypes(materials: RuleMaterialLite[]): Set<string> {
  */
 export function suggestProcessesFromMaterials(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'>[],
+    rules: RuleLite[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
     productName?: string,
 ): string[] {
@@ -555,16 +581,18 @@ export function ruleLabel(
  * Da li pravilo okida za skup materijala (ista semantika kao suggestProcessesFromMaterials).
  * `presentTypes` = ruleMaterialTypes(materials). Exclude_Types: pravilo ne okida čim je
  * prisutan bilo koji od tih tipova („MDF osim furnira" = farbani MDF). Product_Keywords:
- * okida samo za proizvod čiji naziv ima tu riječ (cokl od jele samo kod ormara).
+ * okida samo za proizvod čiji naziv ima tu riječ (cokl od jele samo kod ormara);
+ * Exclude_Product_Keywords: ne okida za proizvod s tom riječju (krevet nema kutija).
  */
 export function ruleMatches(
-    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords'>,
+    rule: Omit<RuleLite, 'Processes'>,
     materials: RuleMaterialLite[],
     presentTypes: Set<string>,
     productName?: string,
 ): boolean {
     if ((rule.Exclude_Types || []).some(t => presentTypes.has(t))) return false;
     if ((rule.Product_Keywords || []).length && !nameHasKeyword(productName, rule.Product_Keywords)) return false;
+    if (nameHasKeyword(productName, rule.Exclude_Product_Keywords)) return false;
     if (rule.Match_Kind === 'material_type_combo') {
         const types = (rule.Match_Types || []).filter(Boolean);
         return types.length > 0 && types.every(t => presentTypes.has(t));
@@ -605,7 +633,7 @@ export function nameHasKeyword(name: string | undefined, keywords: string[] | un
  */
 export function buildGraphFromRules(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'>[],
+    rules: RuleLite[],
     typeLabelOf?: (key: string) => string,
     catalog?: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
     productName?: string,
@@ -703,7 +731,7 @@ export function templateGraph(tpl: FlowTemplateLite): ProcessGraph {
 export function planGraphForProduct(input: {
     productName?: string;
     materials: RuleMaterialLite[];
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'>[];
+    rules: RuleLite[];
     catalog?: Pick<ProcessCatalogItem, 'Name' | 'Order'>[];
     flowTemplates?: FlowTemplateLite[];
     typeLabelOf?: (key: string) => string;

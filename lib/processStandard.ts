@@ -4,7 +4,9 @@
 // Jedan izvor za: kanonske nazive procesa i njihov redoslijed (katalog),
 // stare nazive koji se spajaju u kanonske (normalizacija cijele baze kroz
 // applyProcessConsolidation) i pravila materijal → procesi. Dogovoreno s
-// korisnikom 25.10.2026 (vodič „Dnevni upis rada — kako radi").
+// korisnikom 25.10.2026 (vodič „Dnevni upis rada — kako radi"), dopunjeno
+// istog dana ispravkama (krevet, ladice, priprema furnira, boja, HPL, OSB,
+// Kerrock/Corian).
 //
 // Kako pravila daju tok: svako pravilo je lanac; isti proces iz dva pravila
 // je jedan čvor, pa se grane tu spajaju (kutije od iverala čekaju fronte na
@@ -15,7 +17,15 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { normKey } from './processConsolidation';
+import type { RuleLite } from './productProcesses';
 import type { ProcessCatalogItem, ProcessMaterialRule } from './types';
+
+/**
+ * Verzija standarda — povećaj pri svakoj izmjeni kataloga, preimenovanja ili pravila.
+ * Pravila koja standard upiše nose je (Standard_Version); Auto prijedlog primijeni
+ * standard ponovo čim baza ima stariju verziju („zadnja pravila aplikacije").
+ */
+export const STANDARD_VERSION = '2026-10-25.2';
 
 /** Kanonski redoslijed proizvodnje. Procesi van liste ostaju u katalogu, iza ovih. */
 export const STANDARD_CATALOG: string[] = [
@@ -25,22 +35,36 @@ export const STANDARD_CATALOG: string[] = [
     'Krojenje leđa',
     'Krojenje MDF-a',
     'Krojenje šperploče',
+    'Krojenje OSB-a',
     'Priprema furnira',
+    'Krojenje HPL-a',
     'Furniranje',
+    'Presovanje HPL-a',
     'Srezivanje na tačnu mjeru',
     'Izrada zaobljenih dijelova',
     'Frezanje kanalica (za lajsne)',
-    'Kantiranje',
-    'Kantiranje fronti',
+    'Kantiranje iverala',
+    'Kantiranje furnira',
     'Izrada fronti',
     'Sklapanje kutija',
     'Postavljanje leđa',
     'Izrada cokla',
+    'Izrada rešetke baze',
+    'Izrada podkonstrukcije',
     'Izrada ladica',
     'Probna montaža',
     'Brušenje',
     'Farbanje',
     'Lakiranje',
+    // Akrilni kamen: vlastita grana; prije završnog sklapanja i okivanja (krajevi grana se vežu za kasniji).
+    'Krojenje Kerrocka',
+    'Lijepljenje Kerrocka',
+    'Brušenje Kerrocka',
+    'Montaža Kerrocka',
+    'Krojenje Coriana',
+    'Lijepljenje Coriana',
+    'Brušenje Coriana',
+    'Montaža Coriana',
     'Završno sklapanje',
     'Okivanje',
     'Pakovanje',
@@ -60,47 +84,126 @@ export const STANDARD_RENAMES: { canonical: string; members: string[] }[] = [
     { canonical: 'Završno sklapanje', members: ['Sklapanje furniranih elemenata'] },
     { canonical: 'Okivanje', members: ['Okivanje vrata i fronti', 'Okivanje vrata'] },
     { canonical: 'Izrada ladica', members: ['Okivanje ladica', 'Priprema ladica'] },
+    // Kantiranje iverala ide odmah poslije krojenja; furnira tek poslije srezivanja na tačnu mjeru.
+    { canonical: 'Kantiranje iverala', members: ['Kantiranje'] },
+    { canonical: 'Kantiranje furnira', members: ['Kantiranje fronti'] },
 ];
 
-export type StandardRule = Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'> & { note: string };
+export type StandardRule = RuleLite & { note: string };
 
-const rule = (types: string[], processes: string[], note: string, exclude: string[] = [], keywords: string[] = []): StandardRule => ({
+interface RuleOptions {
+    /** „osim ako ima" — pravilo ne okida kad je prisutan ijedan od ovih tipova. */
+    except?: string[];
+    /** Samo za proizvode čiji naziv ima riječ. */
+    only?: string[];
+    /** Ne za proizvode čiji naziv ima riječ. */
+    notFor?: string[];
+}
+
+const rule = (types: string[], processes: string[], note: string, o: RuleOptions = {}): StandardRule => ({
     ...(types.length === 1
         ? { Match_Kind: 'material_type' as const, Match_Value: types[0] }
         : { Match_Kind: 'material_type_combo' as const, Match_Value: '', Match_Types: types }),
-    ...(exclude.length ? { Exclude_Types: exclude } : {}),
-    ...(keywords.length ? { Product_Keywords: keywords } : {}),
+    ...(o.except?.length ? { Exclude_Types: o.except } : {}),
+    ...(o.only?.length ? { Product_Keywords: o.only } : {}),
+    ...(o.notFor?.length ? { Exclude_Product_Keywords: o.notFor } : {}),
     Processes: processes,
     note,
 });
 
 /** Ormari dobijaju cokl od jele/smreke (riječ naziva počinje ovim). */
 const ORMAR = ['ormar', 'garderob', 'plakar'];
+/** Krevet nema kutija; masiv/jela kod kreveta je rešetka baze. */
+const KREVET = ['krevet'];
+
+/** Furnirani dijelovi poslije krojenja ploče: kantiranje furnira tek poslije srezivanja na tačnu mjeru. */
+const FURNIR_TOK = ['Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje furnira', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'];
+const FARBANI_MDF = ['Krojenje MDF-a', 'Probna montaža', 'Brušenje', 'Farbanje', 'Završno sklapanje'];
+const BEZ_IVERALA = ['iveral'];
 
 export const STANDARD_RULES: StandardRule[] = [
-    rule(['iveral'], ['Krojenje iverala', 'Kantiranje', 'Sklapanje kutija'], 'Kutije od iverala — sklope se jednom, bez probne montaže'),
-    rule(['mdf'], ['Krojenje MDF-a', 'Probna montaža', 'Brušenje', 'Farbanje', 'Završno sklapanje'], 'Farbani MDF', ['furnir']),
-    rule(['furnir', 'mdf'], ['Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje fronti', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Furnir na MDF-u'),
-    rule(['sper', 'furnir'], ['Krojenje šperploče', 'Priprema furnira', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje fronti', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Ravna šperploča s furnirom — kao furnir na MDF-u'),
+    // ── Iveral ──
+    rule(['iveral'], ['Krojenje iverala', 'Kantiranje iverala', 'Sklapanje kutija'], 'Kutije od iverala — sklope se jednom, bez probne montaže', { notFor: KREVET }),
+    rule(['iveral'], ['Krojenje iverala', 'Kantiranje iverala', 'Probna montaža'], 'Krevet: nema kutija — dijelovi od iverala idu na probnu montažu', { only: KREVET }),
+
+    // ── MDF: farbani; uz furnir se farba samo kad ima boje ──
+    rule(['mdf'], FARBANI_MDF, 'Farbani MDF', { except: ['furnir', 'hpl'] }),
+    rule(['mdf', 'boja'], FARBANI_MDF, 'Boja za MDF — dio MDF-a se farba i kad se dio furnira'),
+
+    // ── Furnir: priprema furnira teče paralelno s krojenjem ploča ──
+    rule(['furnir', 'mdf'], ['Krojenje MDF-a', ...FURNIR_TOK], 'Furnir na MDF-u'),
+    rule(['furnir', 'mdf'], ['Priprema furnira', 'Furniranje'], 'Priprema furnira paralelno s krojenjem MDF-a'),
+    rule(['sper', 'furnir'], ['Krojenje šperploče', ...FURNIR_TOK], 'Ravna šperploča s furnirom — kao furnir na MDF-u'),
+    rule(['sper', 'furnir'], ['Priprema furnira', 'Furniranje'], 'Priprema furnira paralelno s krojenjem šperploče'),
     rule(['oblikovna', 'furnir'], ['Priprema furnira', 'Izrada zaobljenih dijelova', 'Probna montaža', 'Brušenje', 'Lakiranje', 'Završno sklapanje'], 'Oblikovna šperploča + furnir — zaobljeni dijelovi'),
-    rule(['iveral', 'mdf'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju fronte'),
-    rule(['iveral', 'furnir'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju furnirane fronte'),
+
+    // ── HPL: kao furnir (presuje se na MDF), ali bez brušenja i lakiranja ──
+    rule(['hpl'], ['Krojenje HPL-a', 'Presovanje HPL-a', 'Srezivanje na tačnu mjeru', 'Probna montaža', 'Završno sklapanje'], 'HPL — krojenje, presovanje, srezivanje; bez brušenja i lakiranja'),
+    rule(['hpl', 'mdf'], ['Krojenje MDF-a', 'Presovanje HPL-a'], 'HPL se presuje na MDF'),
+
+    // ── Spojevi: kutije od iverala čekaju fronte na probnoj montaži ──
+    rule(['iveral', 'mdf'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju fronte', { notFor: KREVET }),
+    rule(['iveral', 'furnir'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju furnirane fronte', { notFor: KREVET }),
+    rule(['iveral', 'hpl'], ['Sklapanje kutija', 'Probna montaža'], 'Spoj: kutije čekaju HPL fronte', { notFor: KREVET }),
+
+    // ── Ladice: nikad u prvoj fazi ──
     rule(['vodilice'], ['Izrada ladica'], 'Ladice — svi sitni procesi u jednom koraku'),
-    rule(['iveral', 'vodilice'], ['Krojenje iverala', 'Izrada ladica'], 'Ladice poslije krojenja, paralelno sa sklapanjem kutija'),
-    rule(['vodilice', 'mdf'], ['Izrada ladica', 'Probna montaža'], 'Ladice gotove prije probne montaže'),
-    rule(['vodilice', 'furnir'], ['Izrada ladica', 'Probna montaža'], 'Ladice gotove prije probne montaže'),
+    rule(['iveral', 'vodilice'], ['Krojenje iverala', 'Kantiranje iverala', 'Izrada ladica'], 'Ladice od iverala — poslije kantiranja iverala, paralelno sa sklapanjem kutija'),
+    rule(['iveral', 'vodilice', 'mdf'], ['Izrada ladica', 'Probna montaža'], 'Ladice od iverala gotove prije probne montaže'),
+    rule(['iveral', 'vodilice', 'furnir'], ['Izrada ladica', 'Probna montaža'], 'Ladice od iverala gotove prije probne montaže'),
+    rule(['iveral', 'vodilice', 'hpl'], ['Izrada ladica', 'Probna montaža'], 'Ladice od iverala gotove prije probne montaže'),
+    rule(['vodilice', 'furnir', 'mdf'], ['Kantiranje furnira', 'Izrada ladica', 'Brušenje'], 'Bez iverala ladice su od furniranog MDF-a — kad i probna montaža', { except: BEZ_IVERALA }),
+    rule(['vodilice', 'furnir', 'sper'], ['Kantiranje furnira', 'Izrada ladica', 'Brušenje'], 'Bez iverala ladice su od furnirane šperploče — kad i probna montaža', { except: BEZ_IVERALA }),
+    rule(['vodilice', 'hpl'], ['Srezivanje na tačnu mjeru', 'Izrada ladica', 'Završno sklapanje'], 'Bez iverala ladice su od HPL ploča — kad i probna montaža', { except: ['iveral', 'furnir'] }),
+    rule(['vodilice', 'mdf'], ['Krojenje MDF-a', 'Izrada ladica', 'Brušenje'], 'Bez iverala ladice su od farbanog MDF-a — kad i probna montaža', { except: ['iveral', 'furnir', 'hpl'] }),
+
     rule(['okov'], ['Okivanje'], 'Bilo koji okov osim vodilica'),
+
+    // ── Masiv, jela/smreka ──
     rule(['masiv'], ['Priprema masive'], 'Vidljivi masiv (hrast, tik, jasen) — priprema'),
-    rule(['masiv', 'furnir'], ['Priprema masive', 'Probna montaža'], 'Masivni detalji uz furnirane dijelove — probaju se zajedno'),
+    rule(['masiv', 'furnir'], ['Priprema masive', 'Probna montaža'], 'Masivni detalji uz furnirane dijelove — probaju se zajedno', { notFor: KREVET }),
+    rule(['masiv'], ['Priprema masive', 'Izrada rešetke baze', 'Probna montaža'], 'Krevet: masiv je za rešetku baze', { only: KREVET }),
     rule(['jela'], ['Priprema masive'], 'Jela/smreka — letve i podkonstrukcije'),
-    rule(['jela', 'iveral'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', [], ORMAR),
-    rule(['jela', 'furnir'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', [], ORMAR),
+    rule(['jela'], ['Priprema masive', 'Izrada rešetke baze', 'Probna montaža'], 'Krevet: rešetka baze od jele/smreke', { only: KREVET }),
+    rule(['jela', 'iveral'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', { only: ORMAR }),
+    rule(['jela', 'furnir'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', { only: ORMAR }),
+
+    // ── OSB: podkonstrukcija ──
+    rule(['osb'], ['Krojenje OSB-a', 'Izrada podkonstrukcije'], 'OSB — uglavnom podkonstrukcija'),
+
+    // ── Akrilni kamen ──
+    rule(['kerrock'], ['Krojenje Kerrocka', 'Lijepljenje Kerrocka', 'Brušenje Kerrocka', 'Montaža Kerrocka'], 'Kerrock — krojenje, lijepljenje, brušenje, montaža'),
+    rule(['corian'], ['Krojenje Coriana', 'Lijepljenje Coriana', 'Brušenje Coriana', 'Montaža Coriana'], 'Corian — isto kao Kerrock'),
 ];
 
 /** Vrste proizvoda: šablon toka (po nazivu šablona) i riječi naziva proizvoda koje ga biraju. */
 export const STANDARD_TEMPLATE_KEYWORDS: { template: string; keywords: string[]; note: string }[] = [
     { template: 'Furnirana vrata (obična)', keywords: ['vrata'], note: 'Tok sa Šišić vrata: krila, štokovi, lajsne' },
 ];
+
+// ─── Koja pravila standard zamjenjuje ─────────────────────────────────
+
+/**
+ * Pravila koja standard zamjenjuje: ona koja je standard upisao (Standard_Version).
+ * Dok nijedno nije označeno (standard primijenjen prije verzija ili nikad), zamjenjuju se sva.
+ * Korisnikova pravila (dodana ili izmijenjena u prozoru pravila) ostaju.
+ */
+export function standardRulesIn<T extends Pick<ProcessMaterialRule, 'Standard_Version'>>(rules: T[]): T[] {
+    const tagged = rules.filter(r => r.Standard_Version);
+    return tagged.length ? tagged : rules;
+}
+
+/** Baza ima pravila ove verzije standarda — Auto prijedlog ne mora ništa primijeniti. */
+export function standardIsCurrent(rules: Pick<ProcessMaterialRule, 'Standard_Version'>[]): boolean {
+    return rules.some(r => r.Standard_Version === STANDARD_VERSION);
+}
+
+/** Stari naziv procesa → kanonski (za poređenje statusa prije i poslije preimenovanja). */
+export function canonicalProcessName(name: string): string {
+    const k = normKey(name);
+    return STANDARD_RENAMES.find(g => g.members.some(m => normKey(m) === k))?.canonical || name;
+}
+
 
 // ─── Pregled izmjena prije primjene ───────────────────────────────────
 
@@ -120,7 +223,7 @@ export interface StandardizationPlan {
 /**
  * @param catalog trenutni katalog
  * @param usedNames svi nazivi procesa koji se igdje koriste (katalog, planovi, nalozi, pravila, dnevnice)
- * @param ruleCount broj postojećih pravila (sva se zamjenjuju standardnim)
+ * @param ruleCount broj pravila koja standard zamjenjuje (standardRulesIn); korisnikova ostaju
  * @param flowTemplateNames nazivi postojećih šablona toka (vrste proizvoda)
  */
 export function planStandardization(

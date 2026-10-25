@@ -9,11 +9,11 @@
 // jest: lib/__tests__/processAutoPlan.test.ts
 // ════════════════════════════════════════════════════════════════════
 
-import type { ProcessCatalogItem, ProcessFlowTemplate, ProcessMaterialRule, ProcessStageTemplate } from './types';
+import type { ProcessCatalogItem, ProcessFlowTemplate, ProcessStageTemplate } from './types';
 import {
     suggestProcessesFromMaterials, presentMaterialTypes, orderByCatalog, buildGraphFromRules, stagesFromGraph,
     flowTemplateForProduct, templateGraph,
-    type RuleMaterialLite,
+    type RuleMaterialLite, type RuleLite,
 } from './productProcesses';
 
 const norm = (s: string) => (s || '').trim().toLowerCase();
@@ -100,7 +100,7 @@ export interface AutoPlanResult {
  */
 export function buildAutoPlan(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'>[],
+    rules: RuleLite[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
     templates: Pick<ProcessStageTemplate, 'Name' | 'Stages' | 'Material_Types'>[] = [],
     product: { name?: string; flowTemplates?: Pick<ProcessFlowTemplate, 'name' | 'nodes' | 'edges' | 'Product_Keywords'>[] } = {},

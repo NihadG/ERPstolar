@@ -21,7 +21,7 @@ import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
     applyPlanToItem, completeUpstream, diaryTargets, ensureGraphNode, graphFromStages, itemHasPlan,
-    markItemProcess, matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
+    markItemProcess, matchProcess, matchTarget, planProcessNames, planWorkerDay, type DiaryTarget,
 } from '@/lib/workDiary';
 import { planGraphForProduct, planToStages } from '@/lib/productProcesses';
 
@@ -123,7 +123,7 @@ export async function bookWorkDiary(
 
     // ── 1. Razriješi sve stavke prije ijednog upisa ──
     const issues: DiaryIssue[] = [];
-    const resolved: ResolvedLine[] = [];
+    const targeted: Omit<ResolvedLine, 'process' | 'also'>[] = [];
     lines.forEach((line, i) => {
         line.workerIds.filter(id => !workerById.has(id)).forEach(workerId => issues.push({ kind: 'worker', line: i, workerId }));
         const exact = line.itemIds?.length ? targets.filter(t => line.itemIds!.includes(t.itemId)) : [];
@@ -138,13 +138,43 @@ export async function bookWorkDiary(
             issues.push({ kind: 'target', line: i, text: line.target, candidates: fallback.kind === 'ambiguous' ? fallback.candidates : [] });
             return;
         }
+        targeted.push({ input: line, workOrderId: fallback.workOrderId, workOrderName: fallback.workOrderName, items: fallback.items });
+    });
+
+    // ── 1b. Plan za proizvode bez plana (u memoriji; upis kasnije) ──
+    // Proizvod bez ikakvog plana dobije plan (kartica proizvoda ili pravila materijala)
+    // prije čekiranja — tek tada „brušenje" zna šta je bilo prije njega, a „kantiranje"
+    // da li je iverala ili furnira.
+    const orderById = new Map(orders.map(o => [o.Work_Order_ID, o]));
+    const itemById = new Map(orders.flatMap(o => o.items || []).map(i => [i.ID, i]));
+    const graphs = new Map<string, ProcessGraph | undefined>();
+    const itemProcesses = new Map<string, WorkOrderItem['Processes']>();
+    const graphOf = (woId: string) => (graphs.has(woId) ? graphs.get(woId) : orderById.get(woId)?.Process_Graph);
+    const processesOf = (itemId: string) => (itemProcesses.has(itemId) ? itemProcesses.get(itemId) : itemById.get(itemId)?.Processes);
+    const worked = Array.from(new Map(targeted.filter(r => r.input.process?.trim() || (r.input.alsoProcesses || []).length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
+    const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
+    const plans = await loadItemPlans(orgId, bare, rules, catalog);
+    const plannedByItem = new Map<string, { processes: string[]; source: PlanSource }>();
+    for (const item of bare) {
+        const plan = plans.get(item.ID);
+        if (!plan) continue;
+        const res = applyPlanToItem(graphOf(item.Work_Order_ID), processesOf(item.ID), item.ID, plan.graph, uuidv4);
+        graphs.set(item.Work_Order_ID, res.graph);
+        itemProcesses.set(item.ID, res.processes);
+        if (res.added.length) plannedByItem.set(item.ID, { processes: res.added, source: plan.source });
+    }
+
+    // ── 1c. Procesi: rečeni naziv → proces iz rječnika, s prednošću procesa iz plana stavki ──
+    const resolved: ResolvedLine[] = targeted.map(t => {
+        const line = t.input;
+        const preferred = planProcessNames(graphOf(t.workOrderId), t.items.map(x => ({ ID: x.itemId, Processes: processesOf(x.itemId) })));
         let process: string | undefined;
         if (line.process?.trim()) {
-            process = matchProcess(line.process, vocabulary) || (line.newProcess ? capitalize(line.process) : undefined);
-            if (!process) issues.push({ kind: 'process', line: i, name: line.process.trim() });
+            process = matchProcess(line.process, vocabulary, preferred) || (line.newProcess ? capitalize(line.process) : undefined);
+            if (!process) issues.push({ kind: 'process', line: lines.indexOf(line), name: line.process.trim() });
         }
-        const also = (line.alsoProcesses || []).map(p => matchProcess(p, vocabulary) || capitalize(p)).filter(Boolean);
-        resolved.push({ input: line, workOrderId: fallback.workOrderId, workOrderName: fallback.workOrderName, items: fallback.items, process, also });
+        const also = (line.alsoProcesses || []).map(p => matchProcess(p, vocabulary, preferred) || capitalize(p)).filter(Boolean);
+        return { ...t, process, also };
     });
     if (issues.length) return { ok: false, issues };
 
@@ -165,31 +195,10 @@ export async function bookWorkDiary(
     }
 
     // ── 3. Graf naloga i čekiranje (u memoriji, upis kasnije) ──
-    const orderById = new Map(orders.map(o => [o.Work_Order_ID, o]));
-    const itemById = new Map(orders.flatMap(o => o.items || []).map(i => [i.ID, i]));
-    const graphs = new Map<string, ProcessGraph | undefined>();
-    const itemProcesses = new Map<string, WorkOrderItem['Processes']>();
     const nodeFor = new Map<string, string>();                 // `${itemId}|${process}` → nodeId
     const atIso = `${date}T15:00:00.000Z`;
     const rows: DiaryRow[] = [];
     const graphAdded = new Set<string>();
-    const graphOf = (woId: string) => (graphs.has(woId) ? graphs.get(woId) : orderById.get(woId)?.Process_Graph);
-    const processesOf = (itemId: string) => (itemProcesses.has(itemId) ? itemProcesses.get(itemId) : itemById.get(itemId)?.Processes);
-
-    // Proizvod bez ikakvog plana dobije plan (kartica proizvoda ili pravila materijala)
-    // prije čekiranja — tek tada „brušenje" zna šta je bilo prije njega.
-    const worked = Array.from(new Map(resolved.filter(r => r.process || r.also.length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
-    const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
-    const plans = await loadItemPlans(orgId, bare, rules, catalog);
-    const plannedByItem = new Map<string, { processes: string[]; source: PlanSource }>();
-    for (const item of bare) {
-        const plan = plans.get(item.ID);
-        if (!plan) continue;
-        const res = applyPlanToItem(graphOf(item.Work_Order_ID), processesOf(item.ID), item.ID, plan.graph, uuidv4);
-        graphs.set(item.Work_Order_ID, res.graph);
-        itemProcesses.set(item.ID, res.processes);
-        if (res.added.length) plannedByItem.set(item.ID, { processes: res.added, source: plan.source });
-    }
 
     const assumedByItem = new Map<string, string[]>();
     for (const r of resolved) {

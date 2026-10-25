@@ -222,7 +222,7 @@ export const TOOLS: Anthropic.Tool[] = [
                             workers: { ...strList, description: 'Oznake radnika W#.' },
                             work: { ...str, description: 'Posao kako je rečen: „kuhinja Čorluka", „vrata Meliha", „Budnjo stolovi".' },
                             order: { ...str, description: 'R# iz kandidata kad je alat pitao koji nalog.' },
-                            process: { ...str, description: 'Proces kako je rečen: „krojenje iverala", „kantiranje", „montaža".' },
+                            process: { ...str, description: 'Proces kako je rečen, s riječju koja ga razlikuje ako je rečena: „krojenje iverala", „kantiranje", „kantiranje fronti", „brušenje Kerrocka". ERP bira proces iz plana proizvoda.' },
                             also: { ...strList, description: 'Dodatni procesi na istom poslu taj dan.' },
                             fraction: { ...num, description: 'Dio dana ako je rečen: pola dana = 0.5, dva sata = 0.25.' },
                             done: { ...bool, description: 'true kad je rečeno da je proces završen („završio", „gotovo").' },
