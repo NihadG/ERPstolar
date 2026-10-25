@@ -5004,9 +5004,11 @@ export async function saveProcessMaterialRule(
         return { success: false, message: 'Pravilo mora imati vrijednost/tipove i bar jedan proces' };
     }
     // Firestore odbija undefined — combo nosi Match_Types (Match_Value prazan), ostali obrnuto.
-    const matchFields = isCombo
-        ? { Match_Value: '', Match_Types: comboTypes }
-        : { Match_Value: (rule.Match_Value || '').trim() };
+    const matchFields = {
+        ...(isCombo ? { Match_Value: '', Match_Types: comboTypes } : { Match_Value: (rule.Match_Value || '').trim() }),
+        // Uvijek upisan (i prazan), da izmjena pravila može ukloniti „osim".
+        Exclude_Types: (rule.Exclude_Types || []).filter(Boolean),
+    };
     try {
         const db = getDb();
         if (rule.ID) {
@@ -5066,10 +5068,11 @@ export async function applyAutoProcessPlan(
             return { success: true, plan: prod.Process_Plan, message: 'Plan je ručno uređen — auto preskočen' };
         }
 
-        const [materials, rules, materialCatalog] = await Promise.all([
+        const [materials, rules, materialCatalog, processCatalog] = await Promise.all([
             getProductMaterials(productId, organizationId),
             getProcessMaterialRules(organizationId),
             getMaterialsCatalog(organizationId),
+            getProcessCatalog(organizationId),
         ]);
         // Kategorija materijala živi na katalogu materijala — join po Material_ID
         const catById = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
@@ -5079,7 +5082,7 @@ export async function applyAutoProcessPlan(
         }));
         const { buildGraphFromRules, stagesFromGraph, flattenStages, MATERIAL_TYPES } = await import('./productProcesses');
         const { layoutProcessGraph } = await import('./processLayout');
-        const result = buildGraphFromRules(lite, rules, k => MATERIAL_TYPES.find(t => t.key === k)?.label || k);
+        const result = buildGraphFromRules(lite, rules, k => MATERIAL_TYPES.find(t => t.key === k)?.label || k, processCatalog);
         const pos = layoutProcessGraph(result.graph.nodes, result.graph.edges);
         result.graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
         const stages = stagesFromGraph(result.graph);
@@ -5460,13 +5463,24 @@ export async function applyProcessConsolidation(
         const prodSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Organization_ID', '==', organizationId)));
         for (const d of prodSnap.docs) {
             const p = d.data() as Product;
-            if (!(p.Process_Stages?.length || p.Process_Plan?.length)) continue;
-            const baseStages = p.Process_Stages?.length ? p.Process_Stages : (p.Process_Plan || []).map(x => ({ processes: [x] }));
-            const renamed = renameStages(baseStages, map);
-            const newStages = renamed.map(s => ({ processes: s }));
-            const newPlan = flattenStages(renamed);
-            if (JSON.stringify(newStages) !== JSON.stringify(p.Process_Stages || []) || JSON.stringify(newPlan) !== JSON.stringify(p.Process_Plan || [])) {
-                ops.push({ ref: d.ref, data: { Process_Stages: newStages, Process_Plan: newPlan } });
+            const data: Record<string, unknown> = {};
+            if (p.Process_Stages?.length || p.Process_Plan?.length) {
+                const baseStages = p.Process_Stages?.length ? p.Process_Stages : (p.Process_Plan || []).map(x => ({ processes: [x] }));
+                const renamed = renameStages(baseStages, map);
+                const newStages = renamed.map(s => ({ processes: s }));
+                const newPlan = flattenStages(renamed);
+                if (JSON.stringify(newStages) !== JSON.stringify(p.Process_Stages || []) || JSON.stringify(newPlan) !== JSON.stringify(p.Process_Plan || [])) {
+                    data.Process_Stages = newStages;
+                    data.Process_Plan = newPlan;
+                }
+            }
+            // Graf plana proizvoda je izvor istine za tok — mora nositi iste nazive kao faze.
+            if (p.Process_Graph?.nodes?.length) {
+                const res = renameGraphNodes(p.Process_Graph, map);
+                if (res.changed) data.Process_Graph = JSON.parse(JSON.stringify(res.graph));
+            }
+            if (Object.keys(data).length) {
+                ops.push({ ref: d.ref, data });
                 stats.productsUpdated++;
             }
         }
@@ -5522,6 +5536,28 @@ export async function applyProcessConsolidation(
             }
         }
 
+        // ── 6b) STAVKE NALOGA (kolekcija): statusi procesa, snapshot faza i grafa ──
+        // Stavke žive u work_order_items; `items` na dokumentu naloga je stari ugrađeni oblik.
+        // Bez ovoga graf naloga dobije novi naziv, a status na stavci ostane pod starim.
+        const itemSnap = await getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Organization_ID', '==', organizationId)));
+        for (const d of itemSnap.docs) {
+            const it = d.data() as WorkOrderItem;
+            const data: Record<string, unknown> = {};
+            if (it.Processes?.length) {
+                const merged = mergeItemProcesses(it.Processes, map);
+                if (JSON.stringify(merged) !== JSON.stringify(it.Processes)) data.Processes = JSON.parse(JSON.stringify(merged));
+            }
+            if (it.Process_Stages?.length) {
+                const st = renameStages(it.Process_Stages, map).map(s => ({ processes: s }));
+                if (JSON.stringify(st) !== JSON.stringify(it.Process_Stages)) data.Process_Stages = st;
+            }
+            if (it.Process_Graph?.nodes?.length) {
+                const res = renameGraphNodes(it.Process_Graph, map);
+                if (res.changed) data.Process_Graph = JSON.parse(JSON.stringify(res.graph));
+            }
+            if (Object.keys(data).length) ops.push({ ref: d.ref, data });
+        }
+
         // ── 7) WORK LOGS: remap Process_Node_ID (spojeni čvorovi) + rename Process_Name/Tags ──
         for (const [orderId, entries] of Array.from(logsByOrder.entries())) {
             const remap = nodeRemapByOrder.get(orderId);
@@ -5549,6 +5585,67 @@ export async function applyProcessConsolidation(
     } catch (e) {
         console.error('applyProcessConsolidation error:', e);
         return { success: false, message: 'Greška pri konsolidaciji procesa' };
+    }
+}
+
+/**
+ * STANDARDNI PROCESI (lib/processStandard.ts) jednim potezom:
+ *  1) stari nazivi → kanonski u cijeloj bazi (applyProcessConsolidation),
+ *  2) kanonski procesi u katalogu + kanonski redoslijed (ostali iza, stabilno),
+ *  3) sva pravila materijal→proces zamijenjena standardnim,
+ *  4) opcionalno: automatski planovi proizvoda ('auto') preračunati po novim pravilima.
+ */
+export async function applyStandardProcesses(
+    organizationId: string,
+    opts: { recomputeAutoPlans?: boolean } = {}
+): Promise<{ success: boolean; message: string; recomputed?: number }> {
+    if (!organizationId) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const { STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES } = await import('./processStandard');
+        const { normKey } = await import('./processConsolidation');
+
+        const consolidated = await applyProcessConsolidation(STANDARD_RENAMES, organizationId);
+        if (!consolidated.success) return consolidated;
+
+        for (const name of STANDARD_CATALOG) {
+            const res = await saveProcessCatalogItem(name, organizationId);
+            if (!res.success) return res;
+        }
+        const catalog = await getProcessCatalog(organizationId);
+        const rank = new Map(STANDARD_CATALOG.map((n, i) => [normKey(n), i]));
+        const ordered = catalog
+            .map((c, i) => ({ c, i, r: rank.get(normKey(c.Name)) ?? STANDARD_CATALOG.length + i }))
+            .sort((a, b) => a.r - b.r);
+        const reordered = await reorderProcessCatalog(ordered.map(x => x.c.ID), organizationId);
+        if (!reordered.success) return reordered;
+
+        const oldRules = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('Organization_ID', '==', organizationId)));
+        const batch = writeBatch(db);
+        oldRules.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        for (const { note: _note, ...r } of STANDARD_RULES) {
+            const res = await saveProcessMaterialRule({ ...r, Organization_ID: organizationId }, organizationId);
+            if (!res.success) return res;
+        }
+
+        let recomputed = 0;
+        if (opts.recomputeAutoPlans) {
+            const prods = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Organization_ID', '==', organizationId)));
+            for (const d of prods.docs) {
+                const p = d.data() as Product;
+                if (p.Process_Plan_Source !== 'auto' || p.Status === 'Otkazano') continue;
+                const res = await applyAutoProcessPlan(p.Product_ID, organizationId);
+                if (res.success) recomputed++;
+            }
+        }
+        return {
+            success: true, recomputed,
+            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila, ${STANDARD_CATALOG.length} procesa u katalogu${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
+        };
+    } catch (e) {
+        console.error('applyStandardProcesses error:', e);
+        return { success: false, message: 'Greška pri primjeni standardnih procesa' };
     }
 }
 

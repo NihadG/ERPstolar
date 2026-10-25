@@ -11,7 +11,7 @@
 
 import type { ProcessCatalogItem, ProcessMaterialRule, ProcessStageTemplate } from './types';
 import {
-    suggestProcessesFromMaterials, presentMaterialTypes, orderByCatalog,
+    suggestProcessesFromMaterials, presentMaterialTypes, orderByCatalog, buildGraphFromRules, stagesFromGraph,
     type RuleMaterialLite,
 } from './productProcesses';
 
@@ -98,7 +98,7 @@ export interface AutoPlanResult {
  */
 export function buildAutoPlan(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Processes'>[],
+    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Processes'>[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
     templates: Pick<ProcessStageTemplate, 'Name' | 'Stages' | 'Material_Types'>[] = []
 ): AutoPlanResult {
@@ -109,8 +109,10 @@ export function buildAutoPlan(
     const template = pickTemplateForTypes(templates, presentMaterialTypes(materials));
 
     if (!template) {
-        // Sekvencijalno po katalogu (suggested je već orderByCatalog'd u suggestProcessesFromMaterials).
-        return { stages: suggested.map(p => [p]), source: 'rules', appendedOutsideTemplate: [] };
+        // Faze iz ISTOG grafa koji dobija kartica proizvoda i dnevni upis (grane po pravilima,
+        // spoj na istoimenim procesima, krajevi vezani po katalogu) — ne ravna lista po katalogu.
+        const stages = stagesFromGraph(buildGraphFromRules(materials, rules, undefined, catalog).graph);
+        return { stages: stages.length ? stages : suggested.map(p => [p]), source: 'rules', appendedOutsideTemplate: [] };
     }
 
     // Mapiraj skup predloženih na faze šablona (zadrži poredak faza; ispusti prazne).

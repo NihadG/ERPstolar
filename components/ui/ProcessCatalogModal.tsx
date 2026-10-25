@@ -25,8 +25,10 @@ import {
     getProcessCatalog, saveProcessCatalogItem, renameProcessCatalogItem,
     deleteProcessCatalogItem, reorderProcessCatalog,
     getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
-    getProcessStageTemplates, getProcessUsageData,
+    getProcessStageTemplates, getProcessUsageData, applyStandardProcesses,
 } from '@/lib/services';
+import { planStandardization } from '@/lib/processStandard';
+import { ruleLabel } from '@/lib/productProcesses';
 import type { ProcessUsage } from '@/lib/processConsolidation';
 import { MATERIAL_TYPES, buildAutoPlan } from '@/lib/processAutoPlan';
 import Modal from '@/components/ui/Modal';
@@ -44,6 +46,7 @@ const TYPE_ICON: Record<string, string> = {
     iveral: '🪵', mdf: '🟫', furnir: '🍂', masiv: '🌳', lak: '🎨',
     vodilice: '🛤️', sarke: '🔩', rucke: '🖐️', staklo: '🪟', ogledalo: '🪞',
     led: '💡', kant: '📏', hdf: '📄', alu: '⬜',
+    sper: '🌀', ljepilo: '🧴', nogice: '🦶', okov: '🔧',
 };
 
 interface ProcessCatalogModalProps {
@@ -57,10 +60,11 @@ interface ProcessCatalogModalProps {
 interface Builder {
     id: string | null;                                            // null = novo pravilo
     types: string[];                                              // 1 tip = obično, 2+ = kombinacija
+    exclude: string[];                                            // „osim ako ima" — pravilo tad ne okida
     advanced: { kind: 'category' | 'name_contains'; value: string } | null;
     processes: string[];
 }
-const emptyBuilder = (): Builder => ({ id: null, types: [], advanced: null, processes: [] });
+const emptyBuilder = (): Builder => ({ id: null, types: [], exclude: [], advanced: null, processes: [] });
 
 export default function ProcessCatalogModal({ organizationId, onClose, onChanged, showToast, zIndex }: ProcessCatalogModalProps) {
     const [loading, setLoading] = useState(true);
@@ -79,6 +83,9 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editName, setEditName] = useState('');
     const [wizardOpen, setWizardOpen] = useState(false);
+    const [stdOpen, setStdOpen] = useState(false);
+    const [stdRecompute, setStdRecompute] = useState(true);
+    const [stdBusy, setStdBusy] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -115,7 +122,11 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         setBuilder(b => ({
             ...b, advanced: null,
             types: b.types.includes(key) ? b.types.filter(t => t !== key) : [...b.types, key],
+            exclude: b.exclude.filter(t => t !== key),
         }));
+    }
+    function toggleBuilderExclude(key: string) {
+        setBuilder(b => ({ ...b, exclude: b.exclude.includes(key) ? b.exclude.filter(t => t !== key) : [...b.exclude, key] }));
     }
     function toggleBuilderProcess(name: string) {
         setBuilder(b => ({
@@ -124,9 +135,10 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         }));
     }
     function editRule(r: ProcessMaterialRule) {
-        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], advanced: null, processes: [...r.Processes] });
-        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], advanced: null, processes: [...r.Processes] });
-        else { setBuilder({ id: r.ID, types: [], advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
+        const exclude = [...(r.Exclude_Types || [])];
+        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], exclude, advanced: null, processes: [...r.Processes] });
+        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], exclude, advanced: null, processes: [...r.Processes] });
+        else { setBuilder({ id: r.ID, types: [], exclude, advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
         if (typeof document !== 'undefined') document.getElementById('pcm-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     async function saveBuilder() {
@@ -141,6 +153,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
             const res = await saveProcessMaterialRule({
                 ...(builder.id ? { ID: builder.id } : {}),
                 ...payload,
+                Exclude_Types: builder.exclude,
                 Processes: builder.processes,
                 Organization_ID: organizationId,
             }, organizationId);
@@ -157,6 +170,22 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         else showToast(res.message, 'error');
     }
 
+    // ── STANDARDNI PROCESI (lib/processStandard.ts) ─────────────────────
+    const stdPlan = useMemo(() => planStandardization(
+        catalog,
+        usageByKey ? Array.from(usageByKey.values()).flatMap(u => u.displays) : catalog.map(c => c.Name),
+        rules.length,
+    ), [catalog, usageByKey, rules.length]);
+    async function applyStandard() {
+        if (stdBusy) return;
+        setStdBusy(true);
+        try {
+            const res = await applyStandardProcesses(organizationId, { recomputeAutoPlans: stdRecompute });
+            showToast(res.message, res.success ? 'success' : 'error');
+            if (res.success) { setStdOpen(false); await refreshAll(); }
+        } finally { setStdBusy(false); }
+    }
+
     // ── TEST PRAVILA (live) ─────────────────────────────────────────────
     // Lažni materijali iz odabranih tipova (pattern[0] = naziv) → ista logika kao pravi auto-plan.
     const testResult = useMemo(() => {
@@ -169,6 +198,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const ruleFires = useCallback((r: ProcessMaterialRule): boolean => {
         if (!testTypes.length) return false;
         const present = new Set(testTypes);
+        if ((r.Exclude_Types || []).some(t => present.has(t))) return false;
         if (r.Match_Kind === 'material_type') return present.has(r.Match_Value);
         if (r.Match_Kind === 'material_type_combo') return (r.Match_Types || []).length > 0 && (r.Match_Types || []).every(t => present.has(t));
         return false;   // category/name_contains — test radi po tipovima
@@ -230,6 +260,9 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     };
 
     // Čip pravila u listi: tipovi ili napredni uslov
+    const Except = ({ r }: { r: ProcessMaterialRule }) => (r.Exclude_Types || []).length ? (
+        <span className="pcm2-except">osim {(r.Exclude_Types || []).map(typeLabel).join(', ')}</span>
+    ) : null;
     const RuleCondition = ({ r }: { r: ProcessMaterialRule }) => {
         if (r.Match_Kind === 'material_type' || r.Match_Kind === 'material_type_combo') {
             const keys = r.Match_Kind === 'material_type' ? [r.Match_Value] : (r.Match_Types || []);
@@ -241,6 +274,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                             <span className="pcm2-mat-chip on small">{TYPE_ICON[k] || '▪'} {typeLabel(k)}</span>
                         </span>
                     ))}
+                    <Except r={r} />
                 </span>
             );
         }
@@ -269,7 +303,11 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                     {/* ═══════════ LIJEVO: PRAVILA (glavni sadržaj) ═══════════ */}
                     <section className="pcm2-rules">
                         <header className="pcm2-sec-head">
-                            <h3>Pravila <span className="pcm2-sec-sub">materijali → procesi</span></h3>
+                            <h3>Pravila <span className="pcm2-sec-sub">materijali → procesi</span>
+                                <button className="pcm2-btn ghost pcm2-std-btn" onClick={() => setStdOpen(true)} title="Standardni katalog i pravila: normalizuje nazive u cijeloj bazi">
+                                    <Layers size={13} /> Standardna pravila
+                                </button>
+                            </h3>
                             <span className="pcm2-hint">Odaberi materijal(e) proizvoda i procese koje oni povlače — plan proizvoda se popunjava sam.</span>
                         </header>
 
@@ -293,6 +331,22 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                             );
                                         })}
                                     </div>
+                                    {(builder.types.length > 0 || builder.advanced) && (
+                                        <div className="pcm2-except-row">
+                                            <span className="pcm2-step-label">osim ako ima <span className="pcm2-dim">(tada pravilo ne okida)</span></span>
+                                            <div className="pcm2-mat-grid">
+                                                {MATERIAL_TYPES.filter(t => !builder.types.includes(t.key)).map(t => {
+                                                    const on = builder.exclude.includes(t.key);
+                                                    return (
+                                                        <button key={t.key} className={`pcm2-mat-chip small ${on ? 'off' : ''}`} onClick={() => toggleBuilderExclude(t.key)}>
+                                                            <span className="pcm2-mat-ico">{TYPE_ICON[t.key] || '▪'}</span> {t.label}
+                                                            {on && <X size={12} className="pcm2-mat-check" />}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
                                     <button className="pcm2-adv-toggle" onClick={() => setAdvancedOpen(o => !o)}>
                                         {advancedOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />} napredno (kategorija / dio naziva)
                                     </button>
@@ -329,7 +383,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                             <div className="pcm2-builder-step">
                                 <span className="pcm2-step-num">2</span>
                                 <div className="pcm2-step-body">
-                                    <div className="pcm2-step-label">dodaj procese <span className="pcm2-dim">(redoslijed određuje katalog)</span></div>
+                                    <div className="pcm2-step-label">dodaj procese <span className="pcm2-dim">(klikni ih redom kojim teku)</span></div>
                                     <div className="pcm2-mat-grid">
                                         {catalog.length === 0 && <span className="pcm2-dim">Katalog je prazan — dodaj procese desno.</span>}
                                         {catalog.map(c => {
@@ -341,6 +395,9 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                             );
                                         })}
                                     </div>
+                                    {builder.processes.length > 0 && (
+                                        <div className="pcm2-chain">Tok: {builder.processes.join(' → ')}</div>
+                                    )}
                                 </div>
                             </div>
 
@@ -494,6 +551,44 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                 </div>
             )}
 
+            {stdOpen && (
+                <Modal
+                    isOpen
+                    onClose={() => !stdBusy && setStdOpen(false)}
+                    size="large"
+                    zIndex={(zIndex || 1000) + 100}
+                    title="Standardni procesi i pravila"
+                    footer={<>
+                        <button className="btn btn-secondary" disabled={stdBusy} onClick={() => setStdOpen(false)}>Odustani</button>
+                        <button className="btn btn-primary" disabled={stdBusy} onClick={applyStandard}>
+                            {stdBusy ? <Loader2 size={14} className="pcm2-spin" /> : <Check size={14} />} Primijeni
+                        </button>
+                    </>}
+                >
+                    <div className="pcm2-std">
+                        <p className="pcm2-hint">Jednim potezom: stari nazivi procesa postaju standardni u cijeloj bazi (katalog, planovi, nalozi, dnevnice), katalog dobija standardni redoslijed, a sva pravila se zamjenjuju standardnim.</p>
+                        <h4>Preimenovanja {stdPlan.renames.length === 0 && <span className="pcm2-dim">— ništa za preimenovati</span>}</h4>
+                        <ul>
+                            {stdPlan.renames.map(g => <li key={g.canonical}>{g.members.join(', ')} <ArrowRight size={12} className="pcm2-arrow" /> <b>{g.canonical}</b></li>)}
+                        </ul>
+                        {stdPlan.addToCatalog.length > 0 && (<>
+                            <h4>Novo u katalogu</h4>
+                            <p className="pcm2-hint">{stdPlan.addToCatalog.join(', ')}</p>
+                        </>)}
+                        <h4>Pravila ({stdPlan.rulesToRemove} postojećih se briše, {stdPlan.rulesToAdd.length} novih)</h4>
+                        <ul>
+                            {stdPlan.rulesToAdd.map((r, i) => (
+                                <li key={i}><b>{ruleLabel(r, typeLabel)}</b> <ArrowRight size={12} className="pcm2-arrow" /> {r.Processes.join(' → ')} <span className="pcm2-dim">· {r.note}</span></li>
+                            ))}
+                        </ul>
+                        <label className="pcm2-std-check">
+                            <input type="checkbox" checked={stdRecompute} onChange={e => setStdRecompute(e.target.checked)} />
+                            Preračunaj automatske planove proizvoda po novim pravilima (ručno uređeni planovi se ne diraju)
+                        </label>
+                    </div>
+                </Modal>
+            )}
+
             {wizardOpen && (
                 <ProcessConsolidationWizard
                     organizationId={organizationId}
@@ -576,6 +671,16 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                     font-size: 11.5px; font-weight: 600; color: var(--text-tertiary); padding: 2px 0;
                 }
                 .pcm2-adv-toggle:hover { color: var(--accent); }
+                .pcm2-except-row { display: flex; flex-direction: column; gap: 6px; }
+                .pcm2-except-row .pcm2-mat-chip { cursor: pointer; }
+                .pcm2-mat-chip.off { border-color: var(--error); background: var(--error-bg); color: var(--error); }
+                .pcm2-except { font-size: 11.5px; font-weight: 600; color: var(--error); margin-left: 4px; }
+                .pcm2-chain { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+                :global(.pcm2-std-btn) { margin-left: 10px; font-size: 12px; padding: 4px 10px; vertical-align: middle; }
+                .pcm2-std { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-primary); }
+                .pcm2-std h4 { margin: 8px 0 0; font-size: 13px; font-weight: 700; }
+                .pcm2-std ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; line-height: 1.45; }
+                .pcm2-std-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
                 .pcm2-adv { display: flex; gap: 8px; flex-wrap: wrap; }
                 .pcm2-adv select, .pcm2-adv input {
                     padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
