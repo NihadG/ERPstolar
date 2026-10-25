@@ -28,7 +28,7 @@ import {
     getProcessStageTemplates, getProcessUsageData, applyStandardProcesses,
     listProcessTemplates, updateProcessTemplateKeywords,
 } from '@/lib/services';
-import { planStandardization } from '@/lib/processStandard';
+import { planStandardization, standardRulesIn } from '@/lib/processStandard';
 import { nameHasKeyword, ruleLabel } from '@/lib/productProcesses';
 import type { ProcessUsage } from '@/lib/processConsolidation';
 import { MATERIAL_TYPES, buildAutoPlan } from '@/lib/processAutoPlan';
@@ -48,6 +48,7 @@ const TYPE_ICON: Record<string, string> = {
     vodilice: '🛤️', sarke: '🔩', rucke: '🖐️', staklo: '🪟', ogledalo: '🪞',
     led: '💡', kant: '📏', hdf: '📄', alu: '⬜',
     sper: '🌀', ljepilo: '🧴', nogice: '🦶', okov: '🔧',
+    hpl: '🔲', osb: '🧱', kerrock: '🪨', corian: '🪨', boja: '🖌️', jela: '🌲', oblikovna: '〰️',
 };
 
 interface ProcessCatalogModalProps {
@@ -63,10 +64,11 @@ interface Builder {
     types: string[];                                              // 1 tip = obično, 2+ = kombinacija
     exclude: string[];                                            // „osim ako ima" — pravilo tad ne okida
     keywords: string;                                             // „samo za proizvode čiji naziv sadrži" (zarezom)
+    notFor: string;                                               // „osim za proizvode čiji naziv sadrži" (zarezom)
     advanced: { kind: 'category' | 'name_contains'; value: string } | null;
     processes: string[];
 }
-const emptyBuilder = (): Builder => ({ id: null, types: [], exclude: [], keywords: '', advanced: null, processes: [] });
+const emptyBuilder = (): Builder => ({ id: null, types: [], exclude: [], keywords: '', notFor: '', advanced: null, processes: [] });
 const splitWords = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
 
 export default function ProcessCatalogModal({ organizationId, onClose, onChanged, showToast, zIndex }: ProcessCatalogModalProps) {
@@ -147,9 +149,10 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     function editRule(r: ProcessMaterialRule) {
         const exclude = [...(r.Exclude_Types || [])];
         const keywords = (r.Product_Keywords || []).join(', ');
-        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], exclude, keywords, advanced: null, processes: [...r.Processes] });
-        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], exclude, keywords, advanced: null, processes: [...r.Processes] });
-        else { setBuilder({ id: r.ID, types: [], exclude, keywords, advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
+        const notFor = (r.Exclude_Product_Keywords || []).join(', ');
+        if (r.Match_Kind === 'material_type') setBuilder({ id: r.ID, types: [r.Match_Value], exclude, keywords, notFor, advanced: null, processes: [...r.Processes] });
+        else if (r.Match_Kind === 'material_type_combo') setBuilder({ id: r.ID, types: [...(r.Match_Types || [])], exclude, keywords, notFor, advanced: null, processes: [...r.Processes] });
+        else { setBuilder({ id: r.ID, types: [], exclude, keywords, notFor, advanced: { kind: r.Match_Kind, value: r.Match_Value }, processes: [...r.Processes] }); setAdvancedOpen(true); }
         if (typeof document !== 'undefined') document.getElementById('pcm-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     async function saveBuilder() {
@@ -166,6 +169,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                 ...payload,
                 Exclude_Types: builder.exclude,
                 Product_Keywords: splitWords(builder.keywords),
+                Exclude_Product_Keywords: splitWords(builder.notFor),
                 Processes: builder.processes,
                 Organization_ID: organizationId,
             }, organizationId);
@@ -183,12 +187,13 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     }
 
     // ── STANDARDNI PROCESI (lib/processStandard.ts) ─────────────────────
+    const stdReplaced = useMemo(() => standardRulesIn(rules).length, [rules]);
     const stdPlan = useMemo(() => planStandardization(
         catalog,
         usageByKey ? Array.from(usageByKey.values()).flatMap(u => u.displays) : catalog.map(c => c.Name),
-        rules.length,
+        stdReplaced,
         flowTemplates.map(t => t.name),
-    ), [catalog, usageByKey, rules.length, flowTemplates]);
+    ), [catalog, usageByKey, stdReplaced, flowTemplates]);
     async function saveKeywords(t: ProcessFlowTemplate) {
         const res = await updateProcessTemplateKeywords(t.id, splitWords(kwDraft[t.id] || ''), organizationId);
         showToast(res.message, res.success ? 'success' : 'error');
@@ -221,6 +226,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         const present = new Set(testTypes);
         if ((r.Exclude_Types || []).some(t => present.has(t))) return false;
         if ((r.Product_Keywords || []).length && !nameHasKeyword(testName, r.Product_Keywords)) return false;
+        if (nameHasKeyword(testName, r.Exclude_Product_Keywords)) return false;
         if (r.Match_Kind === 'material_type') return present.has(r.Match_Value);
         if (r.Match_Kind === 'material_type_combo') return (r.Match_Types || []).length > 0 && (r.Match_Types || []).every(t => present.has(t));
         return false;   // category/name_contains — test radi po tipovima
@@ -285,6 +291,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const Except = ({ r }: { r: ProcessMaterialRule }) => (<>
         {(r.Exclude_Types || []).length > 0 && <span className="pcm2-except">osim {(r.Exclude_Types || []).map(typeLabel).join(', ')}</span>}
         {(r.Product_Keywords || []).length > 0 && <span className="pcm2-only">samo: {(r.Product_Keywords || []).join(', ')}</span>}
+        {(r.Exclude_Product_Keywords || []).length > 0 && <span className="pcm2-except">nije za: {(r.Exclude_Product_Keywords || []).join(', ')}</span>}
     </>);
     const RuleCondition = ({ r }: { r: ProcessMaterialRule }) => {
         if (r.Match_Kind === 'material_type' || r.Match_Kind === 'material_type_combo') {
@@ -375,6 +382,13 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                             <span className="pcm2-step-label">samo za proizvode čiji naziv sadrži <span className="pcm2-dim">(zarezom; prazno = svi)</span></span>
                                             <input value={builder.keywords} placeholder="npr. ormar, garderob"
                                                 onChange={e => setBuilder(b => ({ ...b, keywords: e.target.value }))} />
+                                        </label>
+                                    )}
+                                    {(builder.types.length > 0 || builder.advanced) && (
+                                        <label className="pcm2-kw-row">
+                                            <span className="pcm2-step-label">osim za proizvode čiji naziv sadrži <span className="pcm2-dim">(zarezom; prazno = nijedan)</span></span>
+                                            <input value={builder.notFor} placeholder="npr. krevet"
+                                                onChange={e => setBuilder(b => ({ ...b, notFor: e.target.value }))} />
                                         </label>
                                     )}
                                     <button className="pcm2-adv-toggle" onClick={() => setAdvancedOpen(o => !o)}>
@@ -622,7 +636,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                     </>}
                 >
                     <div className="pcm2-std">
-                        <p className="pcm2-hint">Jednim potezom: stari nazivi procesa postaju standardni u cijeloj bazi (katalog, planovi, nalozi, dnevnice), katalog dobija standardni redoslijed, a sva pravila se zamjenjuju standardnim.</p>
+                        <p className="pcm2-hint">Jednim potezom: stari nazivi procesa postaju standardni u cijeloj bazi (katalog, planovi, nalozi, dnevnice), katalog dobija standardni redoslijed, a pravila standarda se zamjenjuju novim. Pravila koja si sam dodao ili izmijenio ostaju. Auto prijedlog ovo radi sam kad aplikacija donese novija pravila.</p>
                         <h4>Preimenovanja {stdPlan.renames.length === 0 && <span className="pcm2-dim">— ništa za preimenovati</span>}</h4>
                         <ul>
                             {stdPlan.renames.map(g => <li key={g.canonical}>{g.members.join(', ')} <ArrowRight size={12} className="pcm2-arrow" /> <b>{g.canonical}</b></li>)}
@@ -631,7 +645,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                             <h4>Novo u katalogu</h4>
                             <p className="pcm2-hint">{stdPlan.addToCatalog.join(', ')}</p>
                         </>)}
-                        <h4>Pravila ({stdPlan.rulesToRemove} postojećih se briše, {stdPlan.rulesToAdd.length} novih)</h4>
+                        <h4>Pravila ({stdPlan.rulesToRemove} postojećih se briše, {stdPlan.rulesToAdd.length} novih{rules.length > stdReplaced ? `, ${rules.length - stdReplaced} tvojih ostaje` : ''})</h4>
                         <ul>
                             {stdPlan.rulesToAdd.map((r, i) => (
                                 <li key={i}><b>{ruleLabel(r, typeLabel)}</b> <ArrowRight size={12} className="pcm2-arrow" /> {r.Processes.join(' → ')} <span className="pcm2-dim">· {r.note}</span></li>

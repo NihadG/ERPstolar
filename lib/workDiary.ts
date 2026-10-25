@@ -15,6 +15,7 @@
 import { foldText, stem, tokens } from './voice/text';
 import { tokenSimilarity } from './voice/match';
 import { nodeMatchesProcess } from './productProcesses';
+import { STANDARD_RENAMES } from './processStandard';
 import type { ItemProcessStatus, ProcessGraph, ProcessNode, WorkOrder } from './types';
 
 // ─── Poslovi na koje se može upisati rad ──────────────────────────────
@@ -129,17 +130,53 @@ function processCoverage(query: string, haystack: string): number {
     return hit / q.length;
 }
 
-/** Naziv iz poruke → proces iz rječnika (katalog + čvorovi grafova). null = nepoznat. */
-export function matchProcess(name: string, vocabulary: string[]): string | null {
+/**
+ * Naziv iz poruke → proces iz rječnika (katalog + čvorovi grafova). null = nepoznat.
+ * Stari standardni nazivi vode na novi („kantiranje fronti" → Kantiranje furnira).
+ * Kad pristaje više procesa („kantiranje" → iverala ili furnira), prednost ima proces iz
+ * plana stavki (`preferred`, redom: nezavršeni prvo) — tačan naziv procesa uvijek pobjeđuje.
+ */
+export function matchProcess(name: string, vocabulary: string[], preferred: string[] = []): string | null {
     const q = foldText(name);
     if (!q) return null;
     const exact = vocabulary.find(v => foldText(v) === q);
     if (exact) return exact;
+    const fit = (v: string) => Math.min(processCoverage(name, v), processCoverage(v, name) + 0.25);
+    const rank = (v: string) => {
+        const i = preferred.findIndex(p => foldText(p) === foldText(v));
+        return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    };
     const ranked = vocabulary
-        .map(v => ({ v, s: Math.min(processCoverage(name, v), processCoverage(v, name) + 0.25) }))
-        .filter(x => x.s >= 0.75)
-        .sort((a, b) => b.s - a.s || a.v.length - b.v.length);
-    return ranked[0]?.v || null;
+        .map(v => {
+            const old = STANDARD_RENAMES.find(g => foldText(g.canonical) === foldText(v))?.members || [];
+            // Stari naziv izgovoren tačno je jak, ali ne prejak: plan stavke i dalje bira.
+            const s = Math.max(fit(v), ...old.map(o => (foldText(o) === q ? 1.5 : fit(o))));
+            return { v, s, r: rank(v) };
+        })
+        .filter(x => x.s >= 0.75);
+    const inPlan = ranked.filter(x => x.r !== Number.MAX_SAFE_INTEGER);
+    return (inPlan.length ? inPlan : ranked)
+        .sort((a, b) => b.s - a.s || a.r - b.r || a.v.length - b.v.length)[0]?.v || null;
+}
+
+/**
+ * Procesi iz plana stavki u grafu naloga (bez „Rad"), za prepoznavanje rečenog procesa:
+ * nezavršeni prvo, pa redom toka.
+ */
+export function planProcessNames(graph: ProcessGraph | undefined, items: { ID: string; Processes?: ItemProcessStatus[] }[]): string[] {
+    const open: string[] = [];
+    const done: string[] = [];
+    for (const item of items) {
+        const names = graph?.nodes?.length
+            ? itemNodes(graph, item.ID).map(n => n.name)
+            : (item.Processes || []).map(p => p.Process_Name);
+        for (const name of names) {
+            if (!name || foldText(name) === 'rad' || open.includes(name) || done.includes(name)) continue;
+            const st = (item.Processes || []).find(p => foldText(p.Process_Name) === foldText(name))?.Status;
+            (st === 'Završeno' ? done : open).push(name);
+        }
+    }
+    return [...open, ...done];
 }
 
 // ─── Udio dana ────────────────────────────────────────────────────────

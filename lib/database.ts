@@ -11,6 +11,7 @@ import {
     query,
     where,
     writeBatch,
+    deleteField,
 } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 import { isLockedMaterial } from './sketchupImport';
@@ -5018,9 +5019,10 @@ export async function saveProcessMaterialRule(
     // Firestore odbija undefined — combo nosi Match_Types (Match_Value prazan), ostali obrnuto.
     const matchFields = {
         ...(isCombo ? { Match_Value: '', Match_Types: comboTypes } : { Match_Value: (rule.Match_Value || '').trim() }),
-        // Uvijek upisani (i prazni), da izmjena pravila može ukloniti „osim" / „samo za".
+        // Uvijek upisani (i prazni), da izmjena pravila može ukloniti „osim" / „samo za" / „osim za".
         Exclude_Types: (rule.Exclude_Types || []).filter(Boolean),
         Product_Keywords: (rule.Product_Keywords || []).map(k => k.trim()).filter(Boolean),
+        Exclude_Product_Keywords: (rule.Exclude_Product_Keywords || []).map(k => k.trim()).filter(Boolean),
     };
     try {
         const db = getDb();
@@ -5031,6 +5033,8 @@ export async function saveProcessMaterialRule(
                 Match_Kind: rule.Match_Kind,
                 ...matchFields,
                 Processes: rule.Processes,
+                // Izmijenjeno standardno pravilo postaje korisnikovo — nova verzija standarda ga ne briše.
+                Standard_Version: deleteField(),
             });
             return { success: true, message: 'Pravilo ažurirano' };
         }
@@ -5040,6 +5044,7 @@ export async function saveProcessMaterialRule(
             Match_Kind: rule.Match_Kind,
             ...matchFields,
             Processes: rule.Processes,
+            ...(rule.Standard_Version ? { Standard_Version: rule.Standard_Version } : {}),
             Created_At: new Date().toISOString(),
         };
         await addDoc(collection(db, PROCESS_MATERIAL_RULES), JSON.parse(JSON.stringify(doc_)));
@@ -5068,8 +5073,8 @@ export async function deleteProcessMaterialRule(id: string, organizationId: stri
 export async function applyAutoProcessPlan(
     productId: string,
     organizationId: string,
-    opts?: { force?: boolean; templateId?: string }
-): Promise<{ success: boolean; plan?: string[]; graph?: ProcessGraph; message: string }> {
+    opts?: { force?: boolean; templateId?: string; syncWorkOrders?: boolean }
+): Promise<{ success: boolean; plan?: string[]; graph?: ProcessGraph; synced?: { items: number; orders: number }; message: string }> {
     if (!productId || !organizationId) return { success: false, message: 'Nedostaje proizvod/organizacija' };
     try {
         const db = getDb();
@@ -5111,13 +5116,83 @@ export async function applyAutoProcessPlan(
             Process_Plan: flat,
             Process_Plan_Source: 'auto',
         });
+        // Auto prijedlog (klik): plan važi i za naloge u toku, bez obzira dokle je proizvod stigao.
+        const synced = opts?.syncWorkOrders && result.graph.nodes.length
+            ? await syncProductPlanToWorkOrders(productId, organizationId, result.graph)
+            : undefined;
         const branchesStr = result.branches.map(b => `${b.label}: ${b.processes.join(' → ')}`).join(' ∥ ');
         return {
-            success: true, plan: flat, graph: result.graph,
+            success: true, plan: flat, graph: result.graph, synced,
             message: result.source === 'template' ? `Šablon vrste proizvoda: ${result.templateName}`
                 : flat.length ? `Grane: ${branchesStr}` : 'Nema pravila za materijale proizvoda',
         };
     } catch (e) { console.error('applyAutoProcessPlan error:', e); return { success: false, message: 'Greška pri auto-planu procesa' }; }
+}
+
+/**
+ * Novi plan proizvoda → njegove stavke u aktivnim nalozima (nalog nije Završen/Otkazan, stavka
+ * nije Završena), bez obzira dokle su stigle: urađeno ostaje, raniji koraci se podrazumijevaju,
+ * graf naloga čuva ID-eve čvorova (lib/processReplan.ts). Greška ne ruši plan proizvoda.
+ */
+async function syncProductPlanToWorkOrders(
+    productId: string,
+    organizationId: string,
+    plan: ProcessGraph,
+): Promise<{ items: number; orders: number }> {
+    const out = { items: 0, orders: 0 };
+    try {
+        const db = getDb();
+        const itemSnap = await getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Organization_ID', '==', organizationId), where('Product_ID', '==', productId)));
+        const orderIds = Array.from(new Set(itemSnap.docs.map(d => (d.data() as WorkOrderItem).Work_Order_ID).filter(Boolean)));
+        if (!orderIds.length) return out;
+        const { replanOrderItem } = await import('./processReplan');
+        const { planToStages, stagesFromGraph } = await import('./productProcesses');
+        const { graphFromStages } = await import('./workDiary');
+        const snapshot: ProcessGraph = JSON.parse(JSON.stringify(plan));
+        const stages = stagesFromGraph(snapshot).map(s => ({ processes: s }));
+        const now = new Date().toISOString();
+        for (const woId of orderIds) {
+            const [woSnap, allSnap, logSnap] = await Promise.all([
+                getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), where('Organization_ID', '==', organizationId), where('Work_Order_ID', '==', woId))),
+                getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Organization_ID', '==', organizationId), where('Work_Order_ID', '==', woId))),
+                getDocs(query(collection(db, COLLECTIONS.WORK_LOGS), where('Organization_ID', '==', organizationId), where('Work_Order_ID', '==', woId))),
+            ]);
+            if (woSnap.empty) continue;
+            const wo = woSnap.docs[0].data() as WorkOrder;
+            if (wo.Status === 'Završeno' || wo.Status === 'Otkazano') continue;
+            const items = allSnap.docs.map(d => ({ ref: d.ref, item: d.data() as WorkOrderItem }));
+            const logs = logSnap.docs.map(d => d.data() as WorkLog);
+            // Dosadašnji plan svake stavke (snimak grafa ili faza) — veze drugih proizvoda ostaju.
+            const planOf = new Map(items.map(({ item }) => [item.ID,
+                item.Process_Graph?.nodes?.length ? item.Process_Graph : graphFromStages(planToStages(item.Process_Stages))]));
+            let graph = wo.Process_Graph;
+            const batch = writeBatch(db);
+            let touched = 0;
+            for (const { ref, item } of items) {
+                if (item.Product_ID !== productId || item.Status === 'Završeno') continue;
+                const res = replanOrderItem({
+                    graph, itemId: item.ID, allItemIds: items.map(x => x.item.ID),
+                    processes: item.Processes, oldPlan: planOf.get(item.ID),
+                    otherPlans: items.filter(x => x.item.ID !== item.ID).map(x => planOf.get(x.item.ID)!).filter(Boolean),
+                    newPlan: snapshot,
+                    loggedProcesses: logs.filter(l => l.Work_Order_Item_ID === item.ID)
+                        .flatMap(l => [l.Process_Name || '', ...(l.Process_Tags || [])]).filter(Boolean),
+                    loggedNodeIds: logs.map(l => l.Process_Node_ID).filter((x): x is string => !!x),
+                    atIso: now, newId: generateUUID,
+                });
+                graph = res.graph;
+                planOf.set(item.ID, snapshot);
+                batch.update(ref, JSON.parse(JSON.stringify({ Processes: res.processes, Process_Graph: snapshot, Process_Stages: stages })));
+                touched++;
+            }
+            if (!touched) continue;
+            if (graph) batch.update(woSnap.docs[0].ref, { Process_Graph: JSON.parse(JSON.stringify(graph)), Production_Steps: graph.nodes.map(n => n.name) });
+            await batch.commit();
+            out.items += touched;
+            out.orders++;
+        }
+    } catch (e) { console.error('syncProductPlanToWorkOrders error:', e); }
+    return out;
 }
 
 /**
@@ -5610,7 +5685,7 @@ export async function applyProcessConsolidation(
 /**
  * STANDARDNI PROCESI (lib/processStandard.ts) jednim potezom, od malih upisa ka velikim
  * (ako teški korak padne, pravila i katalog su već tu, a ponovni klik je bezopasan):
- *  1) sva pravila materijal→proces zamijenjena standardnim + vrste proizvoda (šabloni),
+ *  1) pravila standarda zamijenjena novim (korisnikova ostaju; standardRulesIn) + vrste proizvoda (šabloni),
  *  2) kanonski procesi u katalogu,
  *  3) stari nazivi → kanonski u cijeloj bazi (applyProcessConsolidation) — najduži korak,
  *  4) kanonski redoslijed kataloga (ostali iza, stabilno),
@@ -5626,16 +5701,21 @@ export async function applyStandardProcesses(
     const at = (text: string) => { step = text; opts.onStep?.(text); };
     try {
         const db = getDb();
-        const { STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES, STANDARD_TEMPLATE_KEYWORDS } = await import('./processStandard');
+        const {
+            STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES, STANDARD_TEMPLATE_KEYWORDS, STANDARD_VERSION, standardRulesIn,
+        } = await import('./processStandard');
         const { normKey } = await import('./processConsolidation');
 
         at('Pravila materijal → procesi');
+        // Mijenjaju se pravila standarda (ili sva, dok nijedno nije označeno); korisnikova ostaju.
         const oldRules = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('Organization_ID', '==', organizationId)));
+        const replaced = standardRulesIn(oldRules.docs.map(d => ({ ref: d.ref, Standard_Version: (d.data() as ProcessMaterialRule).Standard_Version })));
+        const keptRules = oldRules.size - replaced.length;
         const batch = writeBatch(db);
-        oldRules.docs.forEach(d => batch.delete(d.ref));
+        replaced.forEach(r => batch.delete(r.ref));
         await batch.commit();
         for (const { note: _note, ...r } of STANDARD_RULES) {
-            const res = await saveProcessMaterialRule({ ...r, Organization_ID: organizationId }, organizationId);
+            const res = await saveProcessMaterialRule({ ...r, Standard_Version: STANDARD_VERSION, Organization_ID: organizationId }, organizationId);
             if (!res.success) return { success: false, message: `${step}: ${res.message}` };
         }
 
@@ -5678,12 +5758,28 @@ export async function applyStandardProcesses(
         }
         return {
             success: true, recomputed,
-            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila, ${STANDARD_CATALOG.length} procesa u katalogu${consolidated.stats ? `, ${consolidated.stats.workLogsUpdated + consolidated.stats.workOrdersUpdated + consolidated.stats.productsUpdated} zapisa preimenovano` : ''}${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
+            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila${keptRules ? ` (+${keptRules} tvojih ostaje)` : ''}, ${STANDARD_CATALOG.length} procesa u katalogu${consolidated.stats ? `, ${consolidated.stats.workLogsUpdated + consolidated.stats.workOrdersUpdated + consolidated.stats.productsUpdated} zapisa preimenovano` : ''}${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
         };
     } catch (e) {
         console.error('applyStandardProcesses error:', step, e);
         return { success: false, message: `Greška (${step}): ${e instanceof Error ? e.message : String(e)}` };
     }
+}
+
+/**
+ * „Zadnja pravila aplikacije" prije Auto prijedloga: baza bez pravila ove verzije standarda
+ * (STANDARD_VERSION) dobije standard (pravila, vrste proizvoda, katalog, preimenovanja) — jednom
+ * po verziji. Inače samo jedno čitanje pravila.
+ */
+export async function ensureStandardProcesses(
+    organizationId: string,
+    opts: { onStep?: (text: string) => void } = {}
+): Promise<{ success: boolean; applied: boolean; message: string }> {
+    if (!organizationId) return { success: false, applied: false, message: 'Nedostaje organizacija' };
+    const { standardIsCurrent } = await import('./processStandard');
+    if (standardIsCurrent(await getProcessMaterialRules(organizationId))) return { success: true, applied: false, message: '' };
+    const res = await applyStandardProcesses(organizationId, { onStep: opts.onStep });
+    return { success: res.success, applied: res.success, message: res.message };
 }
 
 // ============================================

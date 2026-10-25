@@ -270,3 +270,45 @@ describe('plan iz pravila materijala + podrazumijevano završeni raniji koraci',
         expect(statuses('v1')).toMatchObject({ 'Krojenje MDF-a': 'U toku', Srezivanje: 'Na čekanju', Brušenje: 'Na čekanju' });
     });
 });
+
+describe('dva kantiranja: „kantirao" po planu proizvoda (iverala ili furnira)', () => {
+    const ORG = 'org2';
+    const env2 = (): ToolEnv => {
+        const e = env();
+        return { ...e, orgId: ORG, ctx: { ...e.ctx, workers: [{ alias: 'W1', value: { id: 'sead', name: 'Sead' } }, { alias: 'W2', value: { id: 'haris', name: 'Haris' } }] } } as ToolEnv;
+    };
+    const procs = (id: string) => Object.fromEntries(item(id).Processes.map((p: any) => [p.Process_Name, p.Status]));
+
+    beforeAll(async () => {
+        const w = (id: string, name: string) => store.set(`workers/${id}`, { Worker_ID: id, Organization_ID: ORG, Name: name, Daily_Rate: 100, Status: 'Aktivan' });
+        w('sead', 'Sead'); w('haris', 'Haris');
+        store.set('projects/h', { Project_ID: 'ph', Organization_ID: ORG, Name: 'Hadžić stan', Client_Name: 'Hadžić' });
+        ['Krojenje iverala', 'Krojenje MDF-a', 'Priprema furnira', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje iverala', 'Kantiranje furnira', 'Sklapanje kutija']
+            .forEach((n, i) => store.set(`process_catalog/h${i}`, { ID: `h${i}`, Organization_ID: ORG, Name: n, Order: i + 1 }));
+        store.set('process_material_rules/h1', { ID: 'h1', Organization_ID: ORG, Match_Kind: 'material_type_combo', Match_Value: '', Match_Types: ['furnir', 'mdf'],
+            Processes: ['Krojenje MDF-a', 'Furniranje', 'Srezivanje na tačnu mjeru', 'Kantiranje furnira'] });
+        store.set('process_material_rules/h2', { ID: 'h2', Organization_ID: ORG, Match_Kind: 'material_type', Match_Value: 'iveral',
+            Processes: ['Krojenje iverala', 'Kantiranje iverala', 'Sklapanje kutija'] });
+        store.set('work_orders/x1', { Work_Order_ID: 'x1', Organization_ID: ORG, Name: 'Hadžić - Komoda', Status: 'U toku', Work_Order_Type: 'Proizvodnja' });
+        store.set('work_orders/x2', { Work_Order_ID: 'x2', Organization_ID: ORG, Name: 'Hadžić - Ormar', Status: 'U toku', Work_Order_Type: 'Proizvodnja' });
+        store.set('work_order_items/f1', { ID: 'f1', Organization_ID: ORG, Work_Order_ID: 'x1', Product_ID: 'p-f1', Product_Name: 'Komoda', Project_ID: 'ph', Status: 'U toku' });
+        store.set('work_order_items/i1', { ID: 'i1', Organization_ID: ORG, Work_Order_ID: 'x2', Product_ID: 'p-i1', Product_Name: 'Ormar', Project_ID: 'ph', Status: 'U toku' });
+        store.set('product_materials/h1', { ID: 'h1', Organization_ID: ORG, Product_ID: 'p-f1', Material_Name: 'MDF 18' });
+        store.set('product_materials/h2', { ID: 'h2', Organization_ID: ORG, Product_ID: 'p-f1', Material_Name: 'Furnir / Orah' });
+        store.set('product_materials/h3', { ID: 'h3', Organization_ID: ORG, Product_ID: 'p-i1', Material_Name: 'Iveral / Bijeli' });
+
+        const res = await runTool(env2(), 'log_work', { lines: [
+            { workers: ['W1'], work: 'komoda Hadžić', process: 'kantirao' },
+            { workers: ['W2'], work: 'ormar Hadžić', process: 'kantirao' },
+        ] });
+        expect(res).toMatchObject({ ok: true });
+    });
+
+    it('furnirana komoda → kantiranje furnira; ormar od iverala → kantiranje iverala', () => {
+        expect(docs('work_logs').filter(l => l.Worker_ID === 'sead').map(l => l.Process_Name)).toEqual(['Kantiranje furnira']);
+        expect(docs('work_logs').filter(l => l.Worker_ID === 'haris').map(l => l.Process_Name)).toEqual(['Kantiranje iverala']);
+        expect(procs('f1')).toMatchObject({ 'Kantiranje furnira': 'U toku', Furniranje: 'Završeno' });
+        expect(procs('f1')['Kantiranje iverala']).toBeUndefined();
+        expect(procs('i1')).toMatchObject({ 'Krojenje iverala': 'Završeno', 'Kantiranje iverala': 'U toku', 'Sklapanje kutija': 'Na čekanju' });
+    });
+});

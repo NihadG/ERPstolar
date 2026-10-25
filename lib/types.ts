@@ -852,7 +852,11 @@ export interface ProcessMaterialRule {
     Match_Types?: string[];     // za 'material_type_combo' — svi tipovi moraju biti prisutni
     Exclude_Types?: string[];   // pravilo NE okida ako je prisutan bilo koji od ovih tipova (npr. MDF osim furnira)
     Product_Keywords?: string[]; // okida SAMO za proizvod čiji naziv ima riječ (npr. ormar → cokl od jele); nameHasKeyword
+    Exclude_Product_Keywords?: string[]; // NE okida za proizvod čiji naziv ima riječ (npr. krevet nema kutija)
     Processes: string[];        // lanac: redom kojim procesi teku
+    // Verzija standarda (lib/processStandard.ts) koja je upisala pravilo; prazno = korisnikovo pravilo.
+    // Auto prijedlog osvježi standardna pravila kad aplikacija donese noviju verziju.
+    Standard_Version?: string;
     Created_At?: string;
 }
 

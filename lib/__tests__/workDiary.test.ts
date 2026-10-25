@@ -1,7 +1,7 @@
 import { splitDnevnicaByOrder, splitWorkerDay } from '../laborSplit';
 import {
     applyPlanToItem, completeUpstream, coverage, ensureGraphNode, graphFromStages, itemHasPlan, markItemProcess,
-    matchProcess, matchTarget, planWorkerDay, type DiaryTarget,
+    matchProcess, matchTarget, planProcessNames, planWorkerDay, type DiaryTarget,
 } from '../workDiary';
 import { buildGraphFromRules } from '../productProcesses';
 
@@ -96,6 +96,43 @@ describe('matchProcess — proces iz kataloga', () => {
 
     it('coverage toleriše padeže', () => {
         expect(coverage('kuhinji Čorluke', 'Corluka - Kuhinja')).toBe(1);
+    });
+});
+
+describe('matchProcess — dva kantiranja i proces iz plana stavke', () => {
+    const vocab = ['Krojenje iverala', 'Kantiranje iverala', 'Kantiranje furnira', 'Brušenje', 'Brušenje Kerrocka', 'Furniranje', 'Priprema furnira'];
+
+    it('„kantiranje" bez plana = kantiranje iverala (stari naziv); „kantiranje fronti" = furnira', () => {
+        expect(matchProcess('kantirao', vocab)).toBe('Kantiranje iverala');
+        expect(matchProcess('kantiranje', vocab)).toBe('Kantiranje iverala');
+        expect(matchProcess('kantiranje fronti', vocab)).toBe('Kantiranje furnira');
+        expect(matchProcess('kantirao furnir', vocab)).toBe('Kantiranje furnira');
+    });
+
+    it('proizvod koji ima samo furnir: „kantiranje" je kantiranje furnira', () => {
+        expect(matchProcess('kantiranje', vocab, ['Kantiranje furnira', 'Brušenje'])).toBe('Kantiranje furnira');
+        expect(matchProcess('kantirao', vocab, ['Furniranje', 'Kantiranje furnira'])).toBe('Kantiranje furnira');
+    });
+
+    it('oba kantiranja u planu: iverala je „kantiranje", furnira kad se kaže', () => {
+        const plan = ['Kantiranje iverala', 'Kantiranje furnira'];
+        expect(matchProcess('kantiranje', vocab, plan)).toBe('Kantiranje iverala');
+        expect(matchProcess('kantirali fronte', vocab, plan)).toBe('Kantiranje furnira');
+    });
+
+    it('Kerrock proizvod: „brusio" je brušenje Kerrocka; tačan naziv uvijek pobjeđuje', () => {
+        expect(matchProcess('brusio', vocab, ['Krojenje Kerrocka', 'Brušenje Kerrocka'])).toBe('Brušenje Kerrocka');
+        expect(matchProcess('brušenje', vocab, ['Brušenje Kerrocka'])).toBe('Brušenje');
+        expect(matchProcess('furniranje', vocab, ['Priprema furnira'])).toBe('Furniranje');
+    });
+
+    it('planProcessNames: nezavršeni prvo, redom toka, bez „Rad"', () => {
+        const graph = {
+            nodes: [{ id: 'a', name: 'Krojenje iverala', itemIds: ['x'] }, { id: 'b', name: 'Kantiranje iverala', itemIds: ['x'] }, { id: 'c', name: 'Rad', itemIds: [] }, { id: 'd', name: 'Lakiranje', itemIds: ['y'] }],
+            edges: [{ id: 'e', source: 'a', target: 'b' }],
+        };
+        expect(planProcessNames(graph, [{ ID: 'x', Processes: [{ Process_Name: 'Krojenje iverala', Status: 'Završeno' }] }]))
+            .toEqual(['Kantiranje iverala', 'Krojenje iverala']);
     });
 });
 

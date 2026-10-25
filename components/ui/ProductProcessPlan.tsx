@@ -4,12 +4,12 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import type { Product, ProcessCatalogItem } from '@/lib/types';
-import { getProcessCatalog, saveProcessCatalogItem, saveProductProcessStages, applyAutoProcessPlan } from '@/lib/services';
+import { getProcessCatalog, saveProcessCatalogItem, saveProductProcessStages, applyAutoProcessPlan, ensureStandardProcesses } from '@/lib/services';
 import { planToStages } from '@/lib/productProcesses';
 import Modal from '@/components/ui/Modal';
 import ProcessCatalogModal from '@/components/ui/ProcessCatalogModal';
 import ProcessStageTemplatesModal from '@/components/ui/ProcessStageTemplatesModal';
-import { X, Plus, RefreshCw, Settings2, GitBranch, ArrowRight, GripVertical, Search, Lock, Sparkles, Bookmark } from 'lucide-react';
+import { X, Plus, RefreshCw, Settings2, GitBranch, ArrowRight, GripVertical, Search, Lock, Sparkles, Bookmark, Loader2 } from 'lucide-react';
 
 interface ProductProcessPlanProps {
     product: Product;
@@ -42,6 +42,7 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
     const [catalog, setCatalog] = useState<ProcessCatalogItem[]>(catalogCache?.orgId === organizationId ? catalogCache.items : []);
     const [stages, setStages] = useState<string[][]>(() => planToStages(product.Process_Stages, product.Process_Plan));
     const [busy, setBusy] = useState(false);
+    const [step, setStep] = useState('');
     const [catalogModalOpen, setCatalogModalOpen] = useState(false);
     const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
 
@@ -153,18 +154,26 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
         persist(next, 'manual');
     }
 
+    // Uvijek po zadnjim pravilima aplikacije (nova verzija standarda se primijeni jednom),
+    // i u nalozima u kojima je proizvod već u toku.
     async function autoSuggest() {
         setBusy(true);
         try {
-            const res = await applyAutoProcessPlan(product.Product_ID, organizationId, { force: true });
+            const std = await ensureStandardProcesses(organizationId, { onStep: setStep });
+            if (!std.success) { showToast(std.message, 'error'); return; }
+            if (std.applied) { invalidateProcessCatalogCache(); await loadCatalog(true); }
+            setStep('Plan po pravilima');
+            const res = await applyAutoProcessPlan(product.Product_ID, organizationId, { force: true, syncWorkOrders: true });
             if (res.success) {
-                showToast(res.plan?.length
-                    ? 'Auto plan postavljen (sekvencijalno) — prevuci procese u istu fazu za paralelni rad'
-                    : 'Nema pravila za materijale ovog proizvoda — dodaj pravila kroz „Upravljaj"',
-                    res.plan?.length ? 'success' : 'info');
+                const parts = [
+                    std.applied ? 'Nova standardna pravila primijenjena' : '',
+                    res.plan?.length ? `Plan preračunat po pravilima (${res.plan.length} procesa)` : 'Nema pravila za materijale ovog proizvoda — dodaj pravila kroz „Upravljaj"',
+                    res.synced?.items ? `osvježeno u nalozima: ${res.synced.items} ${res.synced.items === 1 ? 'stavka' : 'stavki'}` : '',
+                ].filter(Boolean);
+                showToast(parts.join(' · '), res.plan?.length ? 'success' : 'info');
                 onChanged();
             } else showToast(res.message, 'error');
-        } finally { setBusy(false); }
+        } finally { setBusy(false); setStep(''); }
     }
 
     const popoverCatalog = addPopover
@@ -195,10 +204,12 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                                 {source === 'manual' ? 'Ručno' : source === 'ai' ? 'AI prijedlog' : 'Auto iz materijala'}
                             </span>
                         )}
-                        <span className="ppp-hint">ista kolona = paralelno · prevuci za raspored</span>
+                        {step
+                            ? <span className="ppp-step"><Loader2 size={12} className="ppp-spin" /> {step}</span>
+                            : <span className="ppp-hint">ista kolona = paralelno · prevuci za raspored</span>}
                     </div>
                     <div className="ppp-toolbar-actions">
-                        <button className="ppp-btn" onClick={autoSuggest} disabled={busy} title="Preračunaj plan iz pravila materijal→proces (pregazi trenutni plan)">
+                        <button className="ppp-btn" onClick={autoSuggest} disabled={busy} title="Preračunaj plan po zadnjim pravilima (pregazi trenutni plan) — i u nalozima u kojima je proizvod već u toku">
                             <RefreshCw size={14} /> <span>Auto prijedlog</span>
                         </button>
                         <button className="ppp-btn" onClick={() => setTemplatesModalOpen(true)} title="Sačuvaj trenutni plan kao templejt ili primijeni sačuvani">
@@ -394,6 +405,16 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                     font-size: 12px;
                     color: var(--text-tertiary);
                 }
+                .ppp-step {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: var(--accent);
+                }
+                :global(.ppp-spin) { animation: ppp-rot 0.8s linear infinite; }
+                @keyframes ppp-rot { to { transform: rotate(360deg); } }
                 .ppp-toolbar-actions {
                     display: flex;
                     gap: 8px;

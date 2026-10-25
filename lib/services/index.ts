@@ -130,7 +130,7 @@ export {
     saveProductProcessGraph,
     getProcessStageTemplates, saveProcessStageTemplate, updateProcessStageTemplate,
     renameProcessStageTemplate, deleteProcessStageTemplate,
-    getProcessUsageData, applyProcessConsolidation, applyStandardProcesses,
+    getProcessUsageData, applyProcessConsolidation, applyStandardProcesses, ensureStandardProcesses,
 } from '../database';
 export type { ProcessUsageData, ConsolidationStats } from '../database';
 
