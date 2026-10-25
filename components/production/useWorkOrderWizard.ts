@@ -635,14 +635,17 @@ export function useWorkOrderWizard({
             });
             if (needing.length) {
                 try {
-                    const { getProcessMaterialRules, getProcessCatalog, getProcessStageTemplates } = await import('@/lib/services');
+                    const { getProcessMaterialRules, getProcessCatalog, getProcessStageTemplates, getMaterialsCatalog } = await import('@/lib/services');
                     const { buildAutoPlan } = await import('@/lib/processAutoPlan');
-                    const [rules, catalog, templates] = await Promise.all([
+                    const [rules, catalog, templates, materialCatalog] = await Promise.all([
                         getProcessMaterialRules(organizationId), getProcessCatalog(organizationId), getProcessStageTemplates(organizationId),
+                        getMaterialsCatalog(organizationId),
                     ]);
+                    // Kategorija („Okovi") je na katalogu materijala — pravilo „bilo koji okov" je treba.
+                    const categoryOf = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
                     for (const p of needing) {
                         const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
-                        const lite = (product?.materials || []).map(m => ({ Material_Name: m.Material_Name }));
+                        const lite = (product?.materials || []).map(m => ({ Material_Name: m.Material_Name, Category: categoryOf.get(m.Material_ID) || '' }));
                         const r = buildAutoPlan(lite, rules, catalog, templates);
                         if (r.stages.length) autoPlanByProduct.set(p.Product_ID, r.stages);
                     }

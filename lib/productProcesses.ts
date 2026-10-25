@@ -49,7 +49,8 @@ export const MATERIAL_TYPES: MaterialType[] = [
     // Ljepilo prati presovanje/lameliranje — nosi isti signal o složenosti posla.
     { key: 'ljepilo', label: 'Ljepilo', patterns: ['ljepil', 'lijepil', 'ljepak', 'lepak'] },
     { key: 'lak', label: 'Lak / boja', patterns: ['lak', 'farb', 'boja'] },
-    { key: 'vodilice', label: 'Vodilice', patterns: ['vodilic'] },
+    // Sistemi ladica (Blum LEGRABOX/TANDEMBOX/MOVENTO, Antaro) nose vodilice u sebi.
+    { key: 'vodilice', label: 'Vodilice', patterns: ['vodilic', 'legrabox', 'tandembox', 'antaro', 'movento'] },
     // "baglama" = uobičajen bosanski naziv za šarku (korisnikovi materijali: "Baglama ravna/paralelna")
     { key: 'sarke', label: 'Šarke', patterns: ['šark', 'sark', 'baglam'] },
     { key: 'rucke', label: 'Ručke', patterns: ['ručk', 'ruck'] },
@@ -63,6 +64,18 @@ export const MATERIAL_TYPES: MaterialType[] = [
     { key: 'kant', label: 'Kant traka', patterns: ['kant', 'abs', 'kt ', 'kt/'] },
     { key: 'hdf', label: 'HDF / lesonit', patterns: ['hdf', 'lesonit', 'lesomal'] },
     { key: 'alu', label: 'Alu', patterns: ['alu'] },
+    // „Bilo koji okov osim vodilica" — za pravila se izvodi i iz kategorije „Okovi"
+    // i iz tipova šarke/ručke/nogice (ruleMaterialTypes); pattern je samo za naziv „Okov …".
+    { key: 'okov', label: 'Okov (bez vodilica)', patterns: ['okov'] },
+];
+
+/**
+ * Naziv koji POČINJE oznakom kant trake ili boje/laka je to, bez obzira na ostatak:
+ * „KT / Furnir Hrast 24/1" je kant traka (ne furnir), „Boja za MDF" je boja (ne MDF).
+ */
+const LEADING_TYPE: [RegExp, string][] = [
+    [/^(kt|abs)\b/, 'kant'],
+    [/^(boja|lak|farba)\b/, 'lak'],
 ];
 
 /**
@@ -89,6 +102,8 @@ export function materialTypeFromName(
 ): string | null {
     const n = norm(name || '');
     if (!n) return null;
+    const leading = LEADING_TYPE.find(([re]) => re.test(n));
+    if (leading && types.some(t => t.key === leading[1])) return leading[1];
     for (const t of types) {
         if (t.patterns.some(p => n.includes(p))) return t.key;
     }
@@ -105,6 +120,28 @@ export function presentMaterialTypes(materials: RuleMaterialLite[]): string[] {
     return MATERIAL_TYPES.map(t => t.key).filter(k => present.has(k));
 }
 
+const OKOV_TYPES = new Set(['sarke', 'rucke', 'nogice', 'okov']);
+
+/**
+ * Tipovi po kojima PRAVILA okidaju: prvi tip iz naziva (kao presentMaterialTypes) + dva signala
+ * koja prvi pogodak gubi:
+ *  • 'sper' i kad naziv počinje drugim tipom („Furnirana šperploča" = furnir + špera → savijanje);
+ *  • 'okov' za svaki okov OSIM vodilica (kategorija „Okovi" ili šarke/ručke/nogice) — vodilice
+ *    imaju svoj proces (Izrada ladica), pa same ne okidaju okivanje.
+ * Svi tipovi iz naziva se namjerno ne uzimaju: „Ogledalo" nosi i 'led' (og-led-alo).
+ */
+export function ruleMaterialTypes(materials: RuleMaterialLite[]): Set<string> {
+    const out = new Set<string>();
+    for (const m of materials || []) {
+        const first = materialTypeFromName(m.Material_Name);
+        if (first) out.add(first);
+        if (first !== 'sper' && materialTypesFromName(m.Material_Name).includes('sper')) out.add('sper');
+        const okov = norm(m.Category || '') === 'okovi' || (first !== null && OKOV_TYPES.has(first));
+        if (okov && first !== 'vodilice') out.add('okov');
+    }
+    return out;
+}
+
 /**
  * Prijedlog plana procesa iz materijala proizvoda po KORISNIKOVIM pravilima.
  * Unija procesa svih pogođenih pravila, redoslijed iz kataloga. Bez pogodaka → [].
@@ -112,27 +149,14 @@ export function presentMaterialTypes(materials: RuleMaterialLite[]): string[] {
  */
 export function suggestProcessesFromMaterials(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Processes'>[],
+    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Processes'>[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[]
 ): string[] {
     if (!materials.length || !rules.length) return [];
-    const presentTypes = new Set(presentMaterialTypes(materials));
+    const presentTypes = ruleMaterialTypes(materials);
     const hit = new Map<string, string>(); // normKey → display naziv
     for (const rule of rules) {
-        let matches = false;
-        if (rule.Match_Kind === 'material_type_combo') {
-            const types = (rule.Match_Types || []).filter(Boolean);
-            matches = types.length > 0 && types.every(t => presentTypes.has(t));
-        } else if (rule.Match_Kind === 'material_type') {
-            matches = presentTypes.has(rule.Match_Value);
-        } else {
-            const mv = norm(rule.Match_Value);
-            if (!mv) continue;
-            matches = materials.some(m => rule.Match_Kind === 'category'
-                ? norm(m.Category || '') === mv
-                : norm(m.Material_Name || '').includes(mv));
-        }
-        if (!matches) continue;
+        if (!ruleMatches(rule, materials, presentTypes)) continue;
         for (const p of rule.Processes || []) {
             const k = norm(p);
             if (k && !hit.has(k)) hit.set(k, p.trim());
@@ -506,21 +530,28 @@ export interface RuleGraphResult {
 
 /** Prikazna oznaka pravila (za grane): tip/kombinacija/kategorija/naziv. */
 export function ruleLabel(
-    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types'>,
+    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types'>,
     typeLabelOf: (key: string) => string = k => k
 ): string {
-    if (rule.Match_Kind === 'material_type_combo') return (rule.Match_Types || []).map(typeLabelOf).join(' + ');
-    if (rule.Match_Kind === 'material_type') return typeLabelOf(rule.Match_Value);
-    if (rule.Match_Kind === 'category') return `Kategorija: ${rule.Match_Value}`;
-    return `Naziv sadrži „${rule.Match_Value}"`;
+    const base = rule.Match_Kind === 'material_type_combo' ? (rule.Match_Types || []).map(typeLabelOf).join(' + ')
+        : rule.Match_Kind === 'material_type' ? typeLabelOf(rule.Match_Value)
+            : rule.Match_Kind === 'category' ? `Kategorija: ${rule.Match_Value}`
+                : `Naziv sadrži „${rule.Match_Value}"`;
+    const except = (rule.Exclude_Types || []).map(typeLabelOf);
+    return except.length ? `${base} (osim: ${except.join(', ')})` : base;
 }
 
-/** Da li pravilo okida za skup materijala (ista semantika kao suggestProcessesFromMaterials). */
+/**
+ * Da li pravilo okida za skup materijala (ista semantika kao suggestProcessesFromMaterials).
+ * `presentTypes` = ruleMaterialTypes(materials). Exclude_Types: pravilo ne okida čim je
+ * prisutan bilo koji od tih tipova („MDF osim furnira" = farbani MDF).
+ */
 export function ruleMatches(
-    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types'>,
+    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types'>,
     materials: RuleMaterialLite[],
     presentTypes: Set<string>
 ): boolean {
+    if ((rule.Exclude_Types || []).some(t => presentTypes.has(t))) return false;
     if (rule.Match_Kind === 'material_type_combo') {
         const types = (rule.Match_Types || []).filter(Boolean);
         return types.length > 0 && types.every(t => presentTypes.has(t));
@@ -538,11 +569,16 @@ export function ruleMatches(
  * (redoslijed IZ PRAVILA), čvor po normalizovanom imenu (grane se spajaju na
  * istoimenim procesima). Ivica koja bi zatvorila ciklus se ispušta uz upozorenje.
  * Bez pogodaka → prazan graf.
+ *
+ * Uz `catalog`: krajevi grana se vežu za KASNIJI kraj po redoslijedu kataloga. Pravilo s
+ * jednim procesom (Okivanje, Izrada ladica) nema redoslijed, pa bi inače ostalo zasebna
+ * grana; ovako „Sklapanje kutija" i „Završno sklapanje" vode u „Okivanje".
  */
 export function buildGraphFromRules(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Processes'>[],
-    typeLabelOf?: (key: string) => string
+    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Processes'>[],
+    typeLabelOf?: (key: string) => string,
+    catalog?: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
 ): RuleGraphResult {
     const warnings: string[] = [];
     const branches: { label: string; processes: string[] }[] = [];
@@ -558,7 +594,7 @@ export function buildGraphFromRules(
         return n;
     };
 
-    const presentTypes = new Set(presentMaterialTypes(materials));
+    const presentTypes = ruleMaterialTypes(materials);
     const edgeKeys = new Set<string>();
     const adj = new Map<string, Set<string>>();
     const reaches = (from: string, to: string): boolean => {
@@ -599,6 +635,16 @@ export function buildGraphFromRules(
                 const cur = nodeFor(chain[i]);
                 if (i > 0) pushEdge(nodeFor(chain[i - 1]), cur);
             }
+        }
+    }
+    if (catalog?.length) {
+        const orderOf = new Map(catalog.map(c => [norm(c.Name), c.Order]));
+        const rank = (n: ProcessNode) => orderOf.get(norm(n.name)) ?? Number.MAX_SAFE_INTEGER;
+        const hasOut = new Set(edges.map(e => e.source));
+        const sinks = Array.from(nodeByKey.values()).filter(n => !hasOut.has(n.id));
+        if (sinks.length > 1) {
+            const last = sinks.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+            sinks.filter(s => s !== last).forEach(s => pushEdge(s, last));
         }
     }
     return { graph: { nodes: Array.from(nodeByKey.values()), edges }, warnings, branches };

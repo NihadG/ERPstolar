@@ -25,7 +25,7 @@ import {
 } from '@/lib/workDiary';
 import { buildGraphFromRules, planToStages } from '@/lib/productProcesses';
 import type {
-    ProcessCatalogItem, ProcessGraph, ProcessMaterialRule, Product, ProductMaterial, Project, WorkLog, WorkOrder, WorkOrderItem,
+    Material, ProcessCatalogItem, ProcessGraph, ProcessMaterialRule, Product, ProductMaterial, Project, WorkLog, WorkOrder, WorkOrderItem,
 } from '@/lib/types';
 
 export type TrackHook = (path: string, data: Record<string, unknown> | null) => void;
@@ -177,7 +177,7 @@ export async function bookWorkDiary(
     // prije čekiranja — tek tada „brušenje" zna šta je bilo prije njega.
     const worked = Array.from(new Map(resolved.filter(r => r.process || r.also.length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
     const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
-    const plans = await loadItemPlans(orgId, bare, rules);
+    const plans = await loadItemPlans(orgId, bare, rules, catalog);
     const plannedByItem = new Map<string, { processes: string[]; source: 'product' | 'rules' }>();
     for (const item of bare) {
         const plan = plans.get(item.ID);
@@ -375,6 +375,7 @@ async function loadItemPlans(
     orgId: string,
     items: WorkOrderItem[],
     rules: ProcessMaterialRule[],
+    catalog: ProcessCatalogItem[],
 ): Promise<Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>> {
     const out = new Map<string, { graph: ProcessGraph; source: 'product' | 'rules' }>();
     const productIds = Array.from(new Set(items.map(i => i.Product_ID).filter(Boolean)));
@@ -383,6 +384,9 @@ async function loadItemPlans(
         byProductIds<Product>(orgId, 'products', productIds),
         rules.length ? byProductIds<ProductMaterial>(orgId, 'product_materials', productIds) : Promise.resolve([]),
     ]);
+    // Kategorija („Okovi") živi na katalogu materijala — pravilo „bilo koji okov" je treba.
+    const categoryOf = new Map((await byField<Material>(orgId, 'materials', 'Material_ID', Array.from(new Set(materials.map(m => m.Material_ID).filter(Boolean)))))
+        .map(m => [m.Material_ID, m.Category || '']));
     for (const item of items) {
         const product = products.find(p => p.Product_ID === item.Product_ID);
         const own = [item.Process_Graph, product?.Process_Graph].find(g => g?.nodes?.length)
@@ -392,17 +396,20 @@ async function loadItemPlans(
             out.set(item.ID, { graph: own, source: 'product' });
             continue;
         }
-        const mats = materials.filter(m => m.Product_ID === item.Product_ID);
-        const fromRules = mats.length ? buildGraphFromRules(mats, rules).graph : undefined;
+        const mats = materials.filter(m => m.Product_ID === item.Product_ID)
+            .map(m => ({ Material_Name: m.Material_Name, Category: categoryOf.get(m.Material_ID) || '' }));
+        const fromRules = mats.length ? buildGraphFromRules(mats, rules, undefined, catalog).graph : undefined;
         if (fromRules?.nodes.length) out.set(item.ID, { graph: fromRules, source: 'rules' });
     }
     return out;
 }
 
-async function byProductIds<T>(orgId: string, col: string, ids: string[]): Promise<T[]> {
+const byProductIds = <T>(orgId: string, col: string, ids: string[]) => byField<T>(orgId, col, 'Product_ID', ids);
+
+async function byField<T>(orgId: string, col: string, field: string, ids: string[]): Promise<T[]> {
     const out: T[] = [];
     for (let i = 0; i < ids.length; i += 30) {
-        const snap = await adminDb().collection(col).where('Organization_ID', '==', orgId).where('Product_ID', 'in', ids.slice(i, i + 30)).get();
+        const snap = await adminDb().collection(col).where('Organization_ID', '==', orgId).where(field, 'in', ids.slice(i, i + 30)).get();
         snap.docs.forEach(d => out.push(d.data() as T));
     }
     return out;

@@ -847,7 +847,8 @@ export interface ProcessMaterialRule {
     Match_Kind: 'category' | 'name_contains' | 'material_type' | 'material_type_combo';
     Match_Value: string;        // za category/name_contains/material_type; za combo se ne koristi
     Match_Types?: string[];     // za 'material_type_combo' — svi tipovi moraju biti prisutni
-    Processes: string[];
+    Exclude_Types?: string[];   // pravilo NE okida ako je prisutan bilo koji od ovih tipova (npr. MDF osim furnira)
+    Processes: string[];        // lanac: redom kojim procesi teku
     Created_At?: string;
 }
 
