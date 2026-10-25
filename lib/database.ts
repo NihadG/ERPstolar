@@ -4889,6 +4889,18 @@ export async function saveProcessTemplate(
     } catch (e) { console.error('saveProcessTemplate error:', e); return { success: false, message: 'Greška pri spremanju templejta' }; }
 }
 
+/** Riječi naziva proizvoda koje biraju ovaj šablon kao tok vrste proizvoda (prazno = ručni izbor). */
+export async function updateProcessTemplateKeywords(templateId: string, keywords: string[], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !templateId) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_TEMPLATES), where('id', '==', templateId), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Šablon nije pronađen' };
+        await updateDoc(snap.docs[0].ref, { Product_Keywords: keywords.map(k => k.trim()).filter(Boolean) });
+        return { success: true, message: 'Vrsta proizvoda spremljena' };
+    } catch (e) { console.error('updateProcessTemplateKeywords error:', e); return { success: false, message: 'Greška pri spremanju' }; }
+}
+
 export async function deleteProcessTemplate(templateId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
     if (!organizationId) return { success: false, message: 'Nedostaje organizacija' };
     try {
@@ -5006,8 +5018,9 @@ export async function saveProcessMaterialRule(
     // Firestore odbija undefined — combo nosi Match_Types (Match_Value prazan), ostali obrnuto.
     const matchFields = {
         ...(isCombo ? { Match_Value: '', Match_Types: comboTypes } : { Match_Value: (rule.Match_Value || '').trim() }),
-        // Uvijek upisan (i prazan), da izmjena pravila može ukloniti „osim".
+        // Uvijek upisani (i prazni), da izmjena pravila može ukloniti „osim" / „samo za".
         Exclude_Types: (rule.Exclude_Types || []).filter(Boolean),
+        Product_Keywords: (rule.Product_Keywords || []).map(k => k.trim()).filter(Boolean),
     };
     try {
         const db = getDb();
@@ -5068,11 +5081,12 @@ export async function applyAutoProcessPlan(
             return { success: true, plan: prod.Process_Plan, message: 'Plan je ručno uređen — auto preskočen' };
         }
 
-        const [materials, rules, materialCatalog, processCatalog] = await Promise.all([
+        const [materials, rules, materialCatalog, processCatalog, flowTemplates] = await Promise.all([
             getProductMaterials(productId, organizationId),
             getProcessMaterialRules(organizationId),
             getMaterialsCatalog(organizationId),
             getProcessCatalog(organizationId),
+            listProcessTemplates(organizationId),
         ]);
         // Kategorija materijala živi na katalogu materijala — join po Material_ID
         const catById = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
@@ -5080,9 +5094,13 @@ export async function applyAutoProcessPlan(
             Material_Name: m.Material_Name,
             Category: catById.get(m.Material_ID) || '',
         }));
-        const { buildGraphFromRules, stagesFromGraph, flattenStages, MATERIAL_TYPES } = await import('./productProcesses');
+        const { planGraphForProduct, stagesFromGraph, flattenStages, MATERIAL_TYPES } = await import('./productProcesses');
         const { layoutProcessGraph } = await import('./processLayout');
-        const result = buildGraphFromRules(lite, rules, k => MATERIAL_TYPES.find(t => t.key === k)?.label || k, processCatalog);
+        // Vrsta proizvoda (šablon po nazivu, npr. „vrata") ima prednost pred pravilima materijala.
+        const result = planGraphForProduct({
+            productName: prod.Name, materials: lite, rules, catalog: processCatalog, flowTemplates,
+            typeLabelOf: k => MATERIAL_TYPES.find(t => t.key === k)?.label || k,
+        });
         const pos = layoutProcessGraph(result.graph.nodes, result.graph.edges);
         result.graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
         const stages = stagesFromGraph(result.graph);
@@ -5096,7 +5114,8 @@ export async function applyAutoProcessPlan(
         const branchesStr = result.branches.map(b => `${b.label}: ${b.processes.join(' → ')}`).join(' ∥ ');
         return {
             success: true, plan: flat, graph: result.graph,
-            message: flat.length ? `Grane: ${branchesStr}` : 'Nema pravila za materijale proizvoda',
+            message: result.source === 'template' ? `Šablon vrste proizvoda: ${result.templateName}`
+                : flat.length ? `Grane: ${branchesStr}` : 'Nema pravila za materijale proizvoda',
         };
     } catch (e) { console.error('applyAutoProcessPlan error:', e); return { success: false, message: 'Greška pri auto-planu procesa' }; }
 }
@@ -5602,7 +5621,7 @@ export async function applyStandardProcesses(
     if (!organizationId) return { success: false, message: 'Nedostaje organizacija' };
     try {
         const db = getDb();
-        const { STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES } = await import('./processStandard');
+        const { STANDARD_RENAMES, STANDARD_CATALOG, STANDARD_RULES, STANDARD_TEMPLATE_KEYWORDS } = await import('./processStandard');
         const { normKey } = await import('./processConsolidation');
 
         const consolidated = await applyProcessConsolidation(STANDARD_RENAMES, organizationId);
@@ -5627,6 +5646,13 @@ export async function applyStandardProcesses(
         for (const { note: _note, ...r } of STANDARD_RULES) {
             const res = await saveProcessMaterialRule({ ...r, Organization_ID: organizationId }, organizationId);
             if (!res.success) return res;
+        }
+
+        // Vrste proizvoda: postojeći šablon toka dobija riječi naziva koje ga biraju.
+        const flowTemplates = await listProcessTemplates(organizationId);
+        for (const t of STANDARD_TEMPLATE_KEYWORDS) {
+            const tpl = flowTemplates.find(x => normKey(x.name) === normKey(t.template));
+            if (tpl) await updateProcessTemplateKeywords(tpl.id, t.keywords, organizationId);
         }
 
         let recomputed = 0;

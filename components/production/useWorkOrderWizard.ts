@@ -631,22 +631,23 @@ export function useWorkOrderWizard({
             const needing = selectedProducts.filter(p => {
                 const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
                 const has = planToStages(product?.Process_Stages, product?.Process_Plan).length > 0;
-                return !has && (product?.materials?.length || 0) > 0;
+                // Bez materijala može dobiti plan samo po vrsti proizvoda (šablon po nazivu).
+                return !has && ((product?.materials?.length || 0) > 0 || !!product?.Name);
             });
             if (needing.length) {
                 try {
-                    const { getProcessMaterialRules, getProcessCatalog, getProcessStageTemplates, getMaterialsCatalog } = await import('@/lib/services');
+                    const { getProcessMaterialRules, getProcessCatalog, getProcessStageTemplates, getMaterialsCatalog, listProcessTemplates } = await import('@/lib/services');
                     const { buildAutoPlan } = await import('@/lib/processAutoPlan');
-                    const [rules, catalog, templates, materialCatalog] = await Promise.all([
+                    const [rules, catalog, templates, materialCatalog, flowTemplates] = await Promise.all([
                         getProcessMaterialRules(organizationId), getProcessCatalog(organizationId), getProcessStageTemplates(organizationId),
-                        getMaterialsCatalog(organizationId),
+                        getMaterialsCatalog(organizationId), listProcessTemplates(organizationId),
                     ]);
                     // Kategorija („Okovi") je na katalogu materijala — pravilo „bilo koji okov" je treba.
                     const categoryOf = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
                     for (const p of needing) {
                         const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
                         const lite = (product?.materials || []).map(m => ({ Material_Name: m.Material_Name, Category: categoryOf.get(m.Material_ID) || '' }));
-                        const r = buildAutoPlan(lite, rules, catalog, templates);
+                        const r = buildAutoPlan(lite, rules, catalog, templates, { name: product?.Name, flowTemplates });
                         if (r.stages.length) autoPlanByProduct.set(p.Product_ID, r.stages);
                     }
                 } catch (e) { console.warn('auto-plan procesa (wizard) preskočen:', e); }

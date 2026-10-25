@@ -818,6 +818,9 @@ export interface ProcessFlowTemplate {
     name: string;
     nodes: { id: string; name: string; position?: { x: number; y: number } }[];
     edges: ProcessEdge[];
+    // VRSTA PROIZVODA: proizvod čiji naziv ima jednu od ovih riječi dobija OVAJ tok umjesto
+    // pravila materijala (npr. „vrata" → „Furnirana vrata"). Prazno = šablon se bira ručno.
+    Product_Keywords?: string[];
     Created_At?: string;
 }
 
@@ -848,6 +851,7 @@ export interface ProcessMaterialRule {
     Match_Value: string;        // za category/name_contains/material_type; za combo se ne koristi
     Match_Types?: string[];     // za 'material_type_combo' — svi tipovi moraju biti prisutni
     Exclude_Types?: string[];   // pravilo NE okida ako je prisutan bilo koji od ovih tipova (npr. MDF osim furnira)
+    Product_Keywords?: string[]; // okida SAMO za proizvod čiji naziv ima riječ (npr. ormar → cokl od jele); nameHasKeyword
     Processes: string[];        // lanac: redom kojim procesi teku
     Created_At?: string;
 }

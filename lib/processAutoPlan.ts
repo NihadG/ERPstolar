@@ -9,9 +9,10 @@
 // jest: lib/__tests__/processAutoPlan.test.ts
 // ════════════════════════════════════════════════════════════════════
 
-import type { ProcessCatalogItem, ProcessMaterialRule, ProcessStageTemplate } from './types';
+import type { ProcessCatalogItem, ProcessFlowTemplate, ProcessMaterialRule, ProcessStageTemplate } from './types';
 import {
     suggestProcessesFromMaterials, presentMaterialTypes, orderByCatalog, buildGraphFromRules, stagesFromGraph,
+    flowTemplateForProduct, templateGraph,
     type RuleMaterialLite,
 } from './productProcesses';
 
@@ -82,7 +83,7 @@ export function pickTemplateForTypes<T extends { Material_Types?: string[] }>(
 // ════════════════════════════════════════════════════════════════════
 export interface AutoPlanResult {
     stages: string[][];
-    source: 'rules' | 'none';
+    source: 'rules' | 'template' | 'none';
     appendedOutsideTemplate: string[];   // predloženi procesi kojih nema u šablonu (dodati na kraj)
     templateName?: string;               // šablon koji je iskorišten (ako ijedan)
 }
@@ -93,16 +94,23 @@ export interface AutoPlanResult {
  * 2) izbor šablona po kombinaciji tipova (pickTemplateForTypes) → mapiraj skup na FAZE šablona
  *    (zadrži samo predložene procese po fazi; prazne faze ispusti; predloženi van šablona →
  *     append kao trailing faza po katalog-redoslijedu)
- * 3) bez šablona → sekvencijalno (svaki proces = svoja faza, katalog redoslijed)
+ * 3) bez šablona → faze iz grafa pravila (grane, spojevi, krajevi po katalogu)
+ * Prije svega: vrsta proizvoda (šablon toka po nazivu, npr. „vrata") ima prednost.
  * Prazan skup → {stages:[], source:'none'}.
  */
 export function buildAutoPlan(
     materials: RuleMaterialLite[],
-    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Processes'>[],
+    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Exclude_Types' | 'Product_Keywords' | 'Processes'>[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
-    templates: Pick<ProcessStageTemplate, 'Name' | 'Stages' | 'Material_Types'>[] = []
+    templates: Pick<ProcessStageTemplate, 'Name' | 'Stages' | 'Material_Types'>[] = [],
+    product: { name?: string; flowTemplates?: Pick<ProcessFlowTemplate, 'name' | 'nodes' | 'edges' | 'Product_Keywords'>[] } = {},
 ): AutoPlanResult {
-    const suggested = suggestProcessesFromMaterials(materials, rules, catalog);
+    const flow = flowTemplateForProduct(product.name, product.flowTemplates);
+    if (flow) {
+        const stages = stagesFromGraph(templateGraph(flow));
+        if (stages.length) return { stages, source: 'template', appendedOutsideTemplate: [], templateName: flow.name };
+    }
+    const suggested = suggestProcessesFromMaterials(materials, rules, catalog, product.name);
     if (suggested.length === 0) return { stages: [], source: 'none', appendedOutsideTemplate: [] };
 
     const suggestedKeys = new Set(suggested.map(norm));
@@ -111,7 +119,7 @@ export function buildAutoPlan(
     if (!template) {
         // Faze iz ISTOG grafa koji dobija kartica proizvoda i dnevni upis (grane po pravilima,
         // spoj na istoimenim procesima, krajevi vezani po katalogu) — ne ravna lista po katalogu.
-        const stages = stagesFromGraph(buildGraphFromRules(materials, rules, undefined, catalog).graph);
+        const stages = stagesFromGraph(buildGraphFromRules(materials, rules, undefined, catalog, product.name).graph);
         return { stages: stages.length ? stages : suggested.map(p => [p]), source: 'rules', appendedOutsideTemplate: [] };
     }
 

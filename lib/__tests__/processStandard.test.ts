@@ -1,4 +1,4 @@
-import { buildGraphFromRules, ruleMaterialTypes, materialTypeFromName } from '../productProcesses';
+import { buildGraphFromRules, ruleMaterialTypes, materialTypeFromName, planGraphForProduct, nameHasKeyword } from '../productProcesses';
 import { buildAutoPlan } from '../processAutoPlan';
 import { planStandardization, STANDARD_CATALOG, STANDARD_RULES } from '../processStandard';
 
@@ -101,6 +101,71 @@ describe('standardni tokovi po vrsti proizvoda', () => {
         expect(r.stages[0]).toEqual(expect.arrayContaining(['Krojenje iverala', 'Krojenje MDF-a']));
         expect(r.stages.at(-1)).toEqual(['Okivanje']);
         expect(r.stages.flat()).toContain('Probna montaža');
+    });
+});
+
+describe('šperploča, masiv, jela/smreka i cokl', () => {
+    const flowFor = (name: string, materials: ReturnType<typeof M>) => {
+        const { graph } = buildGraphFromRules(materials, STANDARD_RULES, undefined, catalog, name);
+        const n = new Map(graph.nodes.map(x => [x.id, x.name]));
+        return { nodes: graph.nodes.map(x => x.name), edges: new Set(graph.edges.map(e => `${n.get(e.source)} > ${n.get(e.target)}`)) };
+    };
+
+    it('ravna šperploča s furnirom ide kao furnir na MDF-u, bez zaobljenih dijelova', () => {
+        const f = flowFor('Komoda', M('Šperploča breza CP / C 12', 'Furnir / Hrast'));
+        expect(f.nodes).not.toContain('Izrada zaobljenih dijelova');
+        ['Krojenje šperploče > Priprema furnira', 'Srezivanje na tačnu mjeru > Kantiranje fronti', 'Brušenje > Lakiranje'].forEach(e => expect(f.edges).toContain(e));
+        expect(flowFor('Komoda', M('Furnirana šperploča')).nodes).toContain('Krojenje šperploče');
+    });
+
+    it('oblikovna šperploča se ne broji kao ravna', () => {
+        expect(Array.from(ruleMaterialTypes(M('Oblikovna špera')))).toEqual(['oblikovna']);
+        expect(flowFor('Obloga', M('Oblikovna špera', 'Furnir / Orah')).nodes).not.toContain('Krojenje šperploče');
+    });
+
+    it('vidljivi masiv uz furnirane dijelove ide na probnu montažu', () => {
+        const f = flowFor('Pult umivaonika', M('Masiv / Hrast', 'Furnir / Hrast', 'MDF 18'));
+        expect(f.edges).toContain('Priprema masive > Probna montaža');
+        expect(materialTypeFromName('J / s masiv')).toBe('jela');
+        expect(materialTypeFromName('Masiv Tik')).toBe('masiv');
+    });
+
+    it('jela/smreka: cokl samo kod ormara; inače samo priprema masive', () => {
+        const ormar = flowFor('Poz 1.1 - Ormar', M('Iveral / Bijeli za korpus', 'J / s masiv', 'Baglama@Okovi'));
+        expect(ormar.edges).toContain('Priprema masive > Izrada cokla');
+        expect(ormar.edges).toContain('Izrada cokla > Okivanje');
+        const krevet = flowFor('Poz 25 - Krevet', M('Iveral / Bijeli za korpus', 'J / s masiv'));
+        expect(krevet.nodes).toContain('Priprema masive');
+        expect(krevet.nodes).not.toContain('Izrada cokla');
+        expect(flowFor('Garderober master', M('Furnir / Hrast', 'MDF 18', 'J / s masiv')).nodes).toContain('Izrada cokla');
+    });
+});
+
+describe('vrsta proizvoda → šablon toka (vrata)', () => {
+    const doors = {
+        name: 'Furnirana vrata (obična)', Product_Keywords: ['vrata'],
+        nodes: [{ id: 'a', name: 'Priprema masive (ramova)' }, { id: 'b', name: 'Ramovi i cjevasta iverica' }, { id: 'c', name: 'Okivanje' }, { id: 'x', name: '' }],
+        edges: [{ id: 'e1', source: 'a', target: 'b' }, { id: 'e2', source: 'b', target: 'c' }, { id: 'e3', source: 'x', target: 'c' }],
+    };
+    const materials = M('Furnir / Hrast', 'MDF 6', 'J / s masiv', 'Baglame za vrata - Skrivene@Okovi');
+
+    it('naziv s „vrata" dobija šablon umjesto pravila; prazan čvor ispada', () => {
+        const p = planGraphForProduct({ productName: 'Poz 1 - Sobna vrata', materials, rules: STANDARD_RULES, catalog, flowTemplates: [doors] });
+        expect(p).toMatchObject({ source: 'template', templateName: 'Furnirana vrata (obična)' });
+        expect(p.graph.nodes.map(n => n.name)).toEqual(['Priprema masive (ramova)', 'Ramovi i cjevasta iverica', 'Okivanje']);
+        expect(p.graph.edges).toHaveLength(2);
+    });
+
+    it('„vratima" u nazivu ormara nije vrsta vrata', () => {
+        expect(planGraphForProduct({ productName: 'Ormar sa kliznim vratima', materials, rules: STANDARD_RULES, catalog, flowTemplates: [doors] }).source).toBe('rules');
+        expect(nameHasKeyword('Garderober ormar', ['ormar'])).toBe(true);
+        expect(nameHasKeyword('Noćni ormarići', ['ormar'])).toBe(true);
+        expect(nameHasKeyword('Šišić - SOBNA VRATA', ['sobna vrata'])).toBe(true);
+    });
+
+    it('čarobnjak naloga uzima faze iz šablona', () => {
+        const r = buildAutoPlan(materials, STANDARD_RULES, catalog, [], { name: 'Sobna vrata', flowTemplates: [doors] });
+        expect(r).toMatchObject({ source: 'template', stages: [['Priprema masive (ramova)'], ['Ramovi i cjevasta iverica'], ['Okivanje']] });
     });
 });
 
