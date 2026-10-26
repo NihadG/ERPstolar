@@ -31,6 +31,7 @@ import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
 import { runTool, stripAliases, TOOLS, WRITE_TOOLS, type ToolEnv } from './tools';
 import type { AssistantSession, SessionRefs, SessionTurn } from './store';
+import type { MemoryItem } from '@/lib/types';
 
 const MAX_STEPS = 6;
 const MAX_TOKENS = 8000;
@@ -77,6 +78,18 @@ function userMessage(input: AssistantTurnInput, tz: string): string {
     if (!input.forward) return input.text;
     const d = toZoned(input.forward.date, tz);
     return `[Proslijeđeno od ${input.forward.from}, ${Number(d.date.slice(8, 10))}.${Number(d.date.slice(5, 7))}. ${d.time}]\n${input.text}`;
+}
+
+/** Dugme „✔ postavljeno" po otvorenoj stavci (najviše 4); `mem:<id>:p` obrađuje telegramHandler. */
+export function memoryButtons(items: MemoryItem[]): ButtonRows {
+    const seen = new Set<string>();
+    return items
+        .filter(m => m.State === 'open' && !seen.has(m.Item_ID) && seen.add(m.Item_ID))
+        .slice(0, 4)
+        .map(m => {
+            const label = `${m.Title}${m.Location ? ` · ${m.Location}` : ''}`;
+            return [{ text: `✔ postavljeno: ${label.length > 34 ? `${label.slice(0, 33)}…` : label}`, data: `mem:${m.Item_ID}:p` }];
+        });
 }
 
 /** Najviše ovoliko oznaka po vrsti ide u sesiju; preko toga razgovor kreće s novim oznakama. */
@@ -201,10 +214,13 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         apiKey, timeout: TIMEOUT_MS, maxRetries: 1,
         ...(workspace ? { defaultHeaders: { 'anthropic-workspace-id': workspace } } : {}),
     });
-    const prompt = buildPromptParts(ctx, now, tz);
+    // Bilježnica u promptu: stavke o kojima ova (i prethodne dvije) poruke govore.
+    const focus = [...history.filter(t => t.role === 'user').slice(-2).map(t => t.text), message].join('\n');
+    const prompt = buildPromptParts(ctx, now, tz, focus);
     const system: Anthropic.TextBlockParam[] = [
         // Tačka keša na kraju stabilnog dijela: alati + pravila + imena se čitaju iz keša.
-        { type: 'text', text: prompt.stable, cache_control: { type: 'ephemeral' } },
+        // 1 h: poruke s terena stižu u razmacima 5–60 min, a 5-minutni keš bi se stalno ponovo upisivao.
+        { type: 'text', text: prompt.stable, cache_control: { type: 'ephemeral', ttl: '1h' } },
         { type: 'text', text: prompt.volatile },
     ];
     const messages: Anthropic.MessageParam[] = [...toMessages(history), { role: 'user', content: message }];
@@ -275,6 +291,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             : env.changes.length ? `✅ Sačuvano: ${env.changes.join(', ')}.`
                 : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
     }
-    const buttons: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
+    const buttons: ButtonRows = [
+        // Otvorene stavke bilježnice iz ove poruke: jedan dodir = postavljeno, bez poziva modela.
+        ...memoryButtons(env.touchedMemory || []),
+        ...(env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : []),
+    ];
     return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents });
 }

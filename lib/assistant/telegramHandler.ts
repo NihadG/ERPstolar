@@ -22,6 +22,7 @@ import { sendOrderPdf } from './orderDocuments';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant } from './brain';
+import { memoryButtonState } from './tools';
 import { loadNames } from './context';
 import { assistantTimezone, formatReminder, toZoned } from './datetime';
 import { createProposalMessage, handleProposalButton } from './dayProposals';
@@ -197,6 +198,14 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${answer}`);
         await sendTyping(inc.chatId);
         await converse(link, inc.chatId, { text: answer, entryId: session.pending?.entryId });
+        return;
+    }
+
+    // Stanje stavke bilježnice jednim dodirom — bez modela, bez tokena.
+    if (kind === 'mem') {
+        const result = await memoryButtonState(link.orgId, link.uid, arg, extra === 'f' ? 'fali' : 'postavljeno');
+        await answerCallbackQuery(inc.callbackId, result.ok ? 'Sačuvano' : result.error);
+        if (result.ok) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${result.line}`, inc.buttons?.filter(row => row.every(b => b.data !== inc.data)));
         return;
     }
 

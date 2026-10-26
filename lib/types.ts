@@ -688,6 +688,8 @@ export interface MemoryItem {
     State: MemoryState;
     /** Ljudski opis stanja („nije montirano", „montirano"). */
     State_Label: string;
+    /** Fiksno stanje (lib/assistant/memoryRules.ts MEMORY_STATES); starije stavke ga nemaju. */
+    State_Key?: string;
     Tags: string[];
     History: MemoryHistoryEntry[];
     Source_Entry_IDs: string[];

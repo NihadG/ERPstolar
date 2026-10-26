@@ -43,7 +43,7 @@ import { fakeDocs as docs, fakeStore as mockStore } from '@/lib/testing/fakeFire
 import Anthropic from '@anthropic-ai/sdk';
 import { failureReason, runAssistant } from '@/lib/assistant/brain';
 import { undoTurn, type AssistantSession } from '@/lib/assistant/store';
-import { runTool, stripAliases } from '@/lib/assistant/tools';
+import { memoryButtonState, runTool, stripAliases } from '@/lib/assistant/tools';
 
 /** Minimalno okruženje za direktan poziv alata (bez modela). */
 const envFor = () => ({ orgId: 'org1', uid: 'u1', tz: 'Europe/Sarajevo', now: new Date('2026-10-23T12:05:00Z'), turnId: 't', dateText: '', reporter: 'ja', searchHits: [], created: { taskIds: [], memoryIds: [] }, changes: [], summaries: [] });
@@ -102,7 +102,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.output_config).toEqual({ effort: 'low' });
         expect(p.thinking).toEqual({ type: 'disabled' });
         expect(p.cache_control).toEqual({ type: 'ephemeral' });
-        expect(p.system[0].cache_control).toEqual({ type: 'ephemeral' });
+        expect(p.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' }); // poruke s terena stižu u razmacima 5–60 min
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
@@ -187,15 +187,16 @@ describe('asistent od poruke do baze', () => {
 
     it('„u stanu 304 imam 3 ogledala od 1 m" → bilježnica', async () => {
         const out = await say('U stanu 304 imam 3 ogledala od 1 m dužine, nisu montirana', [
-            { calls: [{ name: 'remember', args: { subject: 'ogledalo', title: 'Ogledala', quantity: 3, unit: 'kom', spec: '1 m dužine', location: 'Stan 304', state_label: 'nije montirano' } }] },
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', quantity: 3, unit: 'kom', spec: '1 m dužine', location: 'stan 304', state: 'nije_postavljeno' } }] },
         ]);
         const [item] = docs('memory_items');
         expect(item).toMatchObject({
-            Subject: 'ogledalo', Quantity: 3, Location: 'Stan 304', State: 'open', State_Label: 'nije montirano',
+            Subject: 'ogledalo', Title: 'Ogledalo', Quantity: 3, Location: 'Stan 304', State: 'open', State_Label: 'u stanu, nije postavljeno', State_Key: 'nije_postavljeno',
             Owner_UID: 'u1', Organization_ID: 'org1',
         });
         expect(item.History[0].By).toBe('ja');
-        expect(out.reply).toBe('📒 3 kom Ogledala (1 m dužine) · Stan 304 — nije montirano');
+        expect(out.reply).toBe('📒 3 kom Ogledalo (1 m dužine) · Stan 304 — u stanu, nije postavljeno');
+        expect(out.buttons[0]).toEqual([{ text: '✔ postavljeno: Ogledalo · Stan 304', data: `mem:${item.Item_ID}:p` }]);
     });
 
     it('isti predmet na istoj lokaciji dopunjuje stavku umjesto nove', async () => {
@@ -209,14 +210,62 @@ describe('asistent od poruke do baze', () => {
 
     it('proslijeđeni izvještaj radnika zatvara stavku', async () => {
         const out = await say('Montirali smo ogledala u 304', [
-            { calls: [{ name: 'update_memory', args: { item: 'M1', resolved: true, state_label: 'montirano', note: 'Javio da su montirana' } }] },
+            { calls: [{ name: 'update_memory', args: { item: 'M1', state: 'postavljeno', note: 'Javio da su montirana' } }] },
         ], { forward: { from: 'Amer Hodžić', date: '2026-10-23T11:00:00Z' } });
         const [item] = docs('memory_items');
         expect(item.State).toBe('resolved');
-        expect(item.State_Label).toBe('montirano');
+        expect(item.State_Label).toBe('postavljeno');
         expect(item.History.at(-1)).toMatchObject({ By: 'Amer Hodžić', Text: 'Javio da su montirana' });
         expect(session.history.at(-2)?.text).toMatch(/^\[Proslijeđeno od Amer Hodžić, 23\.10\. 13:00\]/);
-        expect(out.reply).toBe('✔ 4 kom Ogledala (1 m dužine) · Stan 304 — montirano');
+        expect(out.reply).toBe('✔ 4 kom Ogledalo (1 m dužine) · Stan 304 — postavljeno');
+    });
+
+    it('današnji obilazak: lokacija, mjere i naslov složi ERP; dvosmislena lokacija → pitanje; dugme bez modela', async () => {
+        const mem = () => docs('memory_items').filter(m => m.Subject === 'ogledalo' && m.Location !== 'Stan 304');
+        await say('Stan e302 ima ogledalo 1000x1600 nije postavljeno', [
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', quantity: 1, spec: '1000x1600', location: 'stan e302', state: 'nije_postavljeno' } }] },
+        ]);
+        // „308" bez slova: jedina zgrada s 3xx stanovima je E.
+        const r308 = await say('U stanu 308 jedno ogledalo 1000 puta 1100', [
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', quantity: 1, spec: '1000 puta 1100', location: 'stan 308', state: 'nije_postavljeno' } }] },
+        ]);
+        expect(r308.reply).toBe('📒 1 kom Ogledalo 1000x1100 · E308 — u stanu, nije postavljeno');
+        // C604: dvije stavke, naslov uvijek prati svoju mjeru.
+        await say('U c604 imam ogledalo 1720x1000, a fali 1000x1350', [
+            { calls: [
+                { name: 'remember', args: { subject: 'ogledalo', quantity: 1, spec: '1720x1000', location: 'c604', state: 'nije_postavljeno' } },
+                { name: 'remember', args: { subject: 'ogledalo', quantity: 1, spec: '1000x1350', location: 'c604', state: 'fali' } },
+            ] },
+        ]);
+        expect(mem().filter(m => m.Location === 'C604').map(m => `${m.Title}:${m.State_Label}`).sort())
+            .toEqual(['Ogledalo 1000x1350:fali', 'Ogledalo 1720x1000:u stanu, nije postavljeno']);
+
+        mockStore.set('memory_items/c301', { Item_ID: 'c301', Organization_ID: 'org1', Owner_UID: 'u1', Title: 'Lajsna', Subject: 'lajsna', Location: 'C301', Links: [], State: 'open', State_Label: 'fali', Tags: [], History: [], Source_Entry_IDs: [], Created_At: '2026-10-26', Updated_At: '2026-10-26' });
+        // „305" — postoje 3xx stanovi i u E i u C → ERP traži pitanje s opcijama.
+        mockSent.length = 0;
+        await say('U 305 fali ogledalo', [
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', location: '305', state: 'fali' } }] },
+            { calls: [{ name: 'ask_user', args: { question: 'Koji stan?', options: ['E305', 'C305'] } }] },
+        ]);
+        expect(JSON.parse(mockSent[1].messages.at(-1).content[0].content).error).toMatch(/E305, C305/);
+
+        // Dugme „✔ postavljeno" ispod potvrde — bez poziva modela.
+        const e308 = mem().find(m => m.Location === 'E308')!;
+        const res = await memoryButtonState('org1', 'u1', e308.Item_ID, 'postavljeno', NOW);
+        expect(res).toEqual({ ok: true, line: '✔ 1 kom Ogledalo 1000x1100 · E308 — postavljeno' });
+        expect(docs('memory_items').find(m => m.Item_ID === e308.Item_ID)).toMatchObject({ State: 'resolved', State_Key: 'postavljeno' });
+        expect(await memoryButtonState('org1', 'neko-drugi', e308.Item_ID, 'fali', NOW)).toMatchObject({ ok: false });
+
+        // „Sve su to C604 hodnik" — više stavki jednim pozivom.
+        mockSent.length = 0;
+        await say('Koja ogledala su na C604?', [{ text: 'Dva.' }]);
+        const aliases = Array.from(String(systemText(mockSent[0])).matchAll(/(M\d+) \| ogledalo \| Ogledalo (?:1720x1000|1000x1350)/g)).map((m: RegExpMatchArray) => m[1]);
+        expect(aliases).toHaveLength(2);
+        const moved = await say('Ta dva su ustvari na hodniku C6', [
+            { calls: [{ name: 'update_memory', args: { items: aliases, location: 'hodnik c6', note: 'Premješteno' } }] },
+        ]);
+        expect(moved.reply).toMatch(/^📒 2 stavke → Hodnik C6/);
+        expect(mem().filter(m => m.Location === 'Hodnik C6')).toHaveLength(2);
     });
 
     it('pitanje o riješenim stavkama ide kroz search_memory', async () => {
@@ -225,7 +274,7 @@ describe('asistent od poruke do baze', () => {
             { calls: [{ name: 'search_memory', args: { query: 'ogledala 304' } }] },
             { text: 'Ogledala u stanu 304 su montirana (Amer, 23.10.).' },
         ]);
-        expect(lastToolResult(mockSent[1]).items).toEqual([expect.stringMatching(/^S1 \| ogledalo .*Stan 304 \| RIJEŠENO: montirano/)]);
+        expect(lastToolResult(mockSent[1]).items).toEqual(expect.arrayContaining([expect.stringMatching(/^S\d+ \| ogledalo .*Stan 304 \| RIJEŠENO: postavljeno/)]));
         expect(out.reply).toContain('montirana');
         expect(out.buttons).toEqual([]); // samo čitanje — nema šta poništiti
     });
@@ -247,7 +296,7 @@ describe('asistent od poruke do baze', () => {
         const out = await say('U kombiju je 5 vodilica', [
             { calls: [{ name: 'remember', args: { subject: 'vodilica', quantity: 5, location: 'Kombi', state_label: 'u kombiju' } }] },
         ]);
-        const turnId = out.buttons[0][0].data.slice(5);
+        const turnId = out.buttons.flat().find(b => b.data.startsWith('undo:'))!.data.slice(5);
         expect(await undoTurn(turnId, 'neko-drugi')).toEqual([]);
         expect(docs('memory_items').some(m => m.Subject === 'vodilica')).toBe(true);
     });
