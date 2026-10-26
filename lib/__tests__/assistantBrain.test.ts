@@ -106,7 +106,8 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'work_report', 'order_pdf', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'order_pdf', 'ask_user']);
+        expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
         mockSent.length = 0;
@@ -457,6 +458,54 @@ describe('narudžbe preko asistenta', () => {
         expect(candidates).toMatch(/Baglama kutna/);
         expect(candidates).toMatch(/Baglama ravna/);
         expect(docs('orders').length).toBe(before + 1);
+    });
+
+    it('„naruči sve što fali za Grbavicu kod Bluma" → jedna narudžba, bez nabrajanja; interno se ne naručuje', async () => {
+        mockStore.set('product_materials/v5', { ID: 'pm-v5', Organization_ID: 'org1', Product_ID: 'pr-hod', Material_ID: 'mat-v5', Material_Name: 'Vodilice Blum 500', Quantity: 4, Unit: 'kom', Unit_Price: 30, Total_Price: 120, Status: 'Nije naručeno', Supplier: 'Blum', Order_ID: '' });
+        mockStore.set('product_materials/lk', { ID: 'pm-lk', Organization_ID: 'org1', Product_ID: 'pr-hod', Material_ID: 'mat-lk', Material_Name: 'Lakiranje', Quantity: 10, Unit: 'm2', Unit_Price: 15, Total_Price: 150, Status: 'Nije naručeno', Supplier: 'Interni', Order_ID: '' });
+        const P = grb();
+        mockSent.length = 0;
+        const out = await say('Naruči sve što fali za Grbavicu kod Bluma', [
+            { calls: [{ name: 'create_order', args: { all_missing: true, project: P, supplier: 'Blum' } }] },
+        ]);
+        expect(mockSent).toHaveLength(1);
+        expect(out.reply).toMatch(/Narudžba .* · Blum \(nacrt\)\n• 4 kom Vodilice Blum 500/);
+        expect(out.reply).not.toMatch(/Baglama|Lakiranje/);
+
+        const again = await say('Naruči sve što fali za Grbavicu kod Bluma', [
+            { calls: [{ name: 'create_order', args: { all_missing: true, project: P, supplier: 'Blum' } }] },
+            { text: 'Sve je već naručeno.' },
+        ]);
+        expect(again.reply).toBe('Sve je već naručeno.');
+        expect(lastToolResult(mockSent.at(-1)).note).toMatch(/ništa ne fali/);
+
+        const all = await say('Naruči sve što fali za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { all_missing: true, project: P } }] },
+        ]);
+        expect(all.reply).not.toMatch(/Lakiranje/);
+    });
+
+    it('pitanje pa odgovor u novoj poruci: oznaka iz pitanja i dalje važi', async () => {
+        const P = grb();
+        await say('Naruči baglame za Grbavicu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ material: 'baglama', project: P }] } }] },
+            { calls: [{ name: 'ask_user', args: { question: 'Koje baglame?', options: ['Ravne', 'Kutne'] } }] },
+        ]);
+        // Model u istoriji vidi legendu; korisnik nikad ne vidi oznake.
+        const legend = session.history.at(-1)!.text;
+        expect(legend).toMatch(/\[oznake: .*Baglama kutna · Begović/);
+        const kutna = legend.match(/(O\d+) Baglama kutna/)![1];
+        expect(session.refs?.orderGroups?.length).toBeGreaterThan(0);
+
+        mockSent.length = 0;
+        const before = docs('orders').length;
+        const out = await say('Kutne, jednu', [
+            { calls: [{ name: 'create_order', args: { lines: [{ ref: kutna, quantity: 1 }] } }] },
+        ]);
+        expect(mockSent[0].messages.some((m: any) => typeof m.content === 'string' && m.content.includes(`${kutna} Baglama kutna`))).toBe(true);
+        expect(docs('orders').length).toBe(before + 1);
+        expect(out.reply).toMatch(/• 1 kom Baglama kutna/);
+        expect(session.refs).toBeNull(); // upis je završio tok — oznake se ne nose dalje
     });
 
     it('„koje narudžbe imam za Grbavicu" → list_orders vidi i nacrte', async () => {

@@ -1,7 +1,7 @@
 import { splitDnevnicaByOrder, splitWorkerDay } from '../laborSplit';
 import {
     applyPlanToItem, completeUpstream, coverage, ensureGraphNode, graphFromStages, itemHasPlan, markItemProcess,
-    matchProcess, matchTarget, planProcessNames, planWorkerDay, type DiaryTarget,
+    emptyWorkDays, finishAllProcesses, matchProcess, matchTarget, planProcessNames, planWorkerDay, type DiaryTarget,
 } from '../workDiary';
 import { buildGraphFromRules } from '../productProcesses';
 
@@ -262,5 +262,45 @@ describe('plan iz pravila materijala i pretpostavljeno završeni koraci', () => 
             edges: [{ id: 'e', source: 'a', target: 'b' }],
         };
         expect(completeUpstream(g, 'k1', 'b', [], 't').completed).toEqual([]);
+    });
+});
+
+describe('„završi sve" i prazni dani', () => {
+    const graph = {
+        nodes: [{ id: 'a', name: 'Krojenje MDF-a', itemIds: ['x'] }, { id: 'b', name: 'Lakiranje', itemIds: ['x'] }, { id: 'r', name: 'Rad', itemIds: [] }],
+        edges: [{ id: 'e', source: 'a', target: 'b' }],
+    };
+
+    it('svi procesi iz plana i sa stavke postaju završeni (potvrđeno, ne pretpostavljeno)', () => {
+        const r = finishAllProcesses(graph, 'x', [
+            { Process_Name: 'Krojenje MDF-a', Status: 'Završeno', Completed_At: 'old', Assumed_Done: true },
+            { Process_Name: 'Pakovanje', Status: 'U toku' },
+        ], 'T');
+        expect(r.processes).toEqual([
+            { Process_Name: 'Krojenje MDF-a', Status: 'Završeno', Completed_At: 'old' },
+            { Process_Name: 'Pakovanje', Status: 'Završeno', Completed_At: 'T' },
+            { Process_Name: 'Lakiranje', Status: 'Završeno', Completed_At: 'T' },
+        ]);
+        expect(r.finished).toEqual(['Krojenje MDF-a', 'Pakovanje', 'Lakiranje']);
+    });
+
+    it('prazni dani: auto iz prisustva je prazan, potvrđen nije; odsutni i vikend bez prisustva otpadaju', () => {
+        const days = emptyWorkDays({
+            from: '2026-10-19', to: '2026-10-25', today: '2026-10-24', workerIds: ['bego', 'braco'],
+            logs: [
+                { Date: '2026-10-19', Worker_ID: 'bego', Booking_Source: 'attendance', Is_From_Attendance: true },
+                { Date: '2026-10-20', Worker_ID: 'braco', Booking_Source: 'manual' },
+                { Date: '2026-10-21', Worker_ID: 'braco', Entry_Source: 'telegram', Booking_Source: 'manual' },
+            ],
+            attendance: [{ Worker_ID: 'bego', Date: '2026-10-22', Status: 'Bolovanje' }, { Worker_ID: 'braco', Date: '2026-10-24', Status: 'Prisutan' }],
+        });
+        expect(days).toEqual([
+            { date: '2026-10-19', workerIds: ['bego', 'braco'] },
+            { date: '2026-10-20', workerIds: ['bego'] },
+            { date: '2026-10-21', workerIds: ['bego'] },
+            { date: '2026-10-22', workerIds: ['braco'] },
+            { date: '2026-10-23', workerIds: ['bego', 'braco'] },
+            { date: '2026-10-24', workerIds: ['braco'] },
+        ]);
     });
 });

@@ -54,6 +54,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
 5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala") → update_task / update_memory na stavci o kojoj se upravo pričalo.
 6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
+   „Naruči SVE što fali za Čorluku (kod Frischeisa / za kuhinju)" → create_order s all_missing=true + project (+ supplier, product ako su rečeni), bez lines i bez nabrajanja materijala.
    Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak se dodaje u sastavnicu proizvoda (ulazi u trošak i profit). Bez količine = sav ostatak koji projekat još treba.
    Materijal kojeg nema u sastavnici projekta → create_order ga sam doda proizvodu s naručenom količinom; ako pita kojem proizvodu, pitaj korisnika (ask_user s imenima proizvoda) pa ponovi s product. Samo narudžba BEZ projekta ide za zalihu (katalog, K#).
    Isti materijal na više projekata a projekat nije rečen → ask_user koji. „Već naručeno / u nacrtu" reci korisniku umjesto da naručuješ dvaput. PDF postojeće narudžbe → order_pdf.
@@ -61,7 +62,12 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    PITANJE o narudžbama („koje narudžbe imam za…", „šta je u nacrtu", „šta je naručeno kod…") → list_orders. find_material pokazuje samo šta JOŠ treba naručiti — „ostalo 0" ne znači da narudžbi nema.
    RADNJA nad narudžbom („pošalji/poslao sam narudžbu…", „stigla je…", „stigle su samo baglame", „vrati u nacrt", „obriši narudžbu…") → manage_order s brojem (ako broj nije poznat, prvo list_orders). Brisanje uvijek potvrdi s ask_user.
 
-7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. Upiši samo procese koji su rečeni — raniji koraci i plan proizvoda (iz pravila materijala) ERP dopuni sam, ne pitaj za njih. Ne pogađaj nalog ni proces — ERP ih sam nađe; ako pita, pitaj korisnika (ask_user) i ponovi. Pitanje ko radi/šta je rađeno → work_report.
+7. DNEVNI RAD („Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Kerim bolovanje") → log_work, SVE iz poruke u jednom pozivu: svaka stavka = radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. Upiši samo procese koji su rečeni — raniji koraci i plan proizvoda (iz pravila materijala) ERP dopuni sam, ne pitaj za njih. Proces ne pogađaj — ERP ga nađe. Pitanje ko radi/šta je rađeno → work_report.
+   NALOZI: kad je iz poruke jasno o kojim nalozima je riječ, izaberi ih SAM iz liste NALOZI i pošalji orders (R#) — „sve za Čorluku osim vrata" = svi Čorlukini nalozi iz liste osim onog s vratima. Ne pitaj za ono što lista jasno kaže; pitaj samo kad stvarno ima dvije razumne mogućnosti.
+   PRAZNI DANI („popuni im prazne dane", „i ranije dane koji nisu popunjeni ove sedmice", „radili su cijelu sedmicu na…") → fill_work_days s radnicima, nalozima (R#) i periodom (bez perioda = ova sedmica do danas). ERP sam nađe dane bez potvrđenog upisa (automatska podjela iz prisustva se zamijeni), preskoči odsutne i vikende i podijeli dan na naloge. Ti ne nabrajaš dane.
+   ISTO KAO JUČER („Mia isto kao jučer", „nastavili isto") → log_work stavka s like_last=true i radnicima, bez work i procesa: ERP ponovi zadnji potvrđeni dan (završen proces zamijeni sljedećim korakom). Ostali radnici iz poruke idu kao obične stavke.
+   SVE GOTOVO („sve zapakovali", „završi sve procese", „gotovi su") → finish_all: true (u log_work na stavci ili u fill_work_days): svi procesi tih proizvoda postaju završeni.
+   Kad je poruka jasna, UPIŠI ODMAH — ne traži potvrdu datuma iz kalendara, ne pitaj „da ili ne" i ne prepričavaj plan; korisnik ima dugme za poništavanje.
 
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;
@@ -69,7 +75,7 @@ PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno saču
 - za stvar u bilježnici nije jasno ključno stanje (npr. montirano ili ne).
 Jedno pitanje odjednom, 2–4 kratke opcije. Ne pitaj ono što se može razumno pretpostaviti. Kad dobiješ odgovor, završi prvobitni zahtjev.
 
-OZNAKE: W# radnici, P# projekti, M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
+OZNAKE: W# radnici, P# projekti, R# nalozi, M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
 Oznake su SAMO za alate — korisniku ih NIKAD ne piši (ni u odgovoru ni u opcijama pitanja). Piši imena: „Imer", ne „Imer (W9)".
 
 BILJEŽNICA: jedna stavka = jedna stvar na jednoj lokaciji. subject = predmet u osnovnom obliku jednine („ogledalo", „baglama", „radna ploča"). state_label = kratko stanje („nije montirano", „čeka isporuku", „u kombiju").
@@ -87,6 +93,7 @@ export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string): 
     const today = toZoned(now, tz).date;
     const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}`).join('\n') || '—';
     const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}`).join('\n') || '—';
+    const orders = (ctx.orders || []).map(o => `${o.alias} | ${o.value.name}`).join('\n') || '—';
     const memory = ctx.memory.map(m => memoryLine(m.alias, m.value, tz)).join('\n') || '— (prazno)';
     const tasks = ctx.tasks.map(t => taskLine(t.alias, t.value, tz, now)).join('\n') || '— (nema)';
 
@@ -99,6 +106,9 @@ ${workers}
 
 PROJEKTI (oznaka | klijent · naziv · mjesto):
 ${projects}
+
+NALOZI U RADU (oznaka | naziv):
+${orders}
 
 DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}`;
 

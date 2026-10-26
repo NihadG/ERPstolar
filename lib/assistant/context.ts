@@ -14,13 +14,14 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from '@/lib/server/firebaseAdmin';
-import { getActiveWorkers, getAllTasks } from '@/lib/server/fieldRepo';
+import { getActiveWorkers, getAllTasks, getOpenWorkOrders } from '@/lib/server/fieldRepo';
 import { buildVoiceContext } from '@/lib/voice/context';
 import { contextNames, projectLabel, type VoiceProjectRef } from '@/lib/voice/extract';
 import { listMemory } from './store';
-import type { MemoryItem, Project, Supplier, Task } from '@/lib/types';
+import type { MemoryItem, Project, Supplier, Task, WorkOrder } from '@/lib/types';
 
 const MAX_PROJECTS = 80;
+const MAX_ORDERS = 100;
 const MAX_TASKS = 60;
 const MAX_MEMORY = 150;
 /** Zatvoren projekat ostaje u listi još ovoliko dana (reklamacije, završne montaže). */
@@ -38,6 +39,8 @@ export interface Aliased<T> {
 export interface AssistantContext {
     workers: Aliased<{ id: string; name: string }>[];
     projects: Aliased<VoiceProjectRef>[];
+    /** Otvoreni radni nalozi — R# su isti iz poruke u poruku, pa „sve osim vrata" radi i kao odgovor. */
+    orders?: Aliased<{ id: string; name: string }>[];
     suppliers: string[];
     memory: Aliased<MemoryItem>[];
     tasks: Aliased<Task>[];
@@ -93,13 +96,23 @@ export function relevantTasks(tasks: Task[], uid: string, now: Date): Task[] {
         .slice(0, MAX_TASKS);
 }
 
+/** Otvoreni nalozi po nazivu (deterministički, keš prompta) → R1, R2… */
+export function orderRefs(orders: WorkOrder[]): Aliased<{ id: string; name: string }>[] {
+    return orders
+        .map(o => ({ id: o.Work_Order_ID, name: o.Name || o.Work_Order_Number || 'Nalog' }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'bs') || a.id.localeCompare(b.id))
+        .slice(0, MAX_ORDERS)
+        .map((value, i) => ({ alias: `R${i + 1}`, value }));
+}
+
 export async function loadContext(orgId: string, uid: string, now: Date = new Date()): Promise<AssistantContext> {
-    const [projects, workers, suppliers, memory, tasks] = await Promise.all([
+    const [projects, workers, suppliers, memory, tasks, orders] = await Promise.all([
         loadProjects(orgId),
         getActiveWorkers(orgId),
         loadSuppliers(orgId),
         listMemory(orgId, uid),
         getAllTasks(orgId),
+        getOpenWorkOrders(orgId),
     ]);
 
     const voice = buildVoiceContext(relevantProjects(projects, now), workers);
@@ -107,6 +120,7 @@ export async function loadContext(orgId: string, uid: string, now: Date = new Da
     return {
         workers: (voice.workers || []).map((w, i) => ({ alias: `W${i + 1}`, value: w })),
         projects: (voice.projects || []).slice(0, MAX_PROJECTS).map((p, i) => ({ alias: `P${i + 1}`, value: p })),
+        orders: orderRefs(orders),
         suppliers,
         memory: memory.slice(-MAX_MEMORY).map((m, i) => ({ alias: `M${i + 1}`, value: m })),
         tasks: relevantTasks(tasks, uid, now).map((t, i) => ({ alias: `T${i + 1}`, value: t })),

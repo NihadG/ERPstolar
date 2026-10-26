@@ -15,12 +15,16 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { adminDb } from './firebaseAdmin';
-import { attachItems, getBookableWorkOrders, getItemsForWorkOrders, getWorkers, getWorkLogRefsForWorkerDate, getWorkLogsInRange } from './fieldRepo';
+import {
+    attachItems, getAttendanceInRange, getBookableWorkOrders, getItemRef, getItemsByIds, getItemsForWorkOrders, getProcessGraphs,
+    getWorkers, getWorkLogRefsForWorkerDate, getWorkLogsForWorkOrder, getWorkLogsInRange, getWorkOrderRef,
+} from './fieldRepo';
 import { recalcOrderLabor, renormalizeWorkerDay } from './fieldAttendance';
+import { aggregateLaborFromLogs, laborCostOf } from '@/lib/laborAggregate';
 import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
-    applyPlanToItem, completeUpstream, diaryTargets, ensureGraphNode, graphFromStages, itemHasPlan,
+    applyPlanToItem, completeUpstream, diaryTargets, emptyWorkDays, ensureGraphNode, finishAllProcesses, graphFromStages, itemHasPlan,
     markItemProcess, matchProcess, matchTarget, planProcessNames, planWorkerDay, type DiaryTarget,
 } from '@/lib/workDiary';
 import { planGraphForProduct, planToStages } from '@/lib/productProcesses';
@@ -80,6 +84,10 @@ export type DiaryResult =
     | {
         ok: true; rows: DiaryRow[]; absences: { worker: string; status: string }[]; affectedWorkOrders: string[]; newCatalog: string[];
         planned: DiaryProcessNote[]; assumedDone: DiaryProcessNote[];
+        /** Stavke na koje je rad upisan (za „završi sve" iza upisa). */
+        itemIds: string[];
+        /** Stavke po ulaznoj liniji (istim redom kao `lines`). */
+        lineItemIds: string[][];
     }
     | { ok: false; issues: DiaryIssue[] };
 
@@ -374,6 +382,8 @@ export async function bookWorkDiary(
 
     return {
         ok: true, rows, absences: absenceRows, affectedWorkOrders: Array.from(affected), newCatalog,
+        itemIds: Array.from(new Set(resolved.flatMap(r => r.items.map(t => t.itemId)))),
+        lineItemIds: resolved.map(r => r.items.map(t => t.itemId)),
         planned: notes(plannedByItem), assumedDone: notes(assumedNotes),
     };
 }
@@ -455,6 +465,93 @@ async function upsertAttendance(orgId: string, workerId: string, workerName: str
         Modified_Date: new Date().toISOString(),
     });
     await batch.commit();
+}
+
+// ─── „Završi sve" i prazni dani ───────────────────────────────────────
+
+/**
+ * Proizvodi gotovi: svi procesi iz plana „Završeno", stavka „Završeno" sa
+ * zamrznutim troškom rada (isto kao zatvaranje proizvoda u pogonu), trošak naloga osvježen.
+ * Nalog se ne zatvara ovdje — zatvaranje u ERP-u pravi završni obračun.
+ */
+export async function finishItems(
+    orgId: string,
+    itemIds: string[],
+    atIso: string,
+    track: TrackHook = () => undefined,
+): Promise<{ items: number; processes: number; workOrderIds: string[] }> {
+    const items = await getItemsByIds(orgId, Array.from(new Set(itemIds)));
+    const orderIds = Array.from(new Set(items.map(i => i.Work_Order_ID)));
+    const graphs = await getProcessGraphs(orgId, orderIds);
+    let processes = 0;
+    for (const woId of orderIds) {
+        const logs = await getWorkLogsForWorkOrder(orgId, woId);
+        const labor = aggregateLaborFromLogs(logs);
+        for (const item of items.filter(i => i.Work_Order_ID === woId && i.Status !== 'Završeno')) {
+            const ref = await getItemRef(orgId, item.ID);
+            if (!ref) continue;
+            const snap = await ref.get();
+            track(ref.path, snap.data() as Record<string, unknown>);
+            const res = finishAllProcesses(graphs.get(woId), item.ID, item.Processes, atIso);
+            processes += res.finished.length;
+            await ref.update({
+                Processes: JSON.parse(JSON.stringify(res.processes)),
+                Status: 'Završeno',
+                Completed_At: atIso,
+                Actual_Labor_Cost: laborCostOf(labor, item.ID),
+                Labor_Cost_Frozen: true,
+            });
+        }
+        const woRef = await getWorkOrderRef(orgId, woId);
+        if (woRef) track(woRef.path, (await woRef.get()).data() as Record<string, unknown>);
+        await recalcOrderLabor(orgId, woId);
+    }
+    return { items: items.filter(i => i.Status !== 'Završeno').length, processes, workOrderIds: orderIds };
+}
+
+export interface EmptyDaysResult {
+    ok: boolean;
+    /** Dan → ko je upisan (imena). */
+    days: { date: string; workers: string[] }[];
+    workOrderNames: string[];
+    itemIds: string[];
+    issues: DiaryIssue[];
+}
+
+/**
+ * „Popuni im prazne dane tim nalozima": za svaki dan u periodu na koji radnik
+ * nema potvrđen upis (automatska podjela iz prisustva se zamjenjuje), rad se
+ * upiše na navedene naloge — dan podijeljen ravnomjerno na naloge, pa na proizvode.
+ */
+export async function bookEmptyDays(
+    orgId: string,
+    input: { workerIds: string[]; workOrderIds: string[]; from: string; to: string; today: string },
+    track: TrackHook = () => undefined,
+): Promise<EmptyDaysResult> {
+    const [logs, attendance, orders, workers] = await Promise.all([
+        getWorkLogsInRange(orgId, input.from, input.to),
+        getAttendanceInRange(orgId, input.from, input.to),
+        getBookableWorkOrders(orgId),
+        getWorkers(orgId),
+    ]);
+    const chosen = orders.filter(o => input.workOrderIds.includes(o.Work_Order_ID));
+    const nameOf = new Map(workers.map(w => [w.Worker_ID, w.Name]));
+    const empty = emptyWorkDays({
+        from: input.from, to: input.to, today: input.today, workerIds: input.workerIds,
+        logs: logs.map(l => ({ ...l, Date: String(l.Date) })),
+        attendance: attendance.map(a => ({ Worker_ID: a.Worker_ID, Date: String(a.Date), Status: a.Status })),
+    });
+    const out: EmptyDaysResult = { ok: true, days: [], workOrderNames: chosen.map(o => o.Name || o.Work_Order_Number || 'Nalog'), itemIds: [], issues: [] };
+    for (const d of empty) {
+        const res = await bookWorkDiary(orgId, d.date, chosen.map(o => ({
+            workerIds: d.workerIds, target: o.Name || o.Work_Order_Number || '', workOrderId: o.Work_Order_ID,
+        })), [], track);
+        if (!res.ok) return { ...out, ok: false, issues: res.issues };
+        out.days.push({ date: d.date, workers: d.workerIds.map(id => nameOf.get(id) || id) });
+        out.itemIds.push(...res.itemIds);
+    }
+    out.itemIds = Array.from(new Set(out.itemIds));
+    return out;
 }
 
 // ─── Pregled upisanog rada ────────────────────────────────────────────
