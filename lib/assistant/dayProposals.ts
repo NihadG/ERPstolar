@@ -36,7 +36,7 @@ interface StoredProposal {
 
 export interface ProposalReply { text: string; buttons?: ButtonRows; toast?: string }
 
-async function loadProposal(orgId: string, date: string): Promise<DayProposal> {
+export async function loadDayProposal(orgId: string, date: string): Promise<DayProposal> {
     const [workers, logs, attendance, orders] = await Promise.all([
         getActiveWorkers(orgId),
         getWorkLogsInRange(orgId, addDays(date, -LOOKBACK_DAYS), date),
@@ -49,7 +49,7 @@ async function loadProposal(orgId: string, date: string): Promise<DayProposal> {
 
 /** Nov prijedlog za dan → poruka s dugmadima; null kad nema ničega za predložiti. */
 export async function createProposalMessage(link: AssistantLink, date: string, today: string): Promise<ProposalReply | null> {
-    const proposal = await loadProposal(link.orgId, date);
+    const proposal = await loadDayProposal(link.orgId, date);
     const ref = adminDb().collection(COL).doc();
     const msg = proposalMessage(proposal, ref.id, [], today);
     if (!msg) return null;

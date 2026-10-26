@@ -406,3 +406,65 @@ export function completeUpstream(
     }
     return { processes: list, completed };
 }
+
+// ─── „Završi sve" i prazni dani ───────────────────────────────────────
+
+/**
+ * Vlasnik javi da je proizvod gotov („sve zapakovali"): svaki proces iz plana
+ * stavke (graf naloga) i sa stavke postaje „Završeno" — potvrđeno, ne
+ * pretpostavljeno. „Rad" (generički čvor) se ne dodaje.
+ */
+export function finishAllProcesses(
+    graph: ProcessGraph | undefined,
+    itemId: string,
+    processes: ItemProcessStatus[] | undefined,
+    atIso: string,
+): { processes: ItemProcessStatus[]; finished: string[] } {
+    const list = (processes || []).map(p => ({ ...p }));
+    for (const n of graph ? itemNodes(graph, itemId) : []) {
+        if (foldText(n.name) === 'rad' || list.some(p => nodeMatchesProcess(n, p.Process_Name))) continue;
+        list.push({ Process_Name: n.name, Status: 'Na čekanju' });
+    }
+    const finished: string[] = [];
+    for (const p of list) {
+        if (p.Status === 'Završeno' && !p.Assumed_Done) continue;
+        Object.assign(p, { Status: 'Završeno', Completed_At: p.Completed_At && p.Status === 'Završeno' ? p.Completed_At : atIso });
+        delete p.Assumed_Done;
+        finished.push(p.Process_Name);
+    }
+    return { processes: list, finished };
+}
+
+const ABSENT_STATUSES = new Set(['Odsutan', 'Bolovanje', 'Odmor', 'Vikend', 'Praznik']);
+const PRESENT_STATUSES = new Set(['Prisutan', 'Teren']);
+
+/**
+ * Dani u [from, to] (do danas) u kojima radnik nema POTVRĐEN upis rada.
+ * Automatska podjela iz prisustva se računa kao prazan dan (diktat je mijenja).
+ * Preskače se odsutan dan i vikend na koji radnik nije bio prisutan po šihtarici.
+ */
+export function emptyWorkDays(input: {
+    from: string;
+    to: string;
+    today: string;
+    workerIds: string[];
+    logs: { Date: string; Worker_ID: string; Entry_Source?: string; Booking_Source?: string; Is_From_Attendance?: boolean; Work_Order_Deleted?: boolean }[];
+    attendance: { Worker_ID: string; Date: string; Status: string }[];
+}): { date: string; workerIds: string[] }[] {
+    const end = input.to < input.today ? input.to : input.today;
+    const confirmed = (l: (typeof input.logs)[number]) => !l.Work_Order_Deleted
+        && (l.Entry_Source === 'telegram' || !(l.Booking_Source === 'attendance' || (l.Booking_Source !== 'manual' && l.Is_From_Attendance)));
+    const out: { date: string; workerIds: string[] }[] = [];
+    for (let t = Date.parse(`${input.from}T12:00:00Z`); t <= Date.parse(`${end}T12:00:00Z`); t += 86_400_000) {
+        const date = new Date(t).toISOString().slice(0, 10);
+        const weekend = [0, 6].includes(new Date(t).getUTCDay());
+        const workerIds = input.workerIds.filter(w => {
+            const status = input.attendance.find(a => a.Worker_ID === w && a.Date.slice(0, 10) === date)?.Status;
+            if (status && ABSENT_STATUSES.has(status)) return false;
+            if (weekend && !(status && PRESENT_STATUSES.has(status))) return false;
+            return !input.logs.some(l => l.Worker_ID === w && l.Date.slice(0, 10) === date && confirmed(l));
+        });
+        if (workerIds.length) out.push({ date, workerIds });
+    }
+    return out;
+}

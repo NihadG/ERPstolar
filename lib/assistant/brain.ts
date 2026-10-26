@@ -30,7 +30,7 @@ import { assistantTimezone, toZoned } from './datetime';
 import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
 import { runTool, stripAliases, TOOLS, WRITE_TOOLS, type ToolEnv } from './tools';
-import type { AssistantSession, SessionTurn } from './store';
+import type { AssistantSession, SessionRefs, SessionTurn } from './store';
 
 const MAX_STEPS = 6;
 const MAX_TOKENS = 8000;
@@ -79,6 +79,28 @@ function userMessage(input: AssistantTurnInput, tz: string): string {
     return `[Proslijeđeno od ${input.forward.from}, ${Number(d.date.slice(8, 10))}.${Number(d.date.slice(5, 7))}. ${d.time}]\n${input.text}`;
 }
 
+/** Najviše ovoliko oznaka po vrsti ide u sesiju; preko toga razgovor kreće s novim oznakama. */
+const MAX_REFS = 80;
+
+/** Legenda oznaka koje je ova poruka dala — samo u istoriji za model. */
+function withRefLegend(modelTurn: string, env: ToolEnv | null): string {
+    const notes = env?.refNotes || [];
+    return notes.length ? `${modelTurn}\n[oznake: ${notes.join('; ')}]` : modelTurn;
+}
+
+function sessionRefs(env: ToolEnv, at: string): SessionRefs | null {
+    // Poruka koja je upisala završila je svoj tok; oznake se nose samo kad je bot
+    // pitao ili tražio (odgovor u sljedećoj poruci ih treba), da ne ostanu stare količine.
+    if (env.changes.length) return null;
+    const keep = <T>(list?: T[]) => (list?.length && list.length <= MAX_REFS ? list : undefined);
+    const refs: SessionRefs = {
+        at,
+        orderGroups: keep(env.orderGroups), catalogHits: keep(env.catalogHits),
+        searchHits: keep(env.searchHits), diaryCandidates: keep(env.diaryCandidates),
+    };
+    return refs.orderGroups || refs.catalogHits || refs.searchHits || refs.diaryCandidates ? refs : null;
+}
+
 function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
     const out: Anthropic.MessageParam[] = history.map(t => ({ role: t.role === 'model' ? 'assistant' : 'user', content: t.text }));
     while (out.length && out[0].role !== 'user') out.shift(); // razgovor mora početi korisnikom
@@ -119,14 +141,20 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const history = (input.session.history || []).filter(t => input.session.pending || Date.parse(t.at) >= cutoff);
     const at = now.toISOString();
 
+    // Oznake iz prethodnih poruka (O#, K#, S#, R#) — dok traje razgovor.
+    const prevRefs = input.session.refs && Date.parse(input.session.refs.at) >= cutoff ? input.session.refs : null;
+    let turnEnv: ToolEnv | null = null;
+
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
         buttons,
         created: { taskIds: [], memoryIds: [] },
         ...extra,
         session: {
-            history: [...history, { role: 'user', text: message, at }, { role: 'model', text: modelTurn, at }],
+            // Model u istoriji vidi i šta znače oznake koje je ova poruka dala (korisnik ih ne vidi).
+            history: [...history, { role: 'user', text: message, at }, { role: 'model', text: withRefLegend(modelTurn, turnEnv), at }],
             pending,
+            refs: turnEnv ? sessionRefs(turnEnv, at) : prevRefs,
         },
     });
 
@@ -154,11 +182,18 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         entryId: input.entryId,
         dateText: [...recentUser, message].join('\n'),
         reporter: input.forward?.from || 'ja',
-        searchHits: [],
+        searchHits: (prevRefs?.searchHits as ToolEnv['searchHits']) || [],
+        ...(prevRefs?.orderGroups ? {
+            orderGroups: (prevRefs.orderGroups as NonNullable<ToolEnv['orderGroups']>).map(g => ({ ...g, value: { ...g.value, restored: true } })),
+        } : {}),
+        ...(prevRefs?.catalogHits ? { catalogHits: prevRefs.catalogHits as ToolEnv['catalogHits'] } : {}),
+        ...(prevRefs?.diaryCandidates ? { diaryCandidates: prevRefs.diaryCandidates as ToolEnv['diaryCandidates'] } : {}),
         created: { taskIds: [], memoryIds: [] },
         changes: [],
         summaries: [],
+        refNotes: [],
     };
+    turnEnv = env;
 
     // Ključ koji nije vezan za workspace traži workspace u zaglavlju svakog zahtjeva.
     const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();

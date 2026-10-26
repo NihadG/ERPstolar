@@ -66,7 +66,8 @@ describe('pitanja prije upisa — ništa se ne upisuje dok nije jasno', () => {
         const e = env();
         const res = await runTool(e, 'log_work', { lines: [{ workers: ['W1'], work: 'Čorluka', process: 'krojenje iverala' }] });
         expect(res.ok).toBe(false);
-        expect(res.error).toMatch(/nije jednoznačan.*R1 .*R2 /s);
+        // Bez liste NALOZI u kontekstu kandidati dobiju privremene oznake RK#.
+        expect(res.error).toMatch(/pogađa više naloga.*RK1 .*RK2 /s);
         expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
         // Ponovo s izabranim nalogom.
         const kuhinja = e.diaryCandidates!.find(c => c.value === 'r7')!.alias;
@@ -310,5 +311,131 @@ describe('dva kantiranja: „kantirao" po planu proizvoda (iverala ili furnira)'
         expect(procs('f1')).toMatchObject({ 'Kantiranje furnira': 'U toku', Furniranje: 'Završeno' });
         expect(procs('f1')['Kantiranje iverala']).toBeUndefined();
         expect(procs('i1')).toMatchObject({ 'Krojenje iverala': 'Završeno', 'Kantiranje iverala': 'U toku', 'Sklapanje kutija': 'Na čekanju' });
+    });
+});
+
+describe('„Mia isto kao jučer" — zadnji potvrđeni dan, sa sljedećim korakom', () => {
+    const ORG = 'org4';
+    const env4 = (): ToolEnv => {
+        const e = env();
+        return { ...e, orgId: ORG, ctx: { ...e.ctx, workers: [{ alias: 'W1', value: { id: 'mia', name: 'Mia' } }, { alias: 'W2', value: { id: 'ivo', name: 'Ivo' } }] } } as ToolEnv;
+    };
+
+    beforeAll(() => {
+        store.set('workers/mia', { Worker_ID: 'mia', Organization_ID: ORG, Name: 'Mia', Daily_Rate: 100, Status: 'Aktivan' });
+        store.set('workers/ivo', { Worker_ID: 'ivo', Organization_ID: ORG, Name: 'Ivo', Daily_Rate: 100, Status: 'Aktivan' });
+        store.set('work_orders/d1', { Work_Order_ID: 'd1', Organization_ID: ORG, Name: 'Hasić - Ormar', Status: 'U toku', Work_Order_Type: 'Proizvodnja',
+            Process_Graph: { nodes: [{ id: 'k', name: 'Krojenje iverala', itemIds: [] }, { id: 'ka', name: 'Kantiranje iverala', itemIds: [] }], edges: [{ id: 'e', source: 'k', target: 'ka' }] } });
+        store.set('work_order_items/d1i', { ID: 'd1i', Organization_ID: ORG, Work_Order_ID: 'd1', Product_ID: 'p-d1', Product_Name: 'Ormar', Status: 'U toku',
+            Processes: [{ Process_Name: 'Krojenje iverala', Status: 'Završeno' }, { Process_Name: 'Kantiranje iverala', Status: 'Na čekanju' }] });
+        store.set('work_logs/mia22', { WorkLog_ID: 'mia22', Organization_ID: ORG, Date: '2026-10-22', Worker_ID: 'mia', Worker_Name: 'Mia', Daily_Rate: 100, Day_Fraction: 1,
+            Booking_Source: 'manual', Entry_Source: 'telegram', Work_Order_ID: 'd1', Work_Order_Item_ID: 'd1i', Product_ID: 'p-d1', Process_Name: 'Krojenje iverala' });
+    });
+
+    it('krojenje je završeno → upiše se kantiranje istog ormara', async () => {
+        const res = await runTool(env4(), 'log_work', { date: '2026-10-23', lines: [{ workers: ['W1'], like_last: true }] });
+        expect(res).toMatchObject({ ok: true });
+        const log = docs('work_logs').find(l => l.Organization_ID === ORG && l.Worker_ID === 'mia' && l.Date === '2026-10-23')!;
+        expect(log).toMatchObject({ Work_Order_ID: 'd1', Work_Order_Item_ID: 'd1i', Process_Name: 'Kantiranje iverala', Entry_Source: 'telegram' });
+    });
+
+    it('radnik bez potvrđenog dana → pitanje, ništa upisano', async () => {
+        const res = await runTool(env4(), 'log_work', { date: '2026-10-23', lines: [{ workers: ['W2'], like_last: true }] });
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Ivo: nema zadnjeg potvrđenog dana/) });
+    });
+});
+
+describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zapakovali"', () => {
+    const ORG = 'org3';
+    const env3 = (): ToolEnv => {
+        const e = env();
+        return {
+            ...e, orgId: ORG,
+            ctx: {
+                ...e.ctx,
+                workers: [{ alias: 'W1', value: { id: 'bego', name: 'Bego' } }, { alias: 'W2', value: { id: 'braco', name: 'Braco' } }],
+                orders: [
+                    { alias: 'R1', value: { id: 'c1', name: 'Corluka - Kuhinja' } },
+                    { alias: 'R2', value: { id: 'c2', name: 'Corluka - Ostrvo' } },
+                    { alias: 'R3', value: { id: 'c3', name: 'Corluka - Vrata' } },
+                ],
+            },
+        } as ToolEnv;
+    };
+    const logs = (w: string) => docs('work_logs').filter(l => l.Organization_ID === ORG && l.Worker_ID === w);
+    let fill: ToolEnv;
+
+    beforeAll(async () => {
+        const w = (id: string, name: string) => store.set(`workers/${id}`, { Worker_ID: id, Organization_ID: ORG, Name: name, Daily_Rate: 100, Status: 'Aktivan' });
+        w('bego', 'Bego'); w('braco', 'Braco');
+        store.set('projects/cc', { Project_ID: 'pcc', Organization_ID: ORG, Name: 'Čorluka kuća', Client_Name: 'Čorluka' });
+        const o = (id: string, name: string, extra: Record<string, unknown> = {}) =>
+            store.set(`work_orders/${id}`, { Work_Order_ID: id, Organization_ID: ORG, Name: name, Status: 'U toku', Work_Order_Type: 'Proizvodnja', ...extra });
+        o('c1', 'Corluka - Kuhinja', { Process_Graph: { nodes: [{ id: 'n1', name: 'Krojenje iverala', itemIds: ['ck'] }, { id: 'n2', name: 'Kantiranje iverala', itemIds: ['ck'] }], edges: [{ id: 'e', source: 'n1', target: 'n2' }] } });
+        o('c2', 'Corluka - Ostrvo', { Process_Graph: { nodes: [{ id: 'm1', name: 'Krojenje MDF-a', itemIds: ['co'] }, { id: 'm2', name: 'Lakiranje', itemIds: ['co'] }], edges: [{ id: 'e', source: 'm1', target: 'm2' }] } });
+        o('c3', 'Corluka - Vrata');
+        const it = (id: string, woId: string, product: string, extra: Record<string, unknown> = {}) =>
+            store.set(`work_order_items/${id}`, { ID: id, Organization_ID: ORG, Work_Order_ID: woId, Product_ID: `p-${id}`, Product_Name: product, Project_ID: 'pcc', Status: 'U toku', ...extra });
+        it('ck', 'c1', 'Kuhinja', { Processes: [{ Process_Name: 'Krojenje iverala', Status: 'Završeno' }, { Process_Name: 'Kantiranje iverala', Status: 'Na čekanju' }] });
+        it('co', 'c2', 'Ostrvo');
+        it('cv', 'c3', 'Vrata', { Processes: [{ Process_Name: 'Okivanje', Status: 'Na čekanju' }] });
+        const log = (id: string, worker: string, date: string, extra: Record<string, unknown>) =>
+            store.set(`work_logs/${id}`, { WorkLog_ID: id, Organization_ID: ORG, Date: date, Worker_ID: worker, Worker_Name: worker, Daily_Rate: 100, Day_Fraction: 1,
+                Work_Order_ID: 'c3', Work_Order_Item_ID: 'cv', Product_ID: 'p-cv', ...extra });
+        log('a19', 'bego', '2026-10-19', { Booking_Source: 'attendance', Is_From_Attendance: true });
+        log('a20', 'bego', '2026-10-20', { Booking_Source: 'attendance', Is_From_Attendance: true });
+        log('m21', 'braco', '2026-10-21', { Booking_Source: 'manual', Process_Name: 'Okivanje' });
+        store.set('worker_attendance/b22', { Attendance_ID: 'b22', Organization_ID: ORG, Worker_ID: 'braco', Worker_Name: 'Braco', Date: '2026-10-22', Status: 'Bolovanje' });
+
+        fill = env3();
+        const res = await runTool(fill, 'fill_work_days', { workers: ['W1', 'W2'], orders: ['R1', 'R2'], finish_all: true });
+        expect(res).toMatchObject({ ok: true, finished_products: 2 });
+    });
+
+    it('prazni dani ove sedmice dobiju oba naloga; potvrđen dan i bolovanje ostaju', () => {
+        const days = (w: string) => Array.from(new Set(logs(w).map(l => l.Date))).sort();
+        expect(days('bego')).toEqual(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23']);
+        expect(logs('bego').map(l => l.WorkLog_ID)).not.toContain('a19'); // auto iz prisustva zamijenjen
+        expect(days('braco')).toEqual(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-23']);
+        expect(logs('braco').find(l => l.Date === '2026-10-21')!.WorkLog_ID).toBe('m21');
+        const d23 = logs('bego').filter(l => l.Date === '2026-10-23');
+        expect(d23.map(l => l.Work_Order_ID).sort()).toEqual(['c1', 'c2']);
+        expect(d23.reduce((s, l) => s + l.Daily_Rate, 0)).toBe(100);
+        expect(logs('bego').some(l => l.Work_Order_ID === 'c3')).toBe(false);
+    });
+
+    it('svi procesi Čorlukinih proizvoda završeni; vrata netaknuta', () => {
+        expect(item('ck')).toMatchObject({ Status: 'Završeno', Labor_Cost_Frozen: true });
+        expect(item('ck').Processes.every((p: any) => p.Status === 'Završeno' && !p.Assumed_Done)).toBe(true);
+        expect(item('co').Processes.map((p: any) => `${p.Process_Name}:${p.Status}`)).toEqual(['Krojenje MDF-a:Završeno', 'Lakiranje:Završeno']);
+        expect(item('cv').Status).toBe('U toku');
+    });
+
+    it('potvrda kaže dane po radnicima i završene proizvode', () => {
+        expect(fill.summaries[0]).toMatch(/Popunjeni prazni dani · Corluka - Kuhinja, Corluka - Ostrvo/);
+        expect(fill.summaries[0]).toMatch(/• Bego, Braco: 19\.10\., 20\.10\., 23\.10\./);
+        expect(fill.summaries[0]).toMatch(/• Bego: 21\.10\., 22\.10\./);
+        expect(fill.summaries[0]).toMatch(/Završeni svi procesi: 2 proizvoda/);
+    });
+
+    it('drugi put: nema praznih dana', async () => {
+        const res = await runTool(env3(), 'fill_work_days', { workers: ['W1'], orders: ['R1'] });
+        expect(res).toMatchObject({ ok: true, days: 0 });
+    });
+
+    it('↩️ Poništi vraća sve: auto dani, procesi, stavke', async () => {
+        await undoTurn(fill.turnId, 'u1');
+        expect(logs('bego').map(l => l.WorkLog_ID).sort()).toEqual(['a19', 'a20']);
+        expect(item('ck').Status).toBe('U toku');
+        expect(item('co').Processes).toBeUndefined();
+    });
+
+    it('log_work s više naloga i finish_all na jednoj stavci', async () => {
+        const e = env3();
+        const res = await runTool(e, 'log_work', { date: '2026-10-23', lines: [{ workers: ['W2'], work: 'Čorluka', orders: ['R1', 'R2'], finish_all: true }] });
+        expect(res).toMatchObject({ ok: true, finished_products: 2 });
+        expect(logs('braco').filter(l => l.Date === '2026-10-23').map(l => l.Work_Order_ID).sort()).toEqual(['c1', 'c2']);
+        expect(item('co').Status).toBe('Završeno');
+        expect(await runTool(e, 'log_work', { lines: [{ workers: ['W2'], work: 'x', orders: ['R9'] }] })).toMatchObject({ ok: false, error: expect.stringMatching(/R9 nije u listi/) });
     });
 });

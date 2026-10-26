@@ -146,21 +146,36 @@ export interface PendingQuestion {
     entryId?: string;
 }
 
+/**
+ * Oznake iz rezultata alata (O#, K#, S#, R#). Istorija razgovora je samo tekst,
+ * pa bi se bez ovoga gubile čim bot nešto pita: „koje baglame?" → „ravne".
+ * Žive koliko i istorija; vrijednosti su ono što alati razrješavaju.
+ */
+export interface SessionRefs {
+    at: string;
+    orderGroups?: unknown[];
+    catalogHits?: unknown[];
+    searchHits?: unknown[];
+    diaryCandidates?: unknown[];
+}
+
 export interface AssistantSession {
     history: SessionTurn[];
     pending?: PendingQuestion | null;
+    refs?: SessionRefs | null;
 }
 
 export async function getSession(chatId: number): Promise<AssistantSession> {
     const snap = await adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId)).get();
     const data = snap.data() as Partial<AssistantSession> | undefined;
-    return { history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null };
+    return { history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null };
 }
 
 export async function saveSession(chatId: number, session: AssistantSession): Promise<void> {
     await adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId)).set({
         history: session.history.slice(-HISTORY_TURNS),
         pending: session.pending || null,
+        refs: session.refs ? JSON.parse(JSON.stringify(session.refs)) : null,
         updatedAt: new Date().toISOString(),
     });
 }

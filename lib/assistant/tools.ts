@@ -17,7 +17,7 @@ import { matchScore, tokenSimilarity } from '@/lib/voice/match';
 import { formatReminder, resolveReminderAt, toZoned } from './datetime';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
 import { memoryLine, taskLine } from './prompt';
-import { getAllTasks } from '@/lib/server/fieldRepo';
+import { getAllTasks, getItemsForWorkOrders } from '@/lib/server/fieldRepo';
 import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
 import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
@@ -27,7 +27,9 @@ import {
     listOrdersWithItems, receiveOrderItems, revertOrderToDraft, sendOrder,
     loadProductMaterials, loadProjectMaterials, loadProjectProducts, type DraftLine, type OrderableRow, type WriteOp,
 } from '@/lib/server/orderWrites';
-import { bookWorkDiary, workLogReport, type DiaryAbsenceInput, type DiaryLineInput } from '@/lib/server/workDiary';
+import { loadDayProposal } from './dayProposals';
+import type { DayProposal } from '@/lib/dayProposal';
+import { bookEmptyDays, bookWorkDiary, finishItems, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput } from '@/lib/server/workDiary';
 import { dayLabel, diarySummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
@@ -161,11 +163,13 @@ export const TOOLS: Anthropic.Tool[] = [
                         },
                     },
                 },
-                supplier: { ...str, description: 'Dobavljač ako ga je korisnik rekao (inače onaj s materijala).' },
+                supplier: { ...str, description: 'Dobavljač ako ga je korisnik rekao (inače onaj s materijala). Uz all_missing: samo materijali tog dobavljača.' },
                 expected_delivery: { ...str, description: 'Očekivana isporuka YYYY-MM-DD ako je rečena.' },
                 note: { ...str, description: 'Napomena za dobavljača ako je rečena.' },
+                all_missing: { ...bool, description: '„Naruči sve što fali za…": svi materijali projekta s ostatkom za naručiti, bez lines. Traži project.' },
+                project: { ...str, description: 'Uz all_missing: oznaka P#.' },
+                product: { ...str, description: 'Uz all_missing: samo materijali tog proizvoda („za kuhinju").' },
             },
-            required: ['lines'],
         },
     },
     {
@@ -221,14 +225,17 @@ export const TOOLS: Anthropic.Tool[] = [
                         properties: {
                             workers: { ...strList, description: 'Oznake radnika W#.' },
                             work: { ...str, description: 'Posao kako je rečen: „kuhinja Čorluka", „vrata Meliha", „Budnjo stolovi".' },
-                            order: { ...str, description: 'R# iz kandidata kad je alat pitao koji nalog.' },
+                            order: { ...str, description: 'R# naloga (iz liste NALOZI ili kandidata) kad je nalog jasan.' },
+                            orders: { ...strList, description: 'Više naloga odjednom (R#): „sve za Čorluku osim vrata". Dan se dijeli ravnomjerno na naloge.' },
+                            finish_all: { ...bool, description: 'true kad je rečeno da su proizvodi gotovi („sve zapakovali", „završi sve procese") — svi procesi tih proizvoda završeni.' },
+                            like_last: { ...bool, description: '„Isto kao jučer" / „nastavio isto": radnik radi što i zadnji potvrđeni dan (ERP zna posao i sljedeći korak). Bez work.' },
                             process: { ...str, description: 'Proces kako je rečen, s riječju koja ga razlikuje ako je rečena: „krojenje iverala", „kantiranje", „kantiranje fronti", „brušenje Kerrocka". ERP bira proces iz plana proizvoda.' },
                             also: { ...strList, description: 'Dodatni procesi na istom poslu taj dan.' },
                             fraction: { ...num, description: 'Dio dana ako je rečen: pola dana = 0.5, dva sata = 0.25.' },
                             done: { ...bool, description: 'true kad je rečeno da je proces završen („završio", „gotovo").' },
                             new_process: { ...bool, description: 'true tek kad je korisnik potvrdio da je proces nov.' },
                         },
-                        required: ['workers', 'work'],
+                        required: ['workers'],
                     },
                 },
                 absent: {
@@ -240,6 +247,21 @@ export const TOOLS: Anthropic.Tool[] = [
                     },
                 },
             },
+        },
+    },
+    {
+        name: 'fill_work_days',
+        description: 'Popuni radnicima dane BEZ potvrđenog upisa u periodu (bez perioda = ova sedmica do danas) radom na navedenim nalozima. ERP sam nađe prazne dane, zamijeni automatsku podjelu iz prisustva, preskoči odsutne i vikende, podijeli dan na naloge. Za „popuni im prazne dane", „i ranije dane koji nisu popunjeni".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                workers: { ...strList, description: 'Oznake radnika W#.' },
+                orders: { ...strList, description: 'Nalozi R# iz liste NALOZI.' },
+                from: { ...str, description: 'Od YYYY-MM-DD (bez toga = ponedjeljak ove sedmice).' },
+                to: { ...str, description: 'Do YYYY-MM-DD (bez toga = danas).' },
+                finish_all: { ...bool, description: 'true kad su proizvodi tih naloga gotovi — svi procesi završeni.' },
+            },
+            required: ['workers', 'orders'],
         },
     },
     {
@@ -308,6 +330,8 @@ export interface ToolEnv {
     documents?: { orderId: string; draft: boolean }[];
     /** Kandidati naloga (R#) kad dnevni upis nije znao koji nalog. */
     diaryCandidates?: Aliased<string>[];
+    /** „O3 Baglama ravna · Kuhinja Grbavica" — legenda oznaka ove poruke za istoriju modela. */
+    refNotes?: string[];
     /** Učitano iz baze tokom ove poruke (materijali projekata, katalog). */
     cache?: { rows?: { key: string; value: OrderableRow[] }; catalog?: Material[] };
 }
@@ -319,6 +343,8 @@ export interface OrderGroup {
     name: string;
     unit: string;
     rows: OrderableRow[];
+    /** Vraćena iz sesije (ranija poruka) — redovi se osvježe prije upotrebe. */
+    restored?: boolean;
 }
 
 /**
@@ -326,7 +352,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -606,7 +632,11 @@ async function searchMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         .filter(x => x.s >= 0.5)
         .sort((x, y) => y.s - x.s || y.m.Updated_At.localeCompare(x.m.Updated_At))
         .slice(0, 12);
-    env.searchHits = itemHits.map((x, i) => ({ alias: `S${i + 1}`, value: x.m }));
+    // Numeracija se nastavlja: S# iz ranije poruke i dalje znači isto.
+    const sbase = env.searchHits.length;
+    const fresh = itemHits.map((x, i) => ({ alias: `S${sbase + i + 1}`, value: x.m }));
+    env.searchHits = [...env.searchHits, ...fresh];
+    noteRefs(env, fresh.map(h => `${h.alias} ${h.value.Title}${h.value.Location ? ` · ${h.value.Location}` : ''}`));
 
     const entryHits = entries
         .map(e => ({ e, s: textScore(query, `${e.Raw_Text} ${e.Forward_From || ''}`) }))
@@ -616,7 +646,7 @@ async function searchMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     return {
         ok: true,
-        items: env.searchHits.map(h => memoryLine(h.alias, h.value, env.tz)),
+        items: fresh.map(h => memoryLine(h.alias, h.value, env.tz)),
         tasks: taskLines,
         messages: entryHits.map(({ e }) => `${shortDay(e.Forward_Date || e.Created_At, env.tz)} ${e.Forward_From ? `od ${e.Forward_From}` : 'ja'}: ${e.Raw_Text.slice(0, 300)}`),
     };
@@ -688,7 +718,27 @@ async function searchOrderables(env: ToolEnv, query: string, project: ProjectRef
     const cbase = env.catalogHits?.length || 0;
     const catAliased = catalog.map(({ m }, i) => ({ alias: `K${cbase + i + 1}`, value: m }));
     env.catalogHits = [...(env.catalogHits || []), ...catAliased];
+    noteRefs(env, [
+        ...aliased.map(g => `${g.alias} ${g.value.name} · ${g.value.projectName}`),
+        ...catAliased.map(c => `${c.alias} ${c.value.Name} (katalog)`),
+    ]);
     return { groups: aliased, catalog: catAliased };
+}
+
+/**
+ * Grupa iz ranije poruke (oznaka sačuvana preko pitanja) nosi količine od tada —
+ * prije naručivanja se redovi čitaju ponovo iz baze.
+ */
+async function freshGroup(env: ToolEnv, group: OrderGroup | null): Promise<OrderGroup | null> {
+    if (!group || !group.restored) return group;
+    const rows = (await loadProjectMaterials(env.orgId, [group.projectId]))
+        .filter(r => materialGroupKey(r.name, r.unit) === materialGroupKey(group.name, group.unit));
+    return rows.length ? { ...group, rows, restored: false } : null;
+}
+
+/** Legenda oznaka za istoriju modela (bez duplikata). */
+function noteRefs(env: ToolEnv, notes: string[]): void {
+    env.refNotes = Array.from(new Set([...(env.refNotes || []), ...notes]));
 }
 
 function catalogLine(alias: string, m: Material): string {
@@ -778,7 +828,7 @@ async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Pro
         return `Količina „${String(line.quantity)}" nije ispravna. Pitaj korisnika koliko.`;
     }
     const wanted = number(line.quantity);
-    let group = ref ? resolveAlias(env.orderGroups || [], ref) : null;
+    let group = ref ? await freshGroup(env, resolveAlias(env.orderGroups || [], ref)) : null;
     let byName: Material | undefined;
     let fresh: { project: ProjectRef; name: string } | undefined;
     if (!ref && text(line.material)) {
@@ -795,41 +845,51 @@ async function planLine(env: ToolEnv, line: Args, supplierOverride: string): Pro
         byName = resolveAlias(env.catalogHits || [], ref) || undefined;
         if (byName) fresh = { project, name: byName.Name };
     }
-    if (group) {
-        const available = roundQty(group.rows.reduce((s, r) => s + r.available, 0));
-        const quantity = wanted ?? available;
-        if (!(quantity > 0)) return `${group.name} za ${group.projectName}: ništa ne ostaje za naručiti (već naručeno ili u nacrtu). Reci količinu ako treba više — dodaće se u sastavnicu.`;
-        const candidates = group.rows.filter(r => r.available > 0);
-        // Višak ide materijalu rečenog proizvoda, inače onom s najvećom potrebom.
-        const named = text(line.product, 80);
-        const assigned = (named && group.rows.find(r => matchScore(named, [r.productName]) >= 0.7))
-            || [...(candidates.length ? candidates : group.rows)].sort((x, y) => y.needed - x.needed)[0];
-        const planRows = candidates.some(r => r.materialId === assigned.materialId) ? candidates : [...candidates, assigned];
-        const { allocations, needIncrease } = planMaterialGroupOrder(quantity,
-            planRows.map(r => ({ id: r.materialId, needed: r === assigned && !candidates.includes(r) ? 0 : r.available })),
-            assigned.materialId, group.unit === 'kom');
-        const extra = needIncrease[assigned.materialId] || 0;
-        const members = planRows.map(r => ({
-            materialId: r.materialId, productId: r.productId, productName: r.productName, projectId: r.projectId,
-            allocation: allocations[r.materialId] || 0,
-        }));
-        const forBom = roundQty(quantity - extra);
-        const rest = roundQty(available - forBom);
-        const detail = extra > 0
-            ? `${q(forBom)} po sastavnici + ${q(extra)} dodano u sastavnicu (${assigned.productName}) — ulazi u trošak`
-            : rest > 0 ? `ostaje još ${q(rest)} ${group.unit}` : 'sve što projekat treba';
-        return {
-            materialName: group.name,
-            unit: group.unit,
-            quantity,
-            unitPrice: group.rows[0].unitPrice,
-            members,
-            supplier: supplierOverride || mostCommon(group.rows.map(r => r.supplier)),
-            projectIds: [group.projectId],
-            label: `• ${q(quantity)} ${group.unit} ${group.name} — ${group.projectName} (${detail})`,
-            ...(extra > 0 ? { bom: { kind: 'increase' as const, materialId: assigned.materialId, extra, productName: assigned.productName } } : {}),
-        };
-    }
+    if (group) return planGroup(group, wanted, text(line.product, 80), supplierOverride);
+    return planOther(env, line, wanted, ref, byName, fresh, supplierOverride);
+}
+
+/** Materijal projekta (grupa istih materijala na više pozicija) → stavka narudžbe. */
+function planGroup(group: OrderGroup, wanted: number | undefined, named: string, supplierOverride: string): PlannedLine | string {
+    const available = roundQty(group.rows.reduce((s, r) => s + r.available, 0));
+    const quantity = wanted ?? available;
+    if (!(quantity > 0)) return `${group.name} za ${group.projectName}: ništa ne ostaje za naručiti (već naručeno ili u nacrtu). Reci količinu ako treba više — dodaće se u sastavnicu.`;
+    const candidates = group.rows.filter(r => r.available > 0);
+    // Višak ide materijalu rečenog proizvoda, inače onom s najvećom potrebom.
+    const assigned = (named && group.rows.find(r => matchScore(named, [r.productName]) >= 0.7))
+        || [...(candidates.length ? candidates : group.rows)].sort((x, y) => y.needed - x.needed)[0];
+    const planRows = candidates.some(r => r.materialId === assigned.materialId) ? candidates : [...candidates, assigned];
+    const { allocations, needIncrease } = planMaterialGroupOrder(quantity,
+        planRows.map(r => ({ id: r.materialId, needed: r === assigned && !candidates.includes(r) ? 0 : r.available })),
+        assigned.materialId, group.unit === 'kom');
+    const extra = needIncrease[assigned.materialId] || 0;
+    const members = planRows.map(r => ({
+        materialId: r.materialId, productId: r.productId, productName: r.productName, projectId: r.projectId,
+        allocation: allocations[r.materialId] || 0,
+    }));
+    const forBom = roundQty(quantity - extra);
+    const rest = roundQty(available - forBom);
+    const detail = extra > 0
+        ? `${q(forBom)} po sastavnici + ${q(extra)} dodano u sastavnicu (${assigned.productName}) — ulazi u trošak`
+        : rest > 0 ? `ostaje još ${q(rest)} ${group.unit}` : 'sve što projekat treba';
+    return {
+        materialName: group.name,
+        unit: group.unit,
+        quantity,
+        unitPrice: group.rows[0].unitPrice,
+        members,
+        supplier: supplierOverride || mostCommon(group.rows.map(r => r.supplier)),
+        projectIds: [group.projectId],
+        label: `• ${q(quantity)} ${group.unit} ${group.name} — ${group.projectName} (${detail})`,
+        ...(extra > 0 ? { bom: { kind: 'increase' as const, materialId: assigned.materialId, extra, productName: assigned.productName } } : {}),
+    };
+}
+
+/** Novi materijal u sastavnici ili artikal iz kataloga (za zalihu). */
+async function planOther(
+    env: ToolEnv, line: Args, wanted: number | undefined, ref: string,
+    byName: Material | undefined, fresh: { project: ProjectRef; name: string } | undefined, supplierOverride: string,
+): Promise<PlannedLine | string> {
     if (fresh) {
         if (!(wanted && wanted > 0)) return `Koliko „${fresh.name}" da naručim za ${projectLabel(fresh.project)}?`;
         const products = await loadProjectProducts(env.orgId, fresh.project.id);
@@ -875,15 +935,51 @@ function orderName(projectNames: string[]): string {
     return `${projectNames[0]} + još ${projectNames.length - 1}`;
 }
 
+/** Interni dobavljač = usluga u sastavnici (lakiranje), ne naručuje se. */
+const INTERNAL = /^(interni|interno|vlastito|in-house)$/i;
+
+/**
+ * „Naruči sve što fali za kuhinju Čorluka (kod Frischeisa)": svi materijali projekta
+ * s ostatkom za naručiti, po izboru samo jednog dobavljača i/ili proizvoda.
+ */
+async function missingGroups(env: ToolEnv, project: ProjectRef, supplier: string, product: string): Promise<OrderGroup[]> {
+    const rows = (await loadProjectMaterials(env.orgId, [project.id]))
+        .filter(r => r.available > 0 && !INTERNAL.test((r.supplier || '').trim()))
+        .filter(r => !supplier || matchScore(supplier, [r.supplier || '']) >= 0.85)
+        .filter(r => !product || matchScore(product, [r.productName]) >= 0.7);
+    const groups = new Map<string, OrderGroup>();
+    for (const r of rows) {
+        const key = materialGroupKey(r.name, r.unit);
+        const g = groups.get(key) || { projectId: project.id, projectName: projectLabel(project), name: r.name, unit: r.unit, rows: [] };
+        g.rows.push(r);
+        groups.set(key, g);
+    }
+    return Array.from(groups.values()).sort((x, y) => x.name.localeCompare(y.name, 'bs'));
+}
+
 async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const lines = Array.isArray(a.lines) ? (a.lines as Args[]).slice(0, 30) : [];
-    if (!lines.length) return { ok: false, error: 'Nema stavki.' };
     const supplierText = text(a.supplier, 80);
     const planned: PlannedLine[] = [];
-    for (const line of lines) {
-        const p = await planLine(env, line, supplierText);
-        if (typeof p === 'string') return { ok: false, error: p };
-        planned.push(p);
+    if (a.all_missing === true) {
+        const project = resolveAlias(env.ctx.projects, a.project);
+        if (!project) return { ok: false, error: 'Za „sve što fali" treba projekat (P#).' };
+        const groups = await missingGroups(env, project, supplierText, text(a.product, 80));
+        if (!groups.length) {
+            return { ok: true, orders: [], note: `Za ${projectLabel(project)}${supplierText ? ` kod ${supplierText}` : ''} ništa ne fali — sve je naručeno ili u nacrtu. Reci korisniku.` };
+        }
+        // Dobavljač služi kao filter; svaka stavka ide svom dobavljaču (narudžba po dobavljaču).
+        for (const g of groups) {
+            const p = planGroup(g, undefined, '', '');
+            if (typeof p !== 'string') planned.push(p);
+        }
+    } else {
+        if (!lines.length) return { ok: false, error: 'Nema stavki.' };
+        for (const line of lines) {
+            const p = await planLine(env, line, supplierText);
+            if (typeof p === 'string') return { ok: false, error: p };
+            planned.push(p);
+        }
     }
     const delivery = isIsoDate(a.expected_delivery) ? a.expected_delivery : undefined;
 
@@ -1081,24 +1177,51 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     const workerId = (alias: unknown) => resolveAlias(env.ctx.workers, alias)?.id;
     const lines: DiaryLineInput[] = [];
+    const finishLines: number[] = [];
+    let proposal: DayProposal | null = null;
     for (const l of rawLines) {
         const ids = (Array.isArray(l.workers) ? l.workers : []).map(workerId);
         if (!ids.length || ids.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(l.workers)} ne postoji u listi.` };
-        const order = text(l.order, 8) ? resolveAlias(env.diaryCandidates || [], l.order) : null;
-        if (text(l.order, 8) && !order) return { ok: false, error: `Nalog ${String(l.order)} nije među kandidatima.` };
+        // „Isto kao jučer": radnikov zadnji potvrđeni dan, sa sljedećim korakom gdje je proces završen.
+        if (l.like_last === true) {
+            proposal = proposal || await loadDayProposal(env.orgId, date);
+            for (const id of ids as string[]) {
+                const mine = proposal.lines.filter(p => p.workerIds.includes(id));
+                const name = env.ctx.workers.find(w => w.value.id === id)?.value.name || id;
+                if (!mine.length) {
+                    return { ok: false, error: `${name}: nema zadnjeg potvrđenog dana za ponoviti (ili je taj dan već upisan / odsutan). Pitaj na čemu je radio.` };
+                }
+                lines.push(...mine.map(p => ({
+                    workerIds: [id], target: p.workOrderName, workOrderId: p.workOrderId, itemIds: p.itemIds,
+                    ...(p.process ? { process: p.process } : {}), ...(p.fraction ? { fraction: p.fraction } : {}),
+                    alsoProcesses: [],
+                })));
+            }
+            continue;
+        }
+        const aliases = [...(text(l.order, 8) ? [l.order] : []), ...(Array.isArray(l.orders) ? l.orders : [])];
+        const orders = aliases.map(x => orderOf(env, x));
+        const bad = aliases.find((_, i) => !orders[i]);
+        if (bad !== undefined) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
         if (l.fraction != null && !(typeof l.fraction === 'number' && l.fraction > 0 && l.fraction <= 1)) {
             return { ok: false, error: `Dio dana „${String(l.fraction)}" nije ispravan (0–1).` };
         }
-        lines.push({
+        const base: DiaryLineInput = {
             workerIds: ids as string[],
             target: text(l.work, 120),
-            ...(order ? { workOrderId: order } : {}),
             process: text(l.process, 80) || undefined,
             alsoProcesses: Array.isArray(l.also) ? l.also.map(p => text(p, 80)).filter(Boolean) : [],
             fraction: number(l.fraction),
             done: l.done === true,
             newProcess: l.new_process === true,
-        });
+        };
+        // Više naloga = stavka po nalogu; rečeni udio dana se dijeli na njih.
+        const split = Array.from(new Set(orders as string[]));
+        const expanded = split.length
+            ? split.map(id => ({ ...base, workOrderId: id, ...(base.fraction ? { fraction: base.fraction / split.length } : {}) }))
+            : [base];
+        if (l.finish_all === true) expanded.forEach((_, i) => finishLines.push(lines.length + i));
+        lines.push(...expanded);
     }
     const absences: DiaryAbsenceInput[] = [];
     for (const x of rawAbsent) {
@@ -1108,35 +1231,117 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     }
 
     const befores = new Map<string, Record<string, unknown> | null>();
-    const result = await bookWorkDiary(env.orgId, date, lines, absences, (path, data) => { if (!befores.has(path)) befores.set(path, data); });
-    if (!result.ok) {
-        const parts: string[] = [];
-        for (const issue of result.issues) {
-            if (issue.kind === 'target') {
-                if (!issue.candidates.length) {
-                    parts.push(`Posao „${issue.text}" (stavka ${issue.line + 1}) ne odgovara nijednom nalogu — pitaj korisnika koji nalog.`);
-                    continue;
-                }
-                const base = env.diaryCandidates?.length || 0;
-                const aliased = issue.candidates.map((c, i) => ({ alias: `R${base + i + 1}`, value: c.workOrderId, label: `${c.workOrderName}${c.projectName ? ` (${c.projectName})` : ''}` }));
-                env.diaryCandidates = [...(env.diaryCandidates || []), ...aliased.map(({ alias, value }) => ({ alias, value }))];
-                parts.push(`Posao „${issue.text}" (stavka ${issue.line + 1}) nije jednoznačan — pitaj korisnika (ask_user), pa ponovi s order: ${aliased.map(c => `${c.alias} ${c.label}`).join('; ')}`);
-            } else if (issue.kind === 'process') {
-                parts.push(`Proces „${issue.name}" nije u katalogu — pitaj korisnika je li nov (Da → new_process=true) ili mislio na postojeći.`);
-            } else {
-                parts.push(`Radnik ${issue.workerId} nije pronađen.`);
-            }
-        }
-        return { ok: false, error: `Ništa nije upisano.\n${parts.join('\n')}` };
-    }
+    const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
+    const result = await bookWorkDiary(env.orgId, date, lines, absences, track);
+    if (!result.ok) return { ok: false, error: `Ništa nije upisano.\n${diaryIssueText(env, result.issues)}` };
 
+    const finished = finishLines.length
+        ? await finishItems(env.orgId, finishLines.flatMap(i => result.lineItemIds[i] || []), `${date}T15:00:00.000Z`, track)
+        : null;
     const label = `rad ${shortDay(`${date}T12:00:00Z`, env.tz)}`;
     await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
     env.changes.push(label);
     const dayName = date === today ? 'danas' : formatReminder(`${date}T10:00:00Z`, env.tz, env.now).replace(/ u \d\d:\d\d$/, '');
-    env.summaries.push(diarySummary(result, dayName));
-    return { ok: true, rows: result.rows.length, absences: result.absences.length };
+    env.summaries.push([diarySummary(result, dayName), finished ? finishedLine(finished.items) : ''].filter(Boolean).join('\n'));
+    return { ok: true, rows: result.rows.length, absences: result.absences.length, ...(finished ? { finished_products: finished.items } : {}) };
+}
+
+/** R# iz liste otvorenih naloga (stalne oznake), pa kandidati iz pitanja ove poruke. */
+function orderOf(env: ToolEnv, alias: unknown): string | null {
+    return resolveAlias(env.ctx.orders || [], alias)?.id ?? resolveAlias(env.diaryCandidates || [], alias);
+}
+
+const finishedLine = (items: number) => `✔ Završeni svi procesi: ${items} ${items === 1 ? 'proizvod' : 'proizvoda'} (nalog zatvori u ERP-u kad je predat).`;
+
+/** Pitanja ERP-a modelu; kandidati naloga nose oznake iz liste NALOZI kad ih ima. */
+function diaryIssueText(env: ToolEnv, issues: DiaryIssue[]): string {
+    const parts: string[] = [];
+    for (const issue of issues) {
+        if (issue.kind === 'target') {
+            if (!issue.candidates.length) {
+                parts.push(`Posao „${issue.text}" (stavka ${issue.line + 1}) ne odgovara nijednom nalogu — izaberi iz liste NALOZI ili pitaj korisnika.`);
+                continue;
+            }
+            const base = env.diaryCandidates?.length || 0;
+            const aliased = issue.candidates.map((c, i) => ({
+                alias: (env.ctx.orders || []).find(o => o.value.id === c.workOrderId)?.alias || `RK${base + i + 1}`,
+                value: c.workOrderId, label: `${c.workOrderName}${c.projectName ? ` (${c.projectName})` : ''}`,
+            }));
+            env.diaryCandidates = [...(env.diaryCandidates || []), ...aliased.map(({ alias, value }) => ({ alias, value }))];
+            noteRefs(env, aliased.map(c => `${c.alias} ${c.label}`));
+            parts.push(`Posao „${issue.text}" (stavka ${issue.line + 1}) pogađa više naloga: ${aliased.map(c => `${c.alias} ${c.label}`).join('; ')}. Ako poruka kaže koje (ili „sve"), ponovi s orders bez pitanja; inače pitaj korisnika (ask_user).`);
+        } else if (issue.kind === 'process') {
+            parts.push(`Proces „${issue.name}" nije u katalogu — pitaj korisnika je li nov (Da → new_process=true) ili mislio na postojeći.`);
+        } else {
+            parts.push(`Radnik ${issue.workerId} nije pronađen.`);
+        }
+    }
+    return parts.join('\n');
+}
+
+async function fillWorkDaysTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const today = toZoned(env.now, env.tz).date;
+    const monday = (() => {
+        const t = Date.parse(`${today}T12:00:00Z`);
+        const wd = (new Date(t).getUTCDay() + 6) % 7;
+        return new Date(t - wd * 86_400_000).toISOString().slice(0, 10);
+    })();
+    const from = isIsoDate(a.from) ? a.from : monday;
+    const to = isIsoDate(a.to) && a.to < today ? a.to : today;
+    if (from > to) return { ok: false, error: 'Period nije ispravan (od je poslije do).' };
+    if (Date.parse(today) - Date.parse(from) > 60 * 86_400_000) return { ok: false, error: 'Period stariji od 60 dana — upiši ga u ERP-u.' };
+    if (Date.parse(to) - Date.parse(from) > 31 * 86_400_000) return { ok: false, error: 'Najviše mjesec dana odjednom.' };
+
+    const workerIds = (Array.isArray(a.workers) ? a.workers : []).map(x => resolveAlias(env.ctx.workers, x)?.id);
+    if (!workerIds.length || workerIds.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(a.workers)} ne postoji u listi.` };
+    const aliases = Array.isArray(a.orders) ? a.orders : [];
+    const orderIds = aliases.map(x => orderOf(env, x));
+    if (!orderIds.length) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI).' };
+    const bad = aliases.find((_, i) => !orderIds[i]);
+    if (bad !== undefined) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
+
+    const befores = new Map<string, Record<string, unknown> | null>();
+    const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
+    const res = await bookEmptyDays(env.orgId, {
+        workerIds: workerIds as string[], workOrderIds: Array.from(new Set(orderIds as string[])), from, to, today,
+    }, track);
+    if (!res.ok) {
+        // Dani prije greške su upisani — idu pod ↩️ Poništi ove poruke.
+        if (befores.size) {
+            await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
+                recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label: 'prazni dani' })));
+            env.changes.push('prazni dani (djelimično)');
+        }
+        const done = res.days.map(d => shortDay(`${d.date}T12:00:00Z`, env.tz)).join(', ');
+        return { ok: false, error: `${done ? `Upisano samo: ${done}.` : 'Ništa nije upisano.'}\n${diaryIssueText(env, res.issues)}` };
+    }
+    const lastDay = res.days.at(-1)?.date || to;
+    const finished = a.finish_all === true
+        ? await finishItems(env.orgId, res.itemIds.length ? res.itemIds : await openItemIds(env.orgId, orderIds as string[]), `${lastDay}T15:00:00.000Z`, track)
+        : null;
+    if (!res.days.length && !finished) {
+        return { ok: true, days: 0, note: `Nema praznih dana od ${shortDay(`${from}T12:00:00Z`, env.tz)} do ${shortDay(`${to}T12:00:00Z`, env.tz)} — sve je već upisano. Reci korisniku.` };
+    }
+    const label = 'prazni dani';
+    await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
+        recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
+    env.changes.push(label);
+    const byWorkers = new Map<string, string[]>();
+    res.days.forEach(d => {
+        const k = d.workers.join(', ');
+        byWorkers.set(k, [...(byWorkers.get(k) || []), shortDay(`${d.date}T12:00:00Z`, env.tz)]);
+    });
+    env.summaries.push([
+        res.days.length ? `🗓 Popunjeni prazni dani · ${res.workOrderNames.join(', ')}` : `🗓 Nema praznih dana — sve je već upisano.`,
+        ...Array.from(byWorkers.entries()).map(([w, days]) => `• ${w}: ${days.join(', ')}`),
+        finished ? finishedLine(finished.items) : '',
+    ].filter(Boolean).join('\n'));
+    return { ok: true, days: res.days.length, ...(finished ? { finished_products: finished.items } : {}) };
+}
+
+async function openItemIds(orgId: string, workOrderIds: string[]): Promise<string[]> {
+    return (await getItemsForWorkOrders(orgId, workOrderIds)).filter(i => i.Status !== 'Završeno').map(i => i.ID);
 }
 
 async function workReportTool(env: ToolEnv, a: Args): Promise<ToolResult> {
@@ -1221,6 +1426,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'list_orders': return await listOrdersTool(env, args);
             case 'manage_order': return await manageOrderTool(env, args);
             case 'log_work': return await logWorkTool(env, args);
+            case 'fill_work_days': return await fillWorkDaysTool(env, args);
             case 'work_report': return await workReportTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
