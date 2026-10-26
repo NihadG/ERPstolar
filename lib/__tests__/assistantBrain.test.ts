@@ -106,7 +106,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'order_pdf', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'order_pdf', 'learn_name', 'ask_user']);
         expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
@@ -266,6 +266,21 @@ describe('asistent od poruke do baze', () => {
         ]);
         expect(moved.reply).toMatch(/^📒 2 stavke → Hodnik C6/);
         expect(mem().filter(m => m.Location === 'Hodnik C6')).toHaveLength(2);
+    });
+
+    it('izbor ponuđene lokacije se zapamti: drugi put „306" je odmah E306', async () => {
+        await say('U 306 fali ogledalo', [
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', location: '306', state: 'fali' } }] },
+            { calls: [{ name: 'ask_user', args: { question: 'Koji stan?', options: ['E306', 'C306'] } }] },
+        ]);
+        await say('E306', [
+            { calls: [{ name: 'remember', args: { subject: 'ogledalo', location: 'E306', state: 'fali' } }] },
+        ]);
+        expect(docs('assistant_vocab').find(v => v.Phrase === '306')).toMatchObject({ Kind: 'location', Target_ID: 'E306', Source: 'confirmed' });
+        const out = await say('U 306 fali i lajsna', [
+            { calls: [{ name: 'remember', args: { subject: 'lajsna', location: '306', state: 'fali' } }] },
+        ]);
+        expect(out.reply).toBe('📒 Lajsna · E306 — fali');
     });
 
     it('pitanje o riješenim stavkama ide kroz search_memory', async () => {

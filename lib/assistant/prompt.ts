@@ -15,6 +15,7 @@ import { calendarHint } from '@/lib/voice/dates';
 import { describeNow, formatReminder, toZoned } from './datetime';
 import { projectLabel, type AssistantContext } from './context';
 import { relevantMemory } from './memoryRules';
+import { aliasesOf, type VocabKind } from './vocab';
 import type { MemoryItem, Task } from '@/lib/types';
 
 function shortDate(iso: string, tz: string): string {
@@ -70,6 +71,8 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    SVE GOTOVO („sve zapakovali", „završi sve procese", „gotovi su") → finish_all: true (u log_work na stavci ili u fill_work_days): svi procesi tih proizvoda postaju završeni.
    Kad je poruka jasna, UPIŠI ODMAH — ne traži potvrdu datuma iz kalendara, ne pitaj „da ili ne" i ne prepričavaj plan; korisnik ima dugme za poništavanje.
 
+8. RJEČNIK: kad korisnik kaže kako nešto zove („Jerko je Čorluka", „Braco je Ibrahim", „kad kažem fronte mislim na kantiranje furnira") ili ispravi tvoj izbor („ne, mislio sam na kuhinju kod Begovića") → learn_name, pa nastavi posao. Riječi „zovem i: …" u listama i MOJI NAZIVI su njegove riječi — po njima biraj oznake.
+
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;
 - spominje „radnika" a nije jasno kojeg, a to je bitno (ponudi imena iz liste);
@@ -95,9 +98,17 @@ export interface PromptParts {
  */
 export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string, focus = ''): PromptParts {
     const today = toZoned(now, tz).date;
-    const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}`).join('\n') || '—';
-    const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}`).join('\n') || '—';
-    const orders = (ctx.orders || []).map(o => `${o.alias} | ${o.value.name}`).join('\n') || '—';
+    // Naučene riječi uz stavku liste: model po njima bira oznaku („Jerko" → projekat Čorluka).
+    const vocab = ctx.vocab || [];
+    const aka = (kind: VocabKind, id: string) => {
+        const a = aliasesOf(vocab, kind, id);
+        return a.length ? ` | zovem i: ${a.join(', ')}` : '';
+    };
+    const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}${aka('worker', w.value.id)}`).join('\n') || '—';
+    const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}${aka('project', p.value.id)}`).join('\n') || '—';
+    const orders = (ctx.orders || []).map(o => `${o.alias} | ${o.value.name}${aka('order', o.value.id)}`).join('\n') || '—';
+    const terms = vocab.filter(e => e.Kind === 'process' || e.Kind === 'material')
+        .slice(0, 60).map(e => `„${e.Phrase}" = ${e.Target_Label}`).join('; ');
     const shown = focus ? relevantMemory(ctx.memory, focus) : ctx.memory;
     const memory = shown.map(m => memoryLine(m.alias, m.value, tz)).join('\n') || '— (prazno)';
     const memoryHead = shown.length < ctx.memory.length
@@ -118,7 +129,9 @@ ${projects}
 NALOZI U RADU (oznaka | naziv):
 ${orders}
 
-DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}`;
+DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}${terms ? `
+
+MOJI NAZIVI (procesi i materijali): ${terms}` : ''}`;
 
     const volatile = `SADA: ${describeNow(now, tz)} (${tz}).
 

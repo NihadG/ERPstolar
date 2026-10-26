@@ -157,6 +157,8 @@ export interface SessionRefs {
     catalogHits?: unknown[];
     searchHits?: unknown[];
     diaryCandidates?: unknown[];
+    /** Riječi za koje je ERP ponudio izbor — odgovor se zapamti u rječnik. */
+    pendingVocab?: unknown[];
 }
 
 export interface AssistantSession {

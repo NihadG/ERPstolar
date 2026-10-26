@@ -439,3 +439,59 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
         expect(await runTool(e, 'log_work', { lines: [{ workers: ['W2'], work: 'x', orders: ['R9'] }] })).toMatchObject({ ok: false, error: expect.stringMatching(/R9 nije u listi/) });
     });
 });
+
+describe('rječnik projekta: „kod Mirze" i „stvari za Selmu"', () => {
+    const ORG = 'org5';
+    const vocab = () => docs('assistant_vocab').filter(v => v.Organization_ID === ORG);
+    const env5 = (): ToolEnv => {
+        const e = env();
+        return {
+            ...e, orgId: ORG,
+            ctx: {
+                ...e.ctx,
+                workers: [{ alias: 'W1', value: { id: 'zlatan', name: 'Zlatan' } }],
+                orders: [
+                    { alias: 'R1', value: { id: 'h1', name: 'Hasanović - Kuhinja' } },
+                    { alias: 'R2', value: { id: 'h2', name: 'Hasanović - Ormar' } },
+                ],
+                vocab: vocab(),   // kao loadContext: naučeno ranije važi u sljedećoj poruci
+                projects: [{ alias: 'P1', value: { id: 'ph', name: 'Hasanović kuća' } }],
+            },
+        } as unknown as ToolEnv;
+    };
+    const logsOn = (date: string) => docs('work_logs').filter(l => l.Organization_ID === ORG && l.Date === date);
+
+    beforeAll(() => {
+        store.set('workers/zlatan', { Worker_ID: 'zlatan', Organization_ID: ORG, Name: 'Zlatan', Daily_Rate: 100, Status: 'Aktivan' });
+        store.set('projects/ph', { Project_ID: 'ph', Organization_ID: ORG, Name: 'Hasanović kuća', Client_Name: 'Hasanović' });
+        for (const [id, name] of [['h1', 'Hasanović - Kuhinja'], ['h2', 'Hasanović - Ormar']]) {
+            store.set(`work_orders/${id}`, { Work_Order_ID: id, Organization_ID: ORG, Name: name, Status: 'U toku', Work_Order_Type: 'Proizvodnja' });
+            store.set(`work_order_items/${id}i`, { ID: `${id}i`, Organization_ID: ORG, Work_Order_ID: id, Product_ID: `p-${id}`, Product_Name: name.split(' - ')[1], Project_ID: 'ph', Status: 'U toku' });
+        }
+    });
+
+    it('„kod Mirze je ormar Hasanović" → riječ naloga; poslije „radio kod Mirze" ide na taj nalog', async () => {
+        const e = env5();
+        expect(await runTool(e, 'learn_name', { phrase: 'kod Mirze', order: 'R2' })).toMatchObject({ ok: true });
+        expect(e.summaries[0]).toBe('📖 Zapamćeno: „kod Mirze" = Hasanović - Ormar (dok nalog traje)');
+        expect(await runTool(env5(), 'log_work', { date: '2026-10-21', lines: [{ workers: ['W1'], work: 'radio kod Mirze' }] })).toMatchObject({ ok: true });
+        expect(logsOn('2026-10-21').map(l => l.Work_Order_ID)).toEqual(['h2']);
+    });
+
+    it('izbor naloga za riječ koju ERP nije znao se zapamti i važi sljedeći put', async () => {
+        expect(await runTool(env5(), 'log_work', { date: '2026-10-22', lines: [{ workers: ['W1'], work: 'stvari za Selmu', order: 'R1' }] })).toMatchObject({ ok: true });
+        expect(vocab().find(v => v.Phrase === 'stvari za Selmu')).toMatchObject({ Kind: 'order', Target_ID: 'h1', Source: 'confirmed' });
+        expect(await runTool(env5(), 'log_work', { date: '2026-10-23', lines: [{ workers: ['W1'], work: 'stvari za Selmu' }] })).toMatchObject({ ok: true });
+        expect(logsOn('2026-10-23').map(l => l.Work_Order_ID)).toEqual(['h1']);
+        // Naziv koji već pogađa nalog se ne uči (nema šta naučiti).
+        await runTool(env5(), 'log_work', { date: '2026-10-20', lines: [{ workers: ['W1'], work: 'Hasanović kuhinja', order: 'R1' }] });
+        expect(vocab().some(v => v.Key === 'hasanovic kuhinja')).toBe(false);
+    });
+
+    it('naučeni proces: „kantao fronte" = Kantiranje furnira', async () => {
+        const e = env5();
+        await runTool(e, 'learn_name', { phrase: 'kantao fronte', process: 'Kantiranje furnira' });
+        expect(vocab().find(v => v.Kind === 'process')).toMatchObject({ Target_Label: 'Kantiranje furnira' });
+        expect(e.summaries[0]).toBe('📖 Zapamćeno: „kantao fronte" = Kantiranje furnira');
+    });
+});

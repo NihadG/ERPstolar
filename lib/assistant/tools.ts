@@ -32,6 +32,8 @@ import type { DayProposal } from '@/lib/dayProposal';
 import { bookEmptyDays, bookWorkDiary, finishItems, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput } from '@/lib/server/workDiary';
 import { dayLabel, diarySummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
+import { bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
+import { learnVocab } from './vocabStore';
 import {
     MEMORY_STATE_KEYS, MEMORY_STATES, isStateKey, locationKey, memoryTitle, normalizeLocation, parseDimensions, stateLabel, type MemoryStateKey,
 } from './memoryRules';
@@ -296,6 +298,23 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'learn_name',
+        description: 'Zapamti kako korisnik zove nešto u ERP-u: „Jerko je Čorluka", „ostrvo kod Begovića je nalog R4", „Braco je Ibrahim", „kantao fronte = Kantiranje furnira", „305 je E305". Također kad korisnik ispravi tvoj izbor („ne, mislio sam na…"). Tačno jedan cilj. Riječ projekta/naloga važi dok on traje; procesi, materijali i radnici zauvijek.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                phrase: { ...str, description: 'Riječ ili izraz kako ga korisnik kaže.' },
+                project: { ...str, description: 'P# — riječ za klijenta/projekat.' },
+                order: { ...str, description: 'R# — riječ za nalog.' },
+                worker: { ...str, description: 'W# — nadimak radnika.' },
+                process: { ...str, description: 'Tačan naziv procesa iz kataloga.' },
+                material: { ...str, description: 'Tačan naziv materijala.' },
+                location: { ...str, description: 'Lokacija (stan, hodnik) za koju riječ stoji; uz project ako je vezana za projekat.' },
+            },
+            required: ['phrase'],
+        },
+    },
+    {
         name: 'ask_user',
         description: 'Postavi korisniku JEDNO kratko pitanje s 2–4 opcije. Poslije ovoga ne radi ništa dok ne odgovori.',
         input_schema: {
@@ -340,6 +359,8 @@ export interface ToolEnv {
     refNotes?: string[];
     /** Stavke bilježnice upisane ovom porukom — dobijaju dugmad stanja ispod potvrde. */
     touchedMemory?: MemoryItem[];
+    /** ERP je ponudio izbor za riječ („305" → E305 / C305); izabrano se zapamti u rječnik. */
+    pendingVocab?: { kind: VocabKind; phrase: string; options: string[] }[];
     /** Učitano iz baze tokom ove poruke (materijali projekata, katalog). */
     cache?: { rows?: { key: string; value: OrderableRow[] }; catalog?: Material[] };
 }
@@ -360,7 +381,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'learn_name']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -505,11 +526,37 @@ function sameText(a?: string, b?: string): boolean {
 /** Poznate lokacije bilježnice — po njima ERP ispravlja „308" u E308. */
 const knownLocations = (env: ToolEnv) => [...env.ctx.memory, ...env.searchHits].map(m => m.value.Location || '').filter(Boolean);
 
-/** Lokacija kako je rečena → oblik iz bilježnice; nejasno → poruka za pitanje korisniku. */
+/**
+ * Lokacija kako je rečena → naučena riječ ili oblik iz bilježnice; nejasno → ERP
+ * ponudi opcije, a izbor iz sljedeće poruke se zapamti (confirmPending).
+ */
 function resolveLocation(env: ToolEnv, raw: unknown): { location: string } | { error: string } {
-    const r = normalizeLocation(text(raw, 80), knownLocations(env));
-    if ('ambiguous' in r) return { error: `Lokacija „${text(raw, 80)}" nije jednoznačna. Pitaj korisnika (ask_user) s opcijama: ${r.ambiguous.join(', ')}; pa ponovi s tačnom lokacijom.` };
+    const said = text(raw, 80);
+    const learned = said ? bestVocab(said, env.ctx.vocab || [], 'location', { exact: true }) : null;
+    if (learned) return { location: learned.Target_ID };
+    const r = normalizeLocation(said, knownLocations(env));
+    if ('ambiguous' in r) {
+        env.pendingVocab = [...(env.pendingVocab || []), { kind: 'location', phrase: said, options: r.ambiguous }];
+        return { error: `Lokacija „${said}" nije jednoznačna. Pitaj korisnika (ask_user) s opcijama: ${r.ambiguous.join(', ')}; pa ponovi s tačnom lokacijom.` };
+    }
     return r;
+}
+
+/** Korisnik je izabrao jednu od ponuđenih opcija → riječ ide u rječnik (s ↩️ Poništi). */
+async function confirmPending(env: ToolEnv, kind: VocabKind, chosen: string, projectId?: string): Promise<void> {
+    const p = (env.pendingVocab || []).find(x => x.kind === kind && x.options.includes(chosen));
+    if (!p) return;
+    env.pendingVocab = (env.pendingVocab || []).filter(x => x !== p);
+    await rememberWord(env, { phrase: p.phrase, kind, targetId: chosen, targetLabel: chosen, projectId, source: 'confirmed' });
+}
+
+/** Upis riječi u rječnik + zapis za poništavanje + važi odmah u ovoj poruci. */
+async function rememberWord(env: ToolEnv, input: Parameters<typeof learnVocab>[1]): Promise<VocabEntry | null> {
+    const res = await learnVocab(env.orgId, input, env.now);
+    if (!res) return null;
+    await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: res.path, before: res.before, label: `riječ „${res.entry.Phrase}"` });
+    env.ctx.vocab = [...(env.ctx.vocab || []).filter(e => e.Vocab_ID !== res.entry.Vocab_ID), res.entry];
+    return res.entry;
 }
 
 /** Stanje iz poziva: fiksni ključ (+ dopuna); stari state_label ostaje kao rezerva. */
@@ -528,6 +575,7 @@ async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const forLoc = text(a.for_location) ? resolveLocation(env, a.for_location) : { location: '' };
     if ('error' in forLoc) return { ok: false, error: forLoc.error };
     const location = loc.location;
+    if (location) await confirmPending(env, 'location', location, resolveAlias(env.ctx.projects, a.project)?.id);
     const { dims, rest } = parseDimensions(text(a.spec, 120));
     const title = memoryTitle(subject, dims, forLoc.location || undefined);
 
@@ -623,6 +671,7 @@ async function updateMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (!note) return { ok: false, error: 'Nedostaje bilješka (šta se desilo).' };
     const loc = text(a.location) ? resolveLocation(env, a.location) : null;
     if (loc && 'error' in loc) return { ok: false, error: loc.error };
+    if (loc?.location) await confirmPending(env, 'location', loc.location);
 
     const nowIso = env.now.toISOString();
     const saved: string[] = [];
@@ -872,7 +921,9 @@ function mostCommon(values: string[]): string {
  * modela manje. Inače se vraćaju kandidati s oznakama, pa model bira ili pita.
  */
 async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderGroup; item?: Material; fresh?: { project: ProjectRef; name: string } } | string> {
-    const material = text(line.material, 80);
+    const said = text(line.material, 80);
+    // Naučeni naziv materijala („bijele baglame" = Baglama ravna (sa ublazivacem)).
+    const material = bestVocab(said, env.ctx.vocab || [], 'material', { exact: true })?.Target_Label || said;
     const project = line.project ? resolveAlias(env.ctx.projects, line.project) : null;
     if (line.project && !project) return `Projekat ${String(line.project)} ne postoji u listi.`;
     const { groups, catalog } = await searchOrderables(env, material, project);
@@ -1259,6 +1310,7 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const workerId = (alias: unknown) => resolveAlias(env.ctx.workers, alias)?.id;
     const lines: DiaryLineInput[] = [];
     const finishLines: number[] = [];
+    const learnFromLines: { work: string; orderId: string }[] = [];
     let proposal: DayProposal | null = null;
     for (const l of rawLines) {
         const ids = (Array.isArray(l.workers) ? l.workers : []).map(workerId);
@@ -1287,11 +1339,21 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         if (l.fraction != null && !(typeof l.fraction === 'number' && l.fraction > 0 && l.fraction <= 1)) {
             return { ok: false, error: `Dio dana „${String(l.fraction)}" nije ispravan (0–1).` };
         }
+        // Rječnik: naučeni naziv naloga ili projekta („ormar kod Jerka", „Jerko") i procesa.
+        const work = text(l.work, 120);
+        const vocab = env.ctx.vocab || [];
+        const wordOrder = !orders.length && work ? bestVocab(work, vocab, 'order') : null;
+        const wordProject = !orders.length && !wordOrder && work ? bestVocab(work, vocab, 'project') : null;
+        const said = text(l.process, 80);
+        const wordProcess = said ? bestVocab(said, vocab, 'process', { exact: true }) : null;
+        if (orders.length === 1 && work) learnFromLines.push({ work, orderId: orders[0] as string });
         const base: DiaryLineInput = {
             workerIds: ids as string[],
-            target: text(l.work, 120),
-            process: text(l.process, 80) || undefined,
-            alsoProcesses: Array.isArray(l.also) ? l.also.map(p => text(p, 80)).filter(Boolean) : [],
+            target: wordProject ? `${work} ${wordProject.Target_Label}` : work,
+            ...(wordOrder ? { workOrderId: wordOrder.Target_ID } : {}),
+            process: wordProcess?.Target_Label || said || undefined,
+            alsoProcesses: Array.isArray(l.also) ? l.also.map(p => text(p, 80)).filter(Boolean)
+                .map(p => bestVocab(p, vocab, 'process', { exact: true })?.Target_Label || p) : [],
             fraction: number(l.fraction),
             done: l.done === true,
             newProcess: l.new_process === true,
@@ -1319,6 +1381,11 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const finished = finishLines.length
         ? await finishItems(env.orgId, finishLines.flatMap(i => result.lineItemIds[i] || []), `${date}T15:00:00.000Z`, track)
         : null;
+    // Potvrđen izbor naloga za riječ koju ERP nije sam prepoznao („ormar kod Jerka") → rječnik.
+    for (const x of learnFromLines) {
+        const name = (env.ctx.orders || []).find(o => o.value.id === x.orderId)?.value.name;
+        if (name && coverage(x.work, name) < 0.75) await rememberWord(env, { phrase: x.work, kind: 'order', targetId: x.orderId, targetLabel: name, source: 'confirmed' });
+    }
     const label = `rad ${shortDay(`${date}T12:00:00Z`, env.tz)}`;
     await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
@@ -1485,6 +1552,39 @@ export function stripAliases(s: string): string {
         .trim();
 }
 
+/** „Jerko je Čorluka", „Braco je Ibrahim", „kantao fronte = Kantiranje furnira" → rječnik. */
+async function learnNameTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const phrase = text(a.phrase, 80);
+    if (!phrase) return { ok: false, error: 'Nedostaje riječ.' };
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const order = a.order ? resolveAlias(env.ctx.orders || [], a.order) : null;
+    if (a.order && !order) return { ok: false, error: `Nalog ${String(a.order)} nije u listi NALOZI.` };
+    const worker = a.worker ? resolveAlias(env.ctx.workers, a.worker) : null;
+    if (a.worker && !worker) return { ok: false, error: `Radnik ${String(a.worker)} ne postoji u listi.` };
+
+    type Word = Parameters<typeof learnVocab>[1];
+    let word: Word | null = null;
+    if (order) word = { phrase, kind: 'order', targetId: order.id, targetLabel: order.name, source: 'taught' };
+    else if (worker) word = { phrase, kind: 'worker', targetId: worker.id, targetLabel: worker.name, source: 'taught' };
+    else if (text(a.process)) word = { phrase, kind: 'process', targetId: text(a.process, 80), targetLabel: text(a.process, 80), source: 'taught' };
+    else if (text(a.material)) word = { phrase, kind: 'material', targetId: text(a.material, 80), targetLabel: text(a.material, 80), source: 'taught' };
+    else if (text(a.location)) {
+        const loc = normalizeLocation(text(a.location, 80), knownLocations(env));
+        if ('ambiguous' in loc) return { ok: false, error: `Lokacija nije jednoznačna: ${loc.ambiguous.join(', ')}. Pitaj korisnika.` };
+        word = { phrase, kind: 'location', targetId: loc.location, targetLabel: loc.location, projectId: project?.id, source: 'taught' };
+    } else if (project) word = { phrase, kind: 'project', targetId: project.id, targetLabel: projectLabel(project), projectId: project.id, source: 'taught' };
+    if (!word) return { ok: false, error: 'Navedi za šta riječ stoji (project, order, worker, process, material ili location).' };
+
+    const entry = await rememberWord(env, word);
+    if (!entry) return { ok: false, error: 'Riječ je prekratka.' };
+    env.changes.push(`riječ „${entry.Phrase}"`);
+    const scope = entry.Kind === 'order' ? ' (dok nalog traje)' : entry.Project_ID ? ' (dok projekat traje)'
+        : entry.Expires_At ? ` (${EXPIRES_DAYS} dana)` : '';
+    env.summaries.push(`📖 Zapamćeno: „${entry.Phrase}" = ${entry.Target_Label}${scope}`);
+    return { ok: true };
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
     const question = stripAliases(text(a.question, 300));
     const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
@@ -1510,6 +1610,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'fill_work_days': return await fillWorkDaysTool(env, args);
             case 'work_report': return await workReportTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
+            case 'learn_name': return await learnNameTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }

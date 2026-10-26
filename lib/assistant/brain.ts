@@ -109,9 +109,9 @@ function sessionRefs(env: ToolEnv, at: string): SessionRefs | null {
     const refs: SessionRefs = {
         at,
         orderGroups: keep(env.orderGroups), catalogHits: keep(env.catalogHits),
-        searchHits: keep(env.searchHits), diaryCandidates: keep(env.diaryCandidates),
+        searchHits: keep(env.searchHits), diaryCandidates: keep(env.diaryCandidates), pendingVocab: keep(env.pendingVocab),
     };
-    return refs.orderGroups || refs.catalogHits || refs.searchHits || refs.diaryCandidates ? refs : null;
+    return refs.orderGroups || refs.catalogHits || refs.searchHits || refs.diaryCandidates || refs.pendingVocab ? refs : null;
 }
 
 function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
@@ -201,6 +201,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         } : {}),
         ...(prevRefs?.catalogHits ? { catalogHits: prevRefs.catalogHits as ToolEnv['catalogHits'] } : {}),
         ...(prevRefs?.diaryCandidates ? { diaryCandidates: prevRefs.diaryCandidates as ToolEnv['diaryCandidates'] } : {}),
+        ...(prevRefs?.pendingVocab ? { pendingVocab: prevRefs.pendingVocab as ToolEnv['pendingVocab'] } : {}),
         created: { taskIds: [], memoryIds: [] },
         changes: [],
         summaries: [],

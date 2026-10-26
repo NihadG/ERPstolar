@@ -18,6 +18,8 @@ import { getActiveWorkers, getAllTasks, getOpenWorkOrders } from '@/lib/server/f
 import { buildVoiceContext } from '@/lib/voice/context';
 import { contextNames, projectLabel, type VoiceProjectRef } from '@/lib/voice/extract';
 import { listMemory } from './store';
+import { activeVocab, type VocabEntry } from './vocab';
+import { listVocab } from './vocabStore';
 import type { MemoryItem, Project, Supplier, Task, WorkOrder } from '@/lib/types';
 
 const MAX_PROJECTS = 80;
@@ -41,6 +43,8 @@ export interface AssistantContext {
     projects: Aliased<VoiceProjectRef>[];
     /** Otvoreni radni nalozi — R# su isti iz poruke u poruku, pa „sve osim vrata" radi i kao odgovor. */
     orders?: Aliased<{ id: string; name: string }>[];
+    /** Naučene riječi koje sada važe (projekat/nalog aktivan, lokacija nije istekla). */
+    vocab?: VocabEntry[];
     suppliers: string[];
     memory: Aliased<MemoryItem>[];
     tasks: Aliased<Task>[];
@@ -106,13 +110,14 @@ export function orderRefs(orders: WorkOrder[]): Aliased<{ id: string; name: stri
 }
 
 export async function loadContext(orgId: string, uid: string, now: Date = new Date()): Promise<AssistantContext> {
-    const [projects, workers, suppliers, memory, tasks, orders] = await Promise.all([
+    const [projects, workers, suppliers, memory, tasks, orders, vocab] = await Promise.all([
         loadProjects(orgId),
         getActiveWorkers(orgId),
         loadSuppliers(orgId),
         listMemory(orgId, uid),
         getAllTasks(orgId),
         getOpenWorkOrders(orgId),
+        listVocab(orgId).catch(() => [] as VocabEntry[]),
     ]);
 
     const voice = buildVoiceContext(relevantProjects(projects, now), workers);
@@ -121,6 +126,10 @@ export async function loadContext(orgId: string, uid: string, now: Date = new Da
         workers: (voice.workers || []).map((w, i) => ({ alias: `W${i + 1}`, value: w })),
         projects: (voice.projects || []).slice(0, MAX_PROJECTS).map((p, i) => ({ alias: `P${i + 1}`, value: p })),
         orders: orderRefs(orders),
+        vocab: activeVocab(vocab, {
+            projectIds: new Set((voice.projects || []).map(p => p.id)),
+            orderIds: new Set(orders.map(o => o.Work_Order_ID)),
+        }, now.toISOString()),
         suppliers,
         memory: memory.slice(-MAX_MEMORY).map((m, i) => ({ alias: `M${i + 1}`, value: m })),
         tasks: relevantTasks(tasks, uid, now).map((t, i) => ({ alias: `T${i + 1}`, value: t })),
