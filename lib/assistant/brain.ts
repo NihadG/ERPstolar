@@ -60,6 +60,8 @@ export interface AssistantTurnOutput {
     created: { taskIds: string[]; memoryIds: string[] };
     /** PDF-ovi narudžbi koji idu poslije odgovora. */
     documents?: { orderId: string; draft: boolean }[];
+    /** Poruka je nešto upisala (rad, narudžba…) — kapije materijala se provjere odmah. */
+    changed?: boolean;
     degraded?: boolean;
 }
 
@@ -297,5 +299,5 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         ...memoryButtons(env.touchedMemory || []),
         ...(env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : []),
     ];
-    return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents });
+    return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents, changed: env.changes.length > 0 });
 }

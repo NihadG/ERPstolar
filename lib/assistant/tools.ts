@@ -34,6 +34,8 @@ import { dayLabel, diarySummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import { bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
 import { learnVocab } from './vocabStore';
+import { gatesForProjects, gatesText, loadStockRules, receiveByName } from './materialAlerts';
+import { isStockMaterial } from '@/lib/materialGates';
 import {
     MEMORY_STATE_KEYS, MEMORY_STATES, isStateKey, locationKey, memoryTitle, normalizeLocation, parseDimensions, stateLabel, type MemoryStateKey,
 } from './memoryRules';
@@ -298,6 +300,40 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'material_status',
+        description: 'Materijal po fazama naloga u toku (kapije): šta je tu, šta je naručeno i čeka se, šta fali, i za koliko koraka treba. Za „imam li sve za okivanje", „šta fali za Jerka", „šta čekam".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                project: { ...str, description: 'Oznaka P# (bez toga = svi nalozi u toku).' },
+                order: { ...str, description: 'R# naloga.' },
+            },
+        },
+    },
+    {
+        name: 'material_arrived',
+        description: 'Materijal je stigao ili je tu: „stigle šarke i ručke za Jerka", „stiglo 18 od 24 baglame", „MDF imam". ERP nađe materijal (kapije naloga, poslane narudžbe), primi narudžbu (i djelimično) ili ga upiše kao na stanju.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                items: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            material: { ...str, description: 'Naziv kako je rečen: „šarke", „ručke", „staklo".' },
+                            quantity: { ...num, description: 'Samo kad je rečena količina koja je stigla (djelimično).' },
+                        },
+                        required: ['material'],
+                    },
+                },
+                project: { ...str, description: 'Oznaka P#.' },
+                order: { ...str, description: 'R# naloga.' },
+            },
+            required: ['items'],
+        },
+    },
+    {
         name: 'learn_name',
         description: 'Zapamti kako korisnik zove nešto u ERP-u: „Jerko je Čorluka", „ostrvo kod Begovića je nalog R4", „Braco je Ibrahim", „kantao fronte = Kantiranje furnira", „305 je E305". Također kad korisnik ispravi tvoj izbor („ne, mislio sam na…"). Tačno jedan cilj. Riječ projekta/naloga važi dok on traje; procesi, materijali i radnici zauvijek.',
         input_schema: {
@@ -381,7 +417,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'learn_name']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'learn_name', 'material_arrived']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -1075,8 +1111,16 @@ const INTERNAL = /^(interni|interno|vlastito|in-house)$/i;
  * s ostatkom za naručiti, po izboru samo jednog dobavljača i/ili proizvoda.
  */
 async function missingGroups(env: ToolEnv, project: ProjectRef, supplier: string, product: string): Promise<OrderGroup[]> {
-    const rows = (await loadProjectMaterials(env.orgId, [project.id]))
+    const [all, stock, catalog] = await Promise.all([
+        loadProjectMaterials(env.orgId, [project.id]),
+        loadStockRules(env.orgId),
+        env.cache?.catalog || adminDb().collection('materials').where('Organization_ID', '==', env.orgId).get().then(s => s.docs.map(d => d.data() as Material)),
+    ]);
+    const catalogById = new Map(catalog.map(m => [m.Material_ID, m]));
+    // Zaliha (kupuje se na veliko) ne ide u „sve što fali" — naručuje se kad je nema (kapija ili izričito).
+    const rows = all
         .filter(r => r.available > 0 && !INTERNAL.test((r.supplier || '').trim()))
+        .filter(r => !isStockMaterial(r.name, catalogById.get(r.catalogId), stock))
         .filter(r => !supplier || matchScore(supplier, [r.supplier || '']) >= 0.85)
         .filter(r => !product || matchScore(product, [r.productName]) >= 0.7);
     const groups = new Map<string, OrderGroup>();
@@ -1585,6 +1629,59 @@ async function learnNameTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true };
 }
 
+// ─── Materijal po fazama (kapije) ─────────────────────────────────────
+
+/** Projekti iz P# ili R# (nalog → projekti njegovih stavki); null = svi nalozi u toku. */
+async function materialScope(env: ToolEnv, a: Args): Promise<string[] | null | string> {
+    if (a.project) {
+        const project = resolveAlias(env.ctx.projects, a.project);
+        return project ? [project.id] : `Projekat ${String(a.project)} ne postoji u listi.`;
+    }
+    if (a.order) {
+        const woId = orderOf(env, a.order);
+        if (!woId) return `Nalog ${String(a.order)} ne postoji u listi.`;
+        const items = await getItemsForWorkOrders(env.orgId, [woId]);
+        return Array.from(new Set(items.map(i => i.Project_ID).filter(Boolean)));
+    }
+    return null;
+}
+
+async function materialStatusTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const scope = await materialScope(env, a);
+    if (typeof scope === 'string') return { ok: false, error: scope };
+    const lines = gatesText(await gatesForProjects(env.orgId, scope));
+    if (!lines.length) return { ok: true, lines: [], note: 'Nema naloga u toku s materijalom koji čeka — reci korisniku da je sve tu ili nema naloga u toku.' };
+    return { ok: true, lines, legend: '✔ tu · 🚚 naručeno, čeka se · ◐ dio stigao · 📦 zaliha, nije potvrđeno · ✖ nije naručeno' };
+}
+
+async function materialArrivedTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const scope = await materialScope(env, a);
+    if (typeof scope === 'string') return { ok: false, error: scope };
+    const items = Array.isArray(a.items) ? (a.items as Args[]).slice(0, 15) : [];
+    if (!items.length) return { ok: false, error: 'Nema stavki.' };
+    const done: string[] = [];
+    const problems: string[] = [];
+    for (const item of items) {
+        const name = text(item.material, 80);
+        if (!name) continue;
+        const befores = new Map<string, Record<string, unknown>>();
+        const res = await receiveByName(env.orgId, scope, name, number(item.quantity), (path, data) => { if (!befores.has(path)) befores.set(path, data); });
+        if (!res.ok) {
+            problems.push(res.candidates ? `${res.error} Opcije: ${res.candidates.join(' / ')}` : res.error);
+            continue;
+        }
+        await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
+            recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label: `stiglo: ${name}` })));
+        env.changes.push(`stiglo: ${name}`);
+        done.push(res.line);
+    }
+    if (done.length) env.summaries.push(done.join('\n'));
+    if (env.cache) delete env.cache.rows;
+    // Nešto nije nađeno ili nije jasno → model pita (upisano ostaje upisano).
+    if (problems.length) return { ok: false, done, error: problems.join(' ') };
+    return { ok: true, done };
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
     const question = stripAliases(text(a.question, 300));
     const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
@@ -1611,6 +1708,8 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'work_report': return await workReportTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'learn_name': return await learnNameTool(env, args);
+            case 'material_status': return await materialStatusTool(env, args);
+            case 'material_arrived': return await materialArrivedTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }

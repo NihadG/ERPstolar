@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer, CalendarCheck, History, Calendar } from 'lucide-react';
+import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer, CalendarCheck, History, Calendar, Package } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -22,6 +22,7 @@ import ProcessGraphModal from './ProcessGraphModal';
 import OrderProcessBoard from './OrderProcessBoard';
 import WorkOrderTasksPanel from './WorkOrderTasksPanel';
 import WorkHistory from './WorkHistory';
+import MaterialGatesPanel from '@/components/materials/MaterialGatesPanel';
 import { tasksForWorkOrder, taskProgress, firstBookingDate, lastBookingDate } from '@/lib/workOrderTasks';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import './WorkOrderExpandedDetail.css';
@@ -69,7 +70,7 @@ export default function WorkOrderExpandedDetail({
     const [processOpen, setProcessOpen] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
-    const [tab, setTab] = useState<'tok' | 'rad' | 'istorija' | 'zadaci'>('tok');
+    const [tab, setTab] = useState<'tok' | 'rad' | 'istorija' | 'materijal' | 'zadaci'>('tok');
     // Proizvod s kojim se Istorija otvara („Istorija rada →" na proizvodu); '' = cijeli nalog.
     const [historyItemId, setHistoryItemId] = useState('');
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
@@ -637,6 +638,9 @@ export default function WorkOrderExpandedDetail({
                 <button className={tab === 'istorija' ? 'active' : ''} onClick={() => { setHistoryItemId(''); setTab('istorija'); }}>
                     <History size={14} /> Istorija
                 </button>
+                <button className={tab === 'materijal' ? 'active' : ''} onClick={() => setTab('materijal')}>
+                    <Package size={14} /> Materijal
+                </button>
                 <button className={tab === 'zadaci' ? 'active' : ''} onClick={() => setTab('zadaci')}
                     title={taskStats.overdue > 0 ? `${taskStats.overdue} zadataka kasni` : undefined}>
                     <ListTodo size={14} /> Zadaci
@@ -911,6 +915,15 @@ export default function WorkOrderExpandedDetail({
                     graph={workOrder.Process_Graph}
                     workLogs={liveLogs(workLogs)}
                     initialItemId={historyItemId || undefined}
+                />
+            )}
+
+            {/* ═══ MATERIJAL: šta treba kod kojeg procesa (kapije) — isto što pita Telegram bot ═══ */}
+            {tab === 'materijal' && (
+                <MaterialGatesPanel
+                    workOrder={{ ...workOrder, items: localItems.length ? localItems : workOrder.items }}
+                    onRefresh={onRefresh}
+                    showToast={showToast}
                 />
             )}
 

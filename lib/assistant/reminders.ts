@@ -14,6 +14,7 @@ import { addDays } from '@/lib/voice/dates';
 import { toZoned, zonedToUtcMs } from './datetime';
 import { buildTodayDigest } from './digest';
 import { createProposalMessage, gapsForDigest, isWorkingDayFor } from './dayProposals';
+import { materialDigest } from './materialAlerts';
 import { getLinkByUid, listLinks, setDigestDate, setProposalDate, type AssistantLink } from './store';
 import type { Task } from '@/lib/types';
 
@@ -99,12 +100,13 @@ export async function sendMorningDigests(now: Date, tz: string): Promise<number>
         await setDigestDate(link.telegramUserId, local.date);
         try {
             // Rupe u upisu rada idu u isti pregled; njihova greška ne smije ugasiti zadatke.
-            const [digest, gaps] = await Promise.all([
+            const [digest, gaps, material] = await Promise.all([
                 buildTodayDigest(link.orgId, now, tz),
                 gapsForDigest(link.orgId, local.date).catch(e => { console.error('[reminders] rupe nisu izračunate:', e); return null; }),
+                materialDigest(link.orgId, local.date).catch(e => { console.error('[reminders] materijal nije izračunat:', e); return null; }),
             ]);
-            if (!digest && !gaps) continue;
-            await sendMessage(link.chatId, ['Dobro jutro ☀️', digest, gaps?.text].filter(Boolean).join('\n\n'), gaps?.buttons);
+            if (!digest && !gaps && !material) continue;
+            await sendMessage(link.chatId, ['Dobro jutro ☀️', digest, material, gaps?.text].filter(Boolean).join('\n\n'), gaps?.buttons);
             sent++;
         } catch (e) {
             console.error('[reminders] jutarnji pregled nije poslan:', e);

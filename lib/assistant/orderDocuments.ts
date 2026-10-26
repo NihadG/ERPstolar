@@ -3,7 +3,8 @@
 //
 // Poslije odgovora na „naruči…" bot pošalje PDF (isti raspored kao ERP),
 // a uz nacrt dugme „📤 Označi kao poslano" — tek tad materijali postaju
-// naručeni, kao kad se u ERP-u narudžba prebaci u „Poslano".
+// naručeni, kao kad se u ERP-u narudžba prebaci u „Poslano". Uz poslanu
+// narudžbu ide „📦 Stiglo sve" (djelimičan prijem: porukom ili u ERP-u).
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from '@/lib/server/firebaseAdmin';
@@ -30,5 +31,6 @@ export async function sendOrderPdf(chatId: number | string, orgId: string, order
     const pdf = buildOrderPdf({ order, supplier, specs, company });
     await sendDocument(chatId, { buffer: pdf, filename: orderPdfFileName(order) },
         `Narudžba ${order.Order_Number} · ${order.Supplier_Name} (${order.Status})`,
-        draft && order.Status === 'Nacrt' ? [[{ text: '📤 Označi kao poslano', data: `ordsent:${order.Order_ID}` }]] : undefined);
+        order.Status === 'Nacrt' && draft ? [[{ text: '📤 Označi kao poslano', data: `ordsent:${order.Order_ID}` }]]
+            : order.Status === 'Poslano' ? [[{ text: '📦 Stiglo sve', data: `ordrcv:${order.Order_ID}` }]] : undefined);
 }

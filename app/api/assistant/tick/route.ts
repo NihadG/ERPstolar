@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════
 // SAT ASISTENTA — dospjeli podsjetnici, jutarnji pregled (s rupama u
-// upisu rada) i večernji prijedlog rada.
+// upisu rada), večernji prijedlog rada i kapije materijala.
 //
 // Poziva ga Cloudflare Worker svake minute (tools/cloudflare-cron) s
 // `Authorization: Bearer <CRON_SECRET>`. Isti oblik zaglavlja šalje i
@@ -12,6 +12,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { assistantTimezone } from '@/lib/assistant/datetime';
 import { sendDayProposals, sendDueReminders, sendMorningDigests } from '@/lib/assistant/reminders';
+import { sendMaterialAlerts } from '@/lib/assistant/materialAlerts';
 import { errorResponse } from '@/lib/server/requireUser';
 
 export const runtime = 'nodejs';
@@ -35,7 +36,9 @@ async function tick(req: Request) {
         const reminders = await sendDueReminders(now, tz);
         const digests = await sendMorningDigests(now, tz);
         const proposals = await sendDayProposals(now, tz);
-        return NextResponse.json({ ok: true, ...reminders, digests, proposals, at: now.toISOString() });
+        // Kapije materijala (svakih 10 min); greška ne smije ugasiti ostatak sata.
+        const materials = await sendMaterialAlerts(now, tz).catch(e => { console.error('[tick] kapije materijala:', e); return 0; });
+        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, at: now.toISOString() });
     } catch (e) {
         return errorResponse(e);
     }

@@ -1,0 +1,85 @@
+/* Materijal po fazama (tab „Materijal" u nalogu). Boje iz tokena globals.css. */
+
+.mg { display: flex; flex-direction: column; gap: 10px; }
+
+.mg-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.mg-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: var(--background); border: 1px solid var(--border-light); color: var(--text-secondary);
+}
+.mg-pill.here { color: var(--success); background: var(--success-bg); border-color: transparent; }
+.mg-pill.ordered { color: var(--accent); background: var(--accent-light); border-color: transparent; }
+.mg-pill.stock { color: var(--warning); background: var(--warning-bg); border-color: transparent; }
+.mg-pill.missing { color: var(--error); background: var(--error-bg); border-color: transparent; }
+
+.mg-gate {
+    background: var(--background); border: 1px solid var(--border-light); border-radius: var(--radius-md);
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.mg-gate.active { border-color: var(--warning); }
+.mg-gate.active.ready, .mg-gate.ready { border-color: var(--border-light); }
+.mg-gate.done { opacity: 0.7; }
+
+.mg-gate-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mg-gate-head h4 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.mg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); flex-shrink: 0; }
+.mg-gate.ready .mg-dot, .mg-gate.done .mg-dot { background: var(--success); }
+.mg-when { font-size: 12px; color: var(--text-secondary); background: var(--surface); padding: 2px 8px; border-radius: 999px; }
+.mg-gate.active .mg-when { color: var(--warning); background: var(--warning-bg); }
+.mg-gate-state { font-size: 12px; color: var(--text-tertiary); margin-left: auto; }
+
+.mg-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mg-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 12px;
+    padding: 6px 0; border-top: 1px solid var(--border-light); font-size: 13px;
+}
+.mg-row:first-child { border-top: none; }
+.mg-row label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.mg-row input[type='checkbox'] { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--accent); }
+.mg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.mg-row.here .mg-name { color: var(--text-secondary); }
+.mg-qty { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mg-state { font-size: 12px; font-weight: 600; white-space: nowrap; justify-self: end; }
+.mg-state.here { color: var(--success); }
+.mg-state.ordered, .mg-state.partial { color: var(--accent); }
+.mg-state.stock { color: var(--warning); }
+.mg-state.missing { color: var(--error); }
+.mg-products { grid-column: 1 / -1; font-size: 12px; color: var(--text-tertiary); padding-left: 24px; }
+
+.mg-link { border: none; background: none; padding: 0; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; }
+.mg-link:hover { text-decoration: underline; }
+
+.mg-done-toggle {
+    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+    border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary); padding: 4px 0;
+}
+.mg-done-toggle svg { transition: transform var(--transition); transform: rotate(-90deg); }
+.mg-done-toggle svg.open { transform: rotate(0); }
+
+.mg-actions {
+    position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 10px 14px; box-shadow: 0 4px 16px var(--shadow-md); font-size: 13px; font-weight: 600;
+}
+.mg-actions > span { margin-right: auto; color: var(--text-secondary); }
+.mg-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+.mg-empty { display: flex; gap: 10px; align-items: flex-start; color: var(--text-secondary); font-size: 13px; padding: 16px; background: var(--background); border-radius: var(--radius-md); border: 1px solid var(--border-light); }
+.mg-empty p { margin: 0; }
+
+@media (max-width: 600px) {
+    .mg-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .mg-qty { grid-row: 2; grid-column: 1; padding-left: 24px; }
+    .mg-gate-state { margin-left: 0; width: 100%; }
+}
+
+/* Zaliha: podešavanje i oznaka u katalogu */
+.mg-hint { margin: 0 0 14px; font-size: 13px; color: var(--text-secondary); }
+.mg-type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; }
+.mg-type { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text-primary); cursor: pointer; }
+.mg-type input { width: 16px; height: 16px; accent-color: var(--accent); }
+.mg-stock-tag {
+    display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+    color: var(--warning); background: var(--warning-bg); vertical-align: 1px;
+}

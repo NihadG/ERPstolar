@@ -69,6 +69,7 @@ import {
 import { buildProductionSnapshot } from './snapshot/buildSnapshot';
 import { PRODUCT_TYPES, type ProductType } from './classify/taxonomy';
 import type { PlanChainTemplate } from './types';
+import type { StockRules } from './materialGates';
 import { MATERIAL_TYPES, type MaterialType } from './productProcesses';
 import { computeReadiness, type Readiness } from './insights/readiness';
 
@@ -1957,7 +1958,10 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
             return { success: false, message: `Nije moguće promijeniti status iz "${previousStatus}" u "${status}"` };
         }
 
-        await updateDoc(snapshot.docs[0].ref, { Status: status });
+        // Sent_At: odavde se računa stvarni rok isporuke dobavljača (lib/materialGates.supplierLeadDays).
+        await updateDoc(snapshot.docs[0].ref, status === 'Poslano' && previousStatus !== 'Poslano'
+            ? { Status: status, Sent_At: new Date().toISOString() }
+            : { Status: status });
 
         // Helper: get all order items for this order
         const getItems = async () => {
@@ -6420,6 +6424,7 @@ export async function saveOrgSettings(
         companyInfo?: any; appSettings?: any; googleIntegration?: any;
         productTaxonomy?: ProductType[]; materialTaxonomy?: MaterialType[];
         planTemplates?: PlanChainTemplate[];
+        materialStock?: StockRules;
     }
 ): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
@@ -6438,6 +6443,8 @@ export async function saveOrgSettings(
         if (data.materialTaxonomy !== undefined) payload.materialTaxonomy = data.materialTaxonomy;
         // Šabloni lanaca (Platno) — korisnikovo znanje radionice, isti obrazac kao taksonomije.
         if (data.planTemplates !== undefined) payload.planTemplates = data.planTemplates;
+        // Šta se kupuje na veliko (zaliha) — kapije materijala (lib/materialGates).
+        if (data.materialStock !== undefined) payload.materialStock = data.materialStock;
         await setDoc(doc(firestore, 'org_settings', organizationId), payload, { merge: true });
 
         return { success: true, message: 'Settings saved' };
@@ -6453,6 +6460,7 @@ export async function getOrgSettings(
     companyInfo: any; appSettings: any; googleIntegration: any;
     productTaxonomy: ProductType[] | null; materialTaxonomy: MaterialType[] | null;
     planTemplates: PlanChainTemplate[] | null;
+    materialStock: StockRules | null;
 } | null> {
     if (!organizationId) return null;
 
@@ -6470,6 +6478,7 @@ export async function getOrgSettings(
                 productTaxonomy: (data.productTaxonomy as ProductType[]) || null,
                 materialTaxonomy: (data.materialTaxonomy as MaterialType[]) || null,
                 planTemplates: (data.planTemplates as PlanChainTemplate[]) || null,
+                materialStock: (data.materialStock as StockRules) || null,
             };
         }
         return null;

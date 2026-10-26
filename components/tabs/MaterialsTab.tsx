@@ -10,6 +10,10 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import { downloadErpCatalog } from '@/components/SketchUpOfferImportModal';
+import StockRulesModal from '@/components/materials/StockRulesModal';
+import { useStockRules } from '@/components/materials/useStockRules';
+import { isStockMaterial, materialRole } from '@/lib/materialGates';
+import { STANDARD_CATALOG } from '@/lib/processStandard';
 
 interface MaterialsTabProps {
     materials: Material[];
@@ -24,6 +28,8 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
     const [materialModal, setMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<Partial<Material> | null>(null);
     const [removingDuplicates, setRemovingDuplicates] = useState(false);
+    const [stockOpen, setStockOpen] = useState(false);
+    const { rules: stockRules, save: saveStockRules } = useStockRules(organizationId);
 
     // Material templates
     const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
@@ -179,6 +185,14 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                 </button>
                 <button
                     className="btn btn-secondary"
+                    onClick={() => setStockOpen(true)}
+                    title="Šta kupuješ na veliko (MDF, lesonit, kant traka…) — ne naručuje se po projektu"
+                >
+                    <span className="material-icons-round">warehouse</span>
+                    Zaliha
+                </button>
+                <button
+                    className="btn btn-secondary"
                     onClick={() => setTemplatesModalOpen(true)}
                     title="Upravljaj templejtima materijala"
                 >
@@ -211,7 +225,10 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                     filteredMaterials.map(material => (
                         <div key={material.Material_ID} className="simple-card">
                             <div className="simple-card-info">
-                                <div className="simple-card-title">{material.Name}</div>
+                                <div className="simple-card-title">
+                                    {material.Name}
+                                    {isStockMaterial(material.Name, material, stockRules) && <span className="mg-stock-tag">Zaliha</span>}
+                                </div>
                                 <div className="simple-card-subtitle">
                                     {material.Category} • {material.Unit} • {material.Default_Supplier || 'Bez dobavljača'}
                                 </div>
@@ -327,6 +344,29 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                         placeholder="Odaberi dobavljača..."
                     />
                 </div>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Zaliha (kupujem na veliko)</label>
+                        <select
+                            value={editingMaterial?.Is_Stock === true ? 'da' : editingMaterial?.Is_Stock === false ? 'ne' : ''}
+                            onChange={(e) => setEditingMaterial({ ...editingMaterial, Is_Stock: e.target.value === 'da' ? true : e.target.value === 'ne' ? false : null })}
+                        >
+                            <option value="">Po pravilu ({isStockMaterial(editingMaterial?.Name || '', undefined, stockRules) ? 'da' : 'ne'})</option>
+                            <option value="da">Da — ne naručuje se po projektu</option>
+                            <option value="ne">Ne — naručuje se po projektu</option>
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label>Mora biti tu kod procesa</label>
+                        <select
+                            value={editingMaterial?.Need_By_Process || ''}
+                            onChange={(e) => setEditingMaterial({ ...editingMaterial, Need_By_Process: e.target.value })}
+                        >
+                            <option value="">Po vrsti ({materialRole(editingMaterial?.Name || '', { Category: editingMaterial?.Category }).candidates[0] || 'bez kapije'})</option>
+                            {STANDARD_CATALOG.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                    </div>
+                </div>
                 <div className="form-group">
                     <label>Opis</label>
                     <textarea
@@ -336,6 +376,17 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                     />
                 </div>
             </Modal>
+
+            <StockRulesModal
+                isOpen={stockOpen}
+                rules={stockRules}
+                onClose={() => setStockOpen(false)}
+                onSave={async (r) => {
+                    const ok = await saveStockRules(r);
+                    showToast(ok ? 'Pravila zalihe sačuvana' : 'Greška pri spremanju', ok ? 'success' : 'error');
+                    return ok;
+                }}
+            />
 
             <MaterialTemplatesModal
                 isOpen={templatesModalOpen}

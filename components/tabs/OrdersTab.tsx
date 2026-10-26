@@ -21,6 +21,7 @@ import MobileOrdersView from './mobile/MobileOrdersView';
 import OrderItemGroupList from './OrderItemGroupList';
 import { materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { allocationsAfterOrderQuantityChange, orderItemAllocations, planMaterialGroupOrder, splitMaterialQuantity } from '@/lib/orderMaterialAllocation';
+import OrdersPulse from '@/components/materials/OrdersPulse';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -1475,6 +1476,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     return (
         <>
             {isCompact ? (
+                <>
+                <OrdersPulse orders={orders} />
                 <MobileOrdersView
                     orders={orders}
                     suppliers={suppliers}
@@ -1488,6 +1491,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     onDownloadPDF={downloadOrderPDF}
                     onPrintOrder={(order) => printOrderDocument(order)}
                 />
+                </>
             ) : (
                 <div className="orders-page">
             {/* Page Header */}
@@ -1514,6 +1518,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     Nova Narudžba
                 </button>
             </div>
+
+            {/* Puls: kasni / na putu / treba uskoro (kapije naloga u toku) */}
+            <OrdersPulse orders={orders} />
 
             {/* Collapsible Control Bar */}
             <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>

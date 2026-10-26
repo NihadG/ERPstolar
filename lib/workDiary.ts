@@ -211,7 +211,7 @@ export function planWorkerDay(fractions: (number | undefined)[]): DayPlan {
 // ─── Graf naloga i čekiranje ──────────────────────────────────────────
 
 /** Čvorovi koji pokrivaju stavku, redom kojim teku (izvori prvo). */
-function itemNodes(graph: ProcessGraph, itemId: string): ProcessNode[] {
+export function itemNodes(graph: ProcessGraph, itemId: string): ProcessNode[] {
     const nodes = graph.nodes.filter(n => !(n.itemIds || []).length || n.itemIds.includes(itemId));
     const ids = new Set(nodes.map(n => n.id));
     const indeg = new Map(nodes.map(n => [n.id, 0]));
