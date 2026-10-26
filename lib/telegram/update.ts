@@ -42,6 +42,7 @@ export interface TgMessage {
     forward_from?: TgUser;
     forward_sender_name?: string;
     forward_date?: number;
+    reply_markup?: { inline_keyboard?: { text: string; callback_data?: string }[][] };
 }
 
 export interface TgCallbackQuery {
@@ -85,6 +86,8 @@ export type Incoming =
         data: string;
         messageId: number;
         messageText: string;
+        /** Dugmad poruke na kojoj je pritisnuto (da se ostala zadrže pri izmjeni). */
+        buttons?: { text: string; data: string }[][];
     }
     | { type: 'ignored'; updateId: number; reason: string; chatId?: number };
 
@@ -132,6 +135,7 @@ export function normalizeUpdate(u: TgUpdate): Incoming {
             data: q.data || '',
             messageId: q.message?.message_id || 0,
             messageText: q.message?.text || '',
+            buttons: q.message?.reply_markup?.inline_keyboard?.map(r => r.map(b => ({ text: b.text, data: b.callback_data || '' }))),
         };
     }
 

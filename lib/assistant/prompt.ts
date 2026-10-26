@@ -14,6 +14,8 @@
 import { calendarHint } from '@/lib/voice/dates';
 import { describeNow, formatReminder, toZoned } from './datetime';
 import { projectLabel, type AssistantContext } from './context';
+import { relevantMemory } from './memoryRules';
+import { aliasesOf, type VocabKind } from './vocab';
 import type { MemoryItem, Task } from '@/lib/types';
 
 function shortDate(iso: string, tz: string): string {
@@ -49,10 +51,10 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
 1. PODSJETNIK ili ZADATAK („treba da…", „napomeni me…", „podsjeti me…", „u ponedjeljak naručiti…") → create_task. Kad je rečen dan, to je podsjetnik (reminder_at). Samo dan bez sata → 08:00 tog dana.
    JEDAN POSAO = JEDAN ZADATAK. Kad isti posao ima više koraka ili više ljudi („Imeru da napravi ploču, a Kerimu da odradi CNC"), napravi JEDAN zadatak s check listom: svaka stavka je korak s imenom osobe („Imer — napraviti ploču za Dinu", „Kerim — CNC"). worker = glavna/prva osoba. Više zadataka samo za stvarno nepovezane poslove.
    Odgovor na tvoje pitanje ili dopuna („a Kerimu reci…", „dodaj i…") ide u ISTI zadatak — ako je već napravljen, update_task s add_checklist, ne novi zadatak.
-2. ČINJENICA O STANJU STVARI (šta gdje stoji, koliko, u kakvom stanju: „u stanu 304 imam 3 ogledala od 1 m") → remember. Ako ista stvar na istoj lokaciji već postoji u bilježnici → update_memory umjesto nove stavke.
-3. IZVJEŠTAJ RADNIKA (proslijeđena poruka „[Proslijeđeno od X, …]" ili zalijepljen tekst radnika) → uporedi s bilježnicom i zadacima: ono što je urađeno zatvori (update_memory resolved=true, update_task status=completed), novo stanje zapamti. U bilješci napiši ko je javio.
+2. ČINJENICA O STANJU STVARI (šta gdje stoji, koliko, u kakvom stanju: „u stanu 304 imam 3 ogledala od 1 m") → remember, ODMAH, bez pitanja i bez potvrde (mjere nisu obavezne; nejasnu lokaciju ERP sam vrati kao pitanje). Ako ista stvar na istoj lokaciji već postoji u bilježnici → update_memory umjesto nove stavke. Više stvari u poruci = više poziva u jednom koraku.
+3. IZVJEŠTAJ RADNIKA (proslijeđena poruka „[Proslijeđeno od X, …]" ili zalijepljen tekst radnika) → uporedi s bilježnicom i zadacima: ono što je urađeno zatvori (update_memory state=postavljeno, update_task status=completed), novo stanje zapamti. U bilješci napiši ko je javio.
 4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
-5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala") → update_task / update_memory na stavci o kojoj se upravo pričalo.
+5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala", „to je sve E308") → ODMAH update_task / update_memory na stavkama o kojima se upravo pričalo (više stavki = items), bez pitanja „da li da ispravim".
 6. NARUDŽBA SADA („naruči…", „napravi narudžbu…", „pošalji narudžbu za…") → odmah create_order sa material + project (bez find_material). find_material samo kad korisnik pita stanje („koliko još treba baglama?"). Ako narudžba treba tek kasnije („u ponedjeljak trebam naručiti…"), to je PODSJETNIK (create_task), ne narudžba.
    „Naruči SVE što fali za Čorluku (kod Frischeisa / za kuhinju)" → create_order s all_missing=true + project (+ supplier, product ako su rečeni), bez lines i bez nabrajanja materijala.
    Količina tačno kako je rečena: manje od ostatka = djelimično (ostatak ostaje za kasnije), više = višak se dodaje u sastavnicu proizvoda (ulazi u trošak i profit). Bez količine = sav ostatak koji projekat još treba.
@@ -69,16 +71,17 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    SVE GOTOVO („sve zapakovali", „završi sve procese", „gotovi su") → finish_all: true (u log_work na stavci ili u fill_work_days): svi procesi tih proizvoda postaju završeni.
    Kad je poruka jasna, UPIŠI ODMAH — ne traži potvrdu datuma iz kalendara, ne pitaj „da ili ne" i ne prepričavaj plan; korisnik ima dugme za poništavanje.
 
+8. RJEČNIK: kad korisnik kaže kako nešto zove („Jerko je Čorluka", „Braco je Ibrahim", „kad kažem fronte mislim na kantiranje furnira") ili ispravi tvoj izbor („ne, mislio sam na kuhinju kod Begovića") → learn_name, pa nastavi posao. Riječi „zovem i: …" u listama i MOJI NAZIVI su njegove riječi — po njima biraj oznake.
+
 PITANJA KORISNIKU (ask_user) — samo kad bez odgovora ne možeš ispravno sačuvati:
 - traži podsjetnik („napomeni me", „podsjeti me") a nije rečeno nikakvo vrijeme ni dan;
 - spominje „radnika" a nije jasno kojeg, a to je bitno (ponudi imena iz liste);
-- za stvar u bilježnici nije jasno ključno stanje (npr. montirano ili ne).
 Jedno pitanje odjednom, 2–4 kratke opcije. Ne pitaj ono što se može razumno pretpostaviti. Kad dobiješ odgovor, završi prvobitni zahtjev.
 
 OZNAKE: W# radnici, P# projekti, R# nalozi, M# bilježnica, T# zadaci, S# rezultati pretrage, O# materijali projekata i K# katalog (iz find_material). Koristi SAMO oznake iz lista — nikad ne izmišljaj. Ako ime iz poruke nije u listi, upiši ga u tekst.
 Oznake su SAMO za alate — korisniku ih NIKAD ne piši (ni u odgovoru ni u opcijama pitanja). Piši imena: „Imer", ne „Imer (W9)".
 
-BILJEŽNICA: jedna stavka = jedna stvar na jednoj lokaciji. subject = predmet u osnovnom obliku jednine („ogledalo", „baglama", „radna ploča"). state_label = kratko stanje („nije montirano", „čeka isporuku", „u kombiju").
+BILJEŽNICA: jedna stavka = jedna stvar (iste mjere) na jednoj lokaciji. subject = predmet u osnovnom obliku jednine („ogledalo", „baglama", „radna ploča"); mjere i opis u spec kako su rečeni; lokacija kako je rečena — naslov i oblik lokacije složi ERP. state iz liste: „u stanu imam X" bez riječi o postavljanju = nije_postavljeno; „nisam postavljao" = nije_postavljeno; „fali" = fali; stoji na hodniku/u kombiju = ceka; mjera ili napomena („prolaz kliznih vrata 590") = info sa state_note. Nikad pitanje u stanju.
 
 ODGOVOR: kratko, običan tekst bez markdowna (bez *, #, _). Liste s „• ". Kad samo upisuješ (zadatak, bilješka, izmjena, narudžba), potvrdu i PDF korisniku pošalje sistem iz rezultata alata — ne trebaš ih pisati. Na pitanja odgovaraš tekstom; kod „gdje sve…" grupiši po lokaciji: količina, opis, od kad. Dugme za poništavanje dodaje sistem — ne spominji ga.`;
 
@@ -89,12 +92,28 @@ export interface PromptParts {
     volatile: string;
 }
 
-export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string): PromptParts {
+/**
+ * @param focus tekst poruke (i prethodne korisnikove) — po njemu se bira koje stavke
+ *   bilježnice idu u prompt; prazno = sve (mala bilježnica ionako ide cijela).
+ */
+export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string, focus = ''): PromptParts {
     const today = toZoned(now, tz).date;
-    const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}`).join('\n') || '—';
-    const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}`).join('\n') || '—';
-    const orders = (ctx.orders || []).map(o => `${o.alias} | ${o.value.name}`).join('\n') || '—';
-    const memory = ctx.memory.map(m => memoryLine(m.alias, m.value, tz)).join('\n') || '— (prazno)';
+    // Naučene riječi uz stavku liste: model po njima bira oznaku („Jerko" → projekat Čorluka).
+    const vocab = ctx.vocab || [];
+    const aka = (kind: VocabKind, id: string) => {
+        const a = aliasesOf(vocab, kind, id);
+        return a.length ? ` | zovem i: ${a.join(', ')}` : '';
+    };
+    const workers = ctx.workers.map(w => `${w.alias} | ${w.value.name}${aka('worker', w.value.id)}`).join('\n') || '—';
+    const projects = ctx.projects.map(p => `${p.alias} | ${projectLabel(p.value)}${aka('project', p.value.id)}`).join('\n') || '—';
+    const orders = (ctx.orders || []).map(o => `${o.alias} | ${o.value.name}${aka('order', o.value.id)}`).join('\n') || '—';
+    const terms = vocab.filter(e => e.Kind === 'process' || e.Kind === 'material')
+        .slice(0, 60).map(e => `„${e.Phrase}" = ${e.Target_Label}`).join('; ');
+    const shown = focus ? relevantMemory(ctx.memory, focus) : ctx.memory;
+    const memory = shown.map(m => memoryLine(m.alias, m.value, tz)).join('\n') || '— (prazno)';
+    const memoryHead = shown.length < ctx.memory.length
+        ? `BILJEŽNICA — OTVORENE STAVKE VEZANE ZA PORUKU (${shown.length} od ${ctx.memory.length}; ostale nađi sa search_memory)`
+        : 'BILJEŽNICA — OTVORENE STAVKE';
     const tasks = ctx.tasks.map(t => taskLine(t.alias, t.value, tz, now)).join('\n') || '— (nema)';
 
     const stable = `Ti si lični asistent vlasnika stolarske radionice (namještaj po mjeri, montaže po stanovima). Razgovaraš s njim na Telegramu, na bosanskom. Trenutno vrijeme, kalendar, bilježnica i zadaci su na kraju uputa.
@@ -110,14 +129,16 @@ ${projects}
 NALOZI U RADU (oznaka | naziv):
 ${orders}
 
-DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}`;
+DOBAVLJAČI: ${ctx.suppliers.join(', ') || '—'}${terms ? `
+
+MOJI NAZIVI (procesi i materijali): ${terms}` : ''}`;
 
     const volatile = `SADA: ${describeNow(now, tz)} (${tz}).
 
 KALENDAR (koristi ga, ne računaj dane sam):
 ${calendarHint(today, 21)}
 
-BILJEŽNICA — OTVORENE STAVKE (oznaka | predmet | naziv | količina · opis | lokacija | stanje | od kad (ko javio)):
+${memoryHead} (oznaka | predmet | naziv | količina · opis | lokacija | stanje | od kad (ko javio)):
 ${memory}
 
 OTVORENI ZADACI, BLISKI (oznaka | naslov | podsjetnik | rok | radnik | projekat | lista):

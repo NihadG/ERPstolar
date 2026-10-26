@@ -32,6 +32,11 @@ import type { DayProposal } from '@/lib/dayProposal';
 import { bookEmptyDays, bookWorkDiary, finishItems, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput } from '@/lib/server/workDiary';
 import { dayLabel, diarySummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
+import { bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
+import { learnVocab } from './vocabStore';
+import {
+    MEMORY_STATE_KEYS, MEMORY_STATES, isStateKey, locationKey, memoryTitle, normalizeLocation, parseDimensions, stateLabel, type MemoryStateKey,
+} from './memoryRules';
 import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
@@ -83,40 +88,43 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'remember',
-        description: 'Nova stavka bilježnice: stvar, gdje stoji i u kakvom je stanju.',
+        description: 'Nova stavka bilježnice: stvar, gdje stoji i u kakvom je stanju. Naslov i oblik lokacije složi ERP. Mjere nisu obavezne — ne pitaj za njih.',
         input_schema: {
             type: 'object',
             properties: {
-                subject: { ...str, description: 'Predmet u osnovnom obliku jednine: „ogledalo".' },
-                title: { ...str, description: 'Kratak opis za prikaz: „Ogledala 1 m za kupatila".' },
+                subject: { ...str, description: 'Predmet u osnovnom obliku jednine: „ogledalo", „lajsna", „umivaonik".' },
                 quantity: num,
                 unit: { ...str, description: 'kom, m, m2, pak…' },
-                spec: { ...str, description: 'Mjere/opis: „1 m dužine".' },
-                location: { ...str, description: 'Gdje stoji: „Stan 304", „Kombi", „Radionica".' },
-                state_label: { ...str, description: 'Kratko stanje: „nije montirano".' },
+                spec: { ...str, description: 'Mjere i opis kako su rečeni: „1000x1350", „800 mm širine", „sva", „gornje".' },
+                location: { ...str, description: 'Gdje stoji, kako je rečeno: „e004", „stan 308", „hodnik C5", „kombi".' },
+                for_location: { ...str, description: 'Za koji stan je stvar ako stoji drugdje: „ogledalo za C502" na hodniku C5.' },
+                state: { ...enumOf(MEMORY_STATE_KEYS), description: 'fali | nije_postavljeno (u stanu, nije postavljeno) | pogresno (pogrešno postavljeno) | ceka (stoji na hodniku/u kombiju) | naruceno | stiglo | postavljeno | info (mjera ili zabilješka, npr. „prolaz kliznih vrata 590").' },
+                state_note: { ...str, description: 'Kratka dopuna stanja ako je rečena: „treba 1100x1000". Za info: sama zabilješka.' },
                 project: { ...str, description: 'Oznaka P# ako se lokacija poklapa s projektom.' },
                 worker: { ...str, description: 'Oznaka W# ako je stvar vezana za radnika.' },
                 tags: strList,
                 note: { ...str, description: 'Rečenica za istoriju (šta je rečeno).' },
             },
-            required: ['subject', 'state_label'],
+            required: ['subject', 'state'],
         },
     },
     {
         name: 'update_memory',
-        description: 'Promjena stavke bilježnice (M# ili S#): riješeno, novo stanje, količina, lokacija.',
+        description: 'Promjena stavke ili više stavki bilježnice (M# / S#): stanje, količina, mjere, lokacija. „Sve četiri su E308" = jedan poziv s items.',
         input_schema: {
             type: 'object',
             properties: {
                 item: { ...str, description: 'Oznaka M# ili S#.' },
-                resolved: { ...bool, description: 'true = gotovo (npr. montirano), false = ponovo otvoreno.' },
-                state_label: str,
+                items: { ...strList, description: 'Više stavki odjednom (ista izmjena na svima).' },
+                state: { ...enumOf(MEMORY_STATE_KEYS), description: 'Novo stanje; postavljeno = gotovo.' },
+                state_note: str,
                 quantity: num,
-                spec: str,
-                location: str,
+                spec: { ...str, description: 'Nove mjere/opis kako su rečeni.' },
+                location: { ...str, description: 'Nova lokacija kako je rečena.' },
+                reopen: { ...bool, description: 'true = ponovo otvori riješenu stavku.' },
                 note: { ...str, description: 'Šta se desilo, za istoriju: „Amer javio da su montirana".' },
             },
-            required: ['item', 'note'],
+            required: ['note'],
         },
     },
     {
@@ -290,6 +298,23 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'learn_name',
+        description: 'Zapamti kako korisnik zove nešto u ERP-u: „Jerko je Čorluka", „ostrvo kod Begovića je nalog R4", „Braco je Ibrahim", „kantao fronte = Kantiranje furnira", „305 je E305". Također kad korisnik ispravi tvoj izbor („ne, mislio sam na…"). Tačno jedan cilj. Riječ projekta/naloga važi dok on traje; procesi, materijali i radnici zauvijek.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                phrase: { ...str, description: 'Riječ ili izraz kako ga korisnik kaže.' },
+                project: { ...str, description: 'P# — riječ za klijenta/projekat.' },
+                order: { ...str, description: 'R# — riječ za nalog.' },
+                worker: { ...str, description: 'W# — nadimak radnika.' },
+                process: { ...str, description: 'Tačan naziv procesa iz kataloga.' },
+                material: { ...str, description: 'Tačan naziv materijala.' },
+                location: { ...str, description: 'Lokacija (stan, hodnik) za koju riječ stoji; uz project ako je vezana za projekat.' },
+            },
+            required: ['phrase'],
+        },
+    },
+    {
         name: 'ask_user',
         description: 'Postavi korisniku JEDNO kratko pitanje s 2–4 opcije. Poslije ovoga ne radi ništa dok ne odgovori.',
         input_schema: {
@@ -332,6 +357,10 @@ export interface ToolEnv {
     diaryCandidates?: Aliased<string>[];
     /** „O3 Baglama ravna · Kuhinja Grbavica" — legenda oznaka ove poruke za istoriju modela. */
     refNotes?: string[];
+    /** Stavke bilježnice upisane ovom porukom — dobijaju dugmad stanja ispod potvrde. */
+    touchedMemory?: MemoryItem[];
+    /** ERP je ponudio izbor za riječ („305" → E305 / C305); izabrano se zapamti u rječnik. */
+    pendingVocab?: { kind: VocabKind; phrase: string; options: string[] }[];
     /** Učitano iz baze tokom ove poruke (materijali projekata, katalog). */
     cache?: { rows?: { key: string; value: OrderableRow[] }; catalog?: Material[] };
 }
@@ -352,7 +381,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'learn_name']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -494,21 +523,72 @@ function sameText(a?: string, b?: string): boolean {
     return foldText(a || '') === foldText(b || '');
 }
 
+/** Poznate lokacije bilježnice — po njima ERP ispravlja „308" u E308. */
+const knownLocations = (env: ToolEnv) => [...env.ctx.memory, ...env.searchHits].map(m => m.value.Location || '').filter(Boolean);
+
+/**
+ * Lokacija kako je rečena → naučena riječ ili oblik iz bilježnice; nejasno → ERP
+ * ponudi opcije, a izbor iz sljedeće poruke se zapamti (confirmPending).
+ */
+function resolveLocation(env: ToolEnv, raw: unknown): { location: string } | { error: string } {
+    const said = text(raw, 80);
+    const learned = said ? bestVocab(said, env.ctx.vocab || [], 'location', { exact: true }) : null;
+    if (learned) return { location: learned.Target_ID };
+    const r = normalizeLocation(said, knownLocations(env));
+    if ('ambiguous' in r) {
+        env.pendingVocab = [...(env.pendingVocab || []), { kind: 'location', phrase: said, options: r.ambiguous }];
+        return { error: `Lokacija „${said}" nije jednoznačna. Pitaj korisnika (ask_user) s opcijama: ${r.ambiguous.join(', ')}; pa ponovi s tačnom lokacijom.` };
+    }
+    return r;
+}
+
+/** Korisnik je izabrao jednu od ponuđenih opcija → riječ ide u rječnik (s ↩️ Poništi). */
+async function confirmPending(env: ToolEnv, kind: VocabKind, chosen: string, projectId?: string): Promise<void> {
+    const p = (env.pendingVocab || []).find(x => x.kind === kind && x.options.includes(chosen));
+    if (!p) return;
+    env.pendingVocab = (env.pendingVocab || []).filter(x => x !== p);
+    await rememberWord(env, { phrase: p.phrase, kind, targetId: chosen, targetLabel: chosen, projectId, source: 'confirmed' });
+}
+
+/** Upis riječi u rječnik + zapis za poništavanje + važi odmah u ovoj poruci. */
+async function rememberWord(env: ToolEnv, input: Parameters<typeof learnVocab>[1]): Promise<VocabEntry | null> {
+    const res = await learnVocab(env.orgId, input, env.now);
+    if (!res) return null;
+    await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: res.path, before: res.before, label: `riječ „${res.entry.Phrase}"` });
+    env.ctx.vocab = [...(env.ctx.vocab || []).filter(e => e.Vocab_ID !== res.entry.Vocab_ID), res.entry];
+    return res.entry;
+}
+
+/** Stanje iz poziva: fiksni ključ (+ dopuna); stari state_label ostaje kao rezerva. */
+function stateOf(a: Args): { key?: MemoryStateKey; label: string } | null {
+    if (isStateKey(a.state)) return { key: a.state, label: stateLabel(a.state, text(a.state_note, 80)) };
+    const legacy = text(a.state_label, 80);
+    return legacy ? { label: legacy } : null;
+}
+
 async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const subject = text(a.subject, 60).toLowerCase();
-    const stateLabel = text(a.state_label, 80);
-    if (!subject || !stateLabel) return { ok: false, error: 'Nedostaje predmet ili stanje.' };
-    const location = text(a.location, 80);
+    const state = stateOf(a);
+    if (!subject || !state) return { ok: false, error: 'Nedostaje predmet ili stanje.' };
+    const loc = resolveLocation(env, a.location);
+    if ('error' in loc) return { ok: false, error: loc.error };
+    const forLoc = text(a.for_location) ? resolveLocation(env, a.for_location) : { location: '' };
+    if ('error' in forLoc) return { ok: false, error: forLoc.error };
+    const location = loc.location;
+    if (location) await confirmPending(env, 'location', location, resolveAlias(env.ctx.projects, a.project)?.id);
+    const { dims, rest } = parseDimensions(text(a.spec, 120));
+    const title = memoryTitle(subject, dims, forLoc.location || undefined);
 
-    // Ista stvar na istoj lokaciji već postoji → dopuni nju.
-    const existing = env.ctx.memory.find(m => sameText(m.value.Subject, subject) && sameText(m.value.Location, location));
+    // Ista stvar (predmet + mjere) na istoj lokaciji već postoji → dopuni nju.
+    const existing = env.ctx.memory.find(m => sameText(m.value.Subject, subject) && sameText(m.value.Title, title)
+        && locationKey(m.value.Location) === locationKey(location));
     if (existing) {
         return updateMemoryTool(env, {
             item: existing.alias,
-            state_label: stateLabel,
+            ...(state.key ? { state: state.key, state_note: a.state_note } : { state_label: state.label }),
             quantity: a.quantity,
-            spec: a.spec,
-            note: text(a.note) || text(a.title) || stateLabel,
+            ...(rest ? { spec: rest } : {}),
+            note: text(a.note) || state.label,
         });
     }
 
@@ -523,17 +603,19 @@ async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         Item_ID: uuidv4(),
         Organization_ID: env.orgId,
         Owner_UID: env.uid,
-        Title: text(a.title, 120) || subject,
+        Title: title,
         Subject: subject,
         Quantity: number(a.quantity),
         Unit: text(a.unit, 12) || undefined,
-        Spec: text(a.spec, 120) || undefined,
+        Spec: rest || undefined,
         Location: location || undefined,
         Links: links,
-        State: 'open' as const,
-        State_Label: stateLabel,
+        State: state.key && MEMORY_STATES[state.key].resolved ? 'resolved' as const : 'open' as const,
+        State_Label: state.label,
+        ...(state.key ? { State_Key: state.key } : {}),
+        ...(state.key && MEMORY_STATES[state.key].resolved ? { Resolved_At: env.now.toISOString() } : {}),
         Tags: Array.isArray(a.tags) ? a.tags.map(t => text(t, 30).toLowerCase()).filter(Boolean).slice(0, 8) : [],
-        History: [clean({ At: nowIso, Text: text(a.note, 500) || text(a.title, 120) || stateLabel, By: env.reporter, Entry_ID: env.entryId })],
+        History: [clean({ At: nowIso, Text: text(a.note, 500) || state.label, By: env.reporter, Entry_ID: env.entryId })],
         Source_Entry_IDs: env.entryId ? [env.entryId] : [],
         Created_At: nowIso,
         Updated_At: nowIso,
@@ -547,39 +629,87 @@ async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     env.created.memoryIds.push(item.Item_ID);
     env.changes.push(`bilješka „${item.Title}"`);
     env.summaries.push(memorySummary(item));
+    env.touchedMemory = [...(env.touchedMemory || []), item];
     return { ok: true, item: alias, saved: memoryLine(alias, item, env.tz) };
 }
 
+/**
+ * Promjena stanja stavke — ista pravila za alat i za dugme ispod potvrde
+ * (dugme ne zove model): fiksno stanje, „postavljeno" zatvara, ostala otvaraju.
+ */
+export function applyMemoryState(item: MemoryItem, key: MemoryStateKey, note: string | undefined, nowIso: string): MemoryItem {
+    const next: MemoryItem = { ...item, State_Key: key, State_Label: stateLabel(key, note) };
+    if (MEMORY_STATES[key].resolved) { next.State = 'resolved'; next.Resolved_At = nowIso; }
+    else { next.State = 'open'; delete next.Resolved_At; }
+    return next;
+}
+
+/**
+ * Dugme ispod potvrde (`mem:<id>:p`): stanje stavke bez poziva modela. Samo vlasnik;
+ * ide u ↩️ istoriju kao i svaki upis (turnId `mem-<id>-<vrijeme>`).
+ */
+export async function memoryButtonState(orgId: string, uid: string, itemId: string, key: MemoryStateKey, now = new Date()): Promise<{ ok: true; line: string } | { ok: false; error: string }> {
+    const ref = memoryRef(itemId);
+    const before = (await ref.get()).data() as MemoryItem | undefined;
+    if (!before || before.Organization_ID !== orgId || before.Owner_UID !== uid) return { ok: false, error: 'Stavka više ne postoji.' };
+    const nowIso = now.toISOString();
+    const next = applyMemoryState(before, key, undefined, nowIso);
+    next.History = [...(before.History || []), { At: nowIso, Text: `Označeno dugmetom: ${next.State_Label}`, By: 'ja' }];
+    next.Updated_At = nowIso;
+    await ref.set(clean(next as unknown as Record<string, unknown>));
+    await recordOp({ turnId: `mem-${itemId}-${nowIso}`, uid, orgId, path: ref.path, before: before as unknown as Record<string, unknown>, label: `bilješka „${before.Title}"` });
+    return { ok: true, line: memorySummary(next) };
+}
+
 async function updateMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
-    const item = resolveAlias(env.ctx.memory, a.item) || resolveAlias(env.searchHits, a.item);
-    if (!item) return { ok: false, error: `Stavka ${String(a.item)} ne postoji.` };
+    const aliases = [...(text(a.item, 8) ? [a.item] : []), ...(Array.isArray(a.items) ? a.items : [])].slice(0, 40);
+    if (!aliases.length) return { ok: false, error: 'Navedi stavku (M# ili S#).' };
+    const found = aliases.map(x => resolveAlias(env.ctx.memory, x) || resolveAlias(env.searchHits, x));
+    const missing = aliases.find((_, i) => !found[i]);
+    if (missing !== undefined) return { ok: false, error: `Stavka ${String(missing)} ne postoji.` };
     const note = text(a.note, 500);
     if (!note) return { ok: false, error: 'Nedostaje bilješka (šta se desilo).' };
-
-    const ref = memoryRef(item.Item_ID);
-    const before = (await ref.get()).data() as Record<string, unknown> | undefined;
-    if (!before) return { ok: false, error: 'Stavka je obrisana.' };
+    const loc = text(a.location) ? resolveLocation(env, a.location) : null;
+    if (loc && 'error' in loc) return { ok: false, error: loc.error };
+    if (loc?.location) await confirmPending(env, 'location', loc.location);
 
     const nowIso = env.now.toISOString();
-    const next: MemoryItem = { ...item };
-    if (a.resolved === true) { next.State = 'resolved'; next.Resolved_At = nowIso; }
-    if (a.resolved === false) { next.State = 'open'; delete next.Resolved_At; }
-    if (text(a.state_label)) next.State_Label = text(a.state_label, 80);
-    if (number(a.quantity) !== undefined) next.Quantity = number(a.quantity);
-    if (text(a.spec)) next.Spec = text(a.spec, 120);
-    if (text(a.location)) next.Location = text(a.location, 80);
-    next.History = [...(item.History || []), clean({ At: nowIso, Text: note, By: env.reporter, Entry_ID: env.entryId })];
-    if (env.entryId && !item.Source_Entry_IDs?.includes(env.entryId)) next.Source_Entry_IDs = [...(item.Source_Entry_IDs || []), env.entryId];
-    next.Updated_At = nowIso;
+    const saved: string[] = [];
+    for (const [i, item] of (found as MemoryItem[]).entries()) {
+        const ref = memoryRef(item.Item_ID);
+        const before = (await ref.get()).data() as Record<string, unknown> | undefined;
+        if (!before) return { ok: false, error: `Stavka ${String(aliases[i])} je obrisana.` };
 
-    await ref.set(clean(next as unknown as Record<string, unknown>));
-    await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before, label: `bilješka „${item.Title}"` });
-    Object.assign(item, next);
-    if (!next.Resolved_At) delete item.Resolved_At;
-    env.created.memoryIds.push(item.Item_ID);
-    env.changes.push(`bilješka „${item.Title}"`);
-    env.summaries.push(memorySummary(next));
-    return { ok: true, item: String(a.item), now: memoryLine(String(a.item), next, env.tz) };
+        let next: MemoryItem = { ...item };
+        if (isStateKey(a.state)) next = applyMemoryState(next, a.state, text(a.state_note, 80), nowIso);
+        else if (text(a.state_label)) next.State_Label = text(a.state_label, 80);   // stariji poziv
+        if (a.resolved === true) { next.State = 'resolved'; next.Resolved_At = nowIso; }
+        if (a.resolved === false || a.reopen === true) { next.State = 'open'; delete next.Resolved_At; }
+        if (number(a.quantity) !== undefined) next.Quantity = number(a.quantity);
+        if (text(a.spec)) {
+            const { dims, rest } = parseDimensions(text(a.spec, 120));
+            if (dims) next.Title = memoryTitle(item.Subject, dims);
+            next.Spec = rest || undefined;
+        }
+        if (loc) next.Location = loc.location;
+        next.History = [...(item.History || []), clean({ At: nowIso, Text: note, By: env.reporter, Entry_ID: env.entryId })];
+        if (env.entryId && !item.Source_Entry_IDs?.includes(env.entryId)) next.Source_Entry_IDs = [...(item.Source_Entry_IDs || []), env.entryId];
+        next.Updated_At = nowIso;
+
+        await ref.set(clean(next as unknown as Record<string, unknown>));
+        await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before, label: `bilješka „${item.Title}"` });
+        Object.keys(item).forEach(k => { if (!(k in next)) delete (item as unknown as Record<string, unknown>)[k]; });
+        Object.assign(item, next);
+        env.created.memoryIds.push(item.Item_ID);
+        env.changes.push(`bilješka „${item.Title}"`);
+        env.touchedMemory = [...(env.touchedMemory || []), item];
+        saved.push(memoryLine(String(aliases[i]), next, env.tz));
+    }
+    const done = found as MemoryItem[];
+    env.summaries.push(done.length > 1 && loc && !a.state
+        ? [`📒 ${done.length} stavke → ${loc.location}`, ...done.map(m => `• ${memorySummary(m).replace(/^\S+ /, '')}`)].join('\n')
+        : done.map(memorySummary).join('\n'));
+    return { ok: true, items: saved };
 }
 
 // ─── Pretraga ─────────────────────────────────────────────────────────
@@ -791,7 +921,9 @@ function mostCommon(values: string[]): string {
  * modela manje. Inače se vraćaju kandidati s oznakama, pa model bira ili pita.
  */
 async function resolveByName(env: ToolEnv, line: Args): Promise<{ group?: OrderGroup; item?: Material; fresh?: { project: ProjectRef; name: string } } | string> {
-    const material = text(line.material, 80);
+    const said = text(line.material, 80);
+    // Naučeni naziv materijala („bijele baglame" = Baglama ravna (sa ublazivacem)).
+    const material = bestVocab(said, env.ctx.vocab || [], 'material', { exact: true })?.Target_Label || said;
     const project = line.project ? resolveAlias(env.ctx.projects, line.project) : null;
     if (line.project && !project) return `Projekat ${String(line.project)} ne postoji u listi.`;
     const { groups, catalog } = await searchOrderables(env, material, project);
@@ -1178,6 +1310,7 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const workerId = (alias: unknown) => resolveAlias(env.ctx.workers, alias)?.id;
     const lines: DiaryLineInput[] = [];
     const finishLines: number[] = [];
+    const learnFromLines: { work: string; orderId: string }[] = [];
     let proposal: DayProposal | null = null;
     for (const l of rawLines) {
         const ids = (Array.isArray(l.workers) ? l.workers : []).map(workerId);
@@ -1206,11 +1339,21 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         if (l.fraction != null && !(typeof l.fraction === 'number' && l.fraction > 0 && l.fraction <= 1)) {
             return { ok: false, error: `Dio dana „${String(l.fraction)}" nije ispravan (0–1).` };
         }
+        // Rječnik: naučeni naziv naloga ili projekta („ormar kod Jerka", „Jerko") i procesa.
+        const work = text(l.work, 120);
+        const vocab = env.ctx.vocab || [];
+        const wordOrder = !orders.length && work ? bestVocab(work, vocab, 'order') : null;
+        const wordProject = !orders.length && !wordOrder && work ? bestVocab(work, vocab, 'project') : null;
+        const said = text(l.process, 80);
+        const wordProcess = said ? bestVocab(said, vocab, 'process', { exact: true }) : null;
+        if (orders.length === 1 && work) learnFromLines.push({ work, orderId: orders[0] as string });
         const base: DiaryLineInput = {
             workerIds: ids as string[],
-            target: text(l.work, 120),
-            process: text(l.process, 80) || undefined,
-            alsoProcesses: Array.isArray(l.also) ? l.also.map(p => text(p, 80)).filter(Boolean) : [],
+            target: wordProject ? `${work} ${wordProject.Target_Label}` : work,
+            ...(wordOrder ? { workOrderId: wordOrder.Target_ID } : {}),
+            process: wordProcess?.Target_Label || said || undefined,
+            alsoProcesses: Array.isArray(l.also) ? l.also.map(p => text(p, 80)).filter(Boolean)
+                .map(p => bestVocab(p, vocab, 'process', { exact: true })?.Target_Label || p) : [],
             fraction: number(l.fraction),
             done: l.done === true,
             newProcess: l.new_process === true,
@@ -1238,6 +1381,11 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const finished = finishLines.length
         ? await finishItems(env.orgId, finishLines.flatMap(i => result.lineItemIds[i] || []), `${date}T15:00:00.000Z`, track)
         : null;
+    // Potvrđen izbor naloga za riječ koju ERP nije sam prepoznao („ormar kod Jerka") → rječnik.
+    for (const x of learnFromLines) {
+        const name = (env.ctx.orders || []).find(o => o.value.id === x.orderId)?.value.name;
+        if (name && coverage(x.work, name) < 0.75) await rememberWord(env, { phrase: x.work, kind: 'order', targetId: x.orderId, targetLabel: name, source: 'confirmed' });
+    }
     const label = `rad ${shortDay(`${date}T12:00:00Z`, env.tz)}`;
     await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
@@ -1404,6 +1552,39 @@ export function stripAliases(s: string): string {
         .trim();
 }
 
+/** „Jerko je Čorluka", „Braco je Ibrahim", „kantao fronte = Kantiranje furnira" → rječnik. */
+async function learnNameTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const phrase = text(a.phrase, 80);
+    if (!phrase) return { ok: false, error: 'Nedostaje riječ.' };
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const order = a.order ? resolveAlias(env.ctx.orders || [], a.order) : null;
+    if (a.order && !order) return { ok: false, error: `Nalog ${String(a.order)} nije u listi NALOZI.` };
+    const worker = a.worker ? resolveAlias(env.ctx.workers, a.worker) : null;
+    if (a.worker && !worker) return { ok: false, error: `Radnik ${String(a.worker)} ne postoji u listi.` };
+
+    type Word = Parameters<typeof learnVocab>[1];
+    let word: Word | null = null;
+    if (order) word = { phrase, kind: 'order', targetId: order.id, targetLabel: order.name, source: 'taught' };
+    else if (worker) word = { phrase, kind: 'worker', targetId: worker.id, targetLabel: worker.name, source: 'taught' };
+    else if (text(a.process)) word = { phrase, kind: 'process', targetId: text(a.process, 80), targetLabel: text(a.process, 80), source: 'taught' };
+    else if (text(a.material)) word = { phrase, kind: 'material', targetId: text(a.material, 80), targetLabel: text(a.material, 80), source: 'taught' };
+    else if (text(a.location)) {
+        const loc = normalizeLocation(text(a.location, 80), knownLocations(env));
+        if ('ambiguous' in loc) return { ok: false, error: `Lokacija nije jednoznačna: ${loc.ambiguous.join(', ')}. Pitaj korisnika.` };
+        word = { phrase, kind: 'location', targetId: loc.location, targetLabel: loc.location, projectId: project?.id, source: 'taught' };
+    } else if (project) word = { phrase, kind: 'project', targetId: project.id, targetLabel: projectLabel(project), projectId: project.id, source: 'taught' };
+    if (!word) return { ok: false, error: 'Navedi za šta riječ stoji (project, order, worker, process, material ili location).' };
+
+    const entry = await rememberWord(env, word);
+    if (!entry) return { ok: false, error: 'Riječ je prekratka.' };
+    env.changes.push(`riječ „${entry.Phrase}"`);
+    const scope = entry.Kind === 'order' ? ' (dok nalog traje)' : entry.Project_ID ? ' (dok projekat traje)'
+        : entry.Expires_At ? ` (${EXPIRES_DAYS} dana)` : '';
+    env.summaries.push(`📖 Zapamćeno: „${entry.Phrase}" = ${entry.Target_Label}${scope}`);
+    return { ok: true };
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
     const question = stripAliases(text(a.question, 300));
     const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
@@ -1429,6 +1610,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'fill_work_days': return await fillWorkDaysTool(env, args);
             case 'work_report': return await workReportTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
+            case 'learn_name': return await learnNameTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }
