@@ -404,7 +404,7 @@ export async function sendOrder(orgId: string, orderId: string, before?: BeforeH
     const projectIds = new Set<string>();
     const batch = adminDb().batch();
     before?.(docs.order.ref.path, docs.order.data());
-    batch.update(docs.order.ref, { Status: 'Poslano' });
+    batch.update(docs.order.ref, { Status: 'Poslano', Sent_At: new Date().toISOString() });
     for (const d of docs.items) {
         const item = d.data() as OrderItem;
         if (item.Status === 'Primljeno') continue;
@@ -453,8 +453,10 @@ export async function revertOrderToDraft(orgId: string, orderId: string, before?
 /**
  * Prijem stavki (sve ili samo neke). Narudžba mora biti poslana — kao u ERP-u,
  * prijem nacrta bi preskočio „naručeno" na materijalima.
+ * `quantities` (ID stavke → stiglo sad) = djelimičan prijem: stavka ostaje
+ * naručena dok ne stigne sve, a materijalima se dodaje srazmjeran dio.
  */
-export async function receiveOrderItems(orgId: string, orderId: string, itemIds: string[] | 'all', before?: BeforeHook): Promise<OrderActionResult> {
+export async function receiveOrderItems(orgId: string, orderId: string, itemIds: string[] | 'all', before?: BeforeHook, quantities?: Record<string, number>): Promise<OrderActionResult> {
     const docs = await orderDocs(orgId, orderId);
     if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
     const order = docs.order.data() as Order;
@@ -466,19 +468,31 @@ export async function receiveOrderItems(orgId: string, orderId: string, itemIds:
     const nowIso = new Date().toISOString();
     const batch = adminDb().batch();
     let changed = 0;
+    let completed = 0;
     for (const d of docs.items) {
         const item = d.data() as OrderItem;
         if (item.Status === 'Primljeno' || (wanted && !wanted.has(item.ID))) continue;
+        const already = item.Received_Quantity || 0;
+        const left = Math.max(0, roundQty((item.Quantity || 0) - already));
+        const now = quantities?.[item.ID] !== undefined ? Math.min(left, Math.max(0, quantities[item.ID])) : left;
+        if (now <= 0 && left > 0) continue;
+        // Dio stigao: materijalima ide isti udio kao stavci.
+        const share = item.Quantity > 0 ? now / item.Quantity : 1;
         for (const [id, q] of Object.entries(orderItemAllocations(item))) {
             const prev = deltas.get(id) || { ordered: 0, received: 0 };
-            deltas.set(id, { ordered: prev.ordered - q, received: prev.received + q });
+            const part = roundQty(q * share);
+            deltas.set(id, { ordered: prev.ordered - part, received: prev.received + part });
         }
         before?.(d.ref.path, d.data());
-        batch.update(d.ref, { Status: 'Primljeno', Received_Date: nowIso, Received_Quantity: item.Quantity });
+        const full = roundQty(already + now) >= roundQty(item.Quantity || 0);
+        batch.update(d.ref, full
+            ? { Status: 'Primljeno', Received_Date: nowIso, Received_Quantity: item.Quantity }
+            : { Received_Quantity: roundQty(already + now), Received_Date: nowIso });
         changed++;
+        if (full) completed++;
     }
     if (!changed) return { ok: false, error: 'Nema neprimljenih stavki za prijem.' };
-    const remaining = docs.items.filter(d => (d.data() as OrderItem).Status !== 'Primljeno').length - changed;
+    const remaining = docs.items.filter(d => (d.data() as OrderItem).Status !== 'Primljeno').length - completed;
     if (remaining === 0) {
         before?.(docs.order.ref.path, docs.order.data());
         batch.update(docs.order.ref, { Status: 'Primljeno' });
@@ -495,7 +509,9 @@ export async function receiveOrderItems(orgId: string, orderId: string, itemIds:
     }));
     return {
         ok: true, orderNumber: order.Order_Number, materials: deltas.size,
-        detail: remaining === 0 ? 'cijela narudžba primljena' : `primljeno ${changed}, čeka još ${remaining}`,
+        detail: remaining === 0
+            ? 'cijela narudžba primljena'
+            : `primljeno ${changed}${changed > completed ? ` (${changed - completed} djelimično)` : ''}, čeka još ${remaining}`,
     };
 }
 

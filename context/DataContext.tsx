@@ -107,7 +107,8 @@ const initialAppState: AppState = {
 // CONTEXT
 // ============================================
 
-const DataContext = createContext<DataContextType | undefined>(undefined);
+// Izvezen samo za dev makete (/material-preview) — aplikacija koristi useData().
+export const DataContext = createContext<DataContextType | undefined>(undefined);
 
 // ============================================
 // COLLECTION LOADERS

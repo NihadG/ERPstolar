@@ -7,18 +7,20 @@
 //   tekst / glas        → dnevnik (assistant_entries) → mozak → odgovor
 //   proslijeđena poruka isto, ali uz „od koga i kad" (radnikov izvještaj)
 //   dugme               odgovor na pitanje, ↩️ Poništi, ✅ Urađeno, ⏰ odgodi,
-//                       prijedlog dana (dp:), rupa iz jutarnjeg pregleda (gap:)
+//                       prijedlog dana (dp:), rupa iz jutarnjeg pregleda (gap:),
+//                       provjera materijala (mc:), narudžba stigla (ordrcv:)
 //   /prijedlog          prijedlog rada za danas na zahtjev
 //
 // Nepovezan Telegram korisnik ne dobija ništa osim uputstva za povezivanje.
 // ════════════════════════════════════════════════════════════════════
 
 import { setTaskStatus, taskRef } from '@/lib/server/fieldWrites';
-import { sendOrder } from '@/lib/server/orderWrites';
+import { receiveOrderItems, sendOrder } from '@/lib/server/orderWrites';
 import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
+import { handleMaterialButton, sendMaterialAlerts } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant } from './brain';
@@ -181,6 +183,11 @@ async function converse(
             }
         }),
     ]);
+    // Upisan rad može pomjeriti nalog do kapije (počelo okivanje, a ručke nisu stigle).
+    if (out.changed) {
+        await sendMaterialAlerts(new Date(), assistantTimezone(), { orgId: link.orgId })
+            .catch(e => console.error('[assistant] kapije materijala:', e));
+    }
 }
 
 async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promise<void> {
@@ -240,8 +247,27 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await answerCallbackQuery(inc.callbackId, result.ok ? 'Narudžba je poslana' : result.error);
         await tg('editMessageReplyMarkup', { chat_id: inc.chatId, message_id: inc.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
         if (result.ok) {
-            await sendMessage(inc.chatId, `📤 Narudžba ${result.orderNumber} je poslana — materijali se sad vode kao naručeni.`);
+            await sendMessage(inc.chatId, `📤 Narudžba ${result.orderNumber} je poslana — materijali se sad vode kao naručeni.`,
+                [[{ text: '📦 Stiglo sve', data: `ordrcv:${arg}` }]]);
         }
+        return;
+    }
+
+    if (kind === 'ordrcv') {
+        const result = await receiveOrderItems(link.orgId, arg, 'all');
+        await answerCallbackQuery(inc.callbackId, result.ok ? 'Primljeno' : result.error);
+        await tg('editMessageReplyMarkup', { chat_id: inc.chatId, message_id: inc.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+        if (result.ok) {
+            await sendMessage(inc.chatId, `📦 Narudžba ${result.orderNumber} je stigla${result.detail ? ` (${result.detail})` : ''} — materijali su na stanju.`);
+        }
+        return;
+    }
+
+    // Provjera materijala (kapije): označavanje, potvrda, narudžba — bez modela.
+    if (kind === 'mc') {
+        const reply = await handleMaterialButton(link, arg, extra, inc.data.split(':')[3] || '', tz);
+        await answerCallbackQuery(inc.callbackId, reply.toast);
+        if (reply.text) await editMessageText(inc.chatId, inc.messageId, reply.text, reply.buttons);
         return;
     }
 

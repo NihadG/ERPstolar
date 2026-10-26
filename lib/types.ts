@@ -107,6 +107,10 @@ export interface Material {
     Description: string;
     Is_Glass?: boolean;
     Is_Alu_Door?: boolean;
+    /** Kupuje se na veliko (palete) i ne naručuje po projektu. null/undefined = po pravilima zalihe firme (lib/materialGates). */
+    Is_Stock?: boolean | null;
+    /** Proces kod kojeg materijal mora biti tu; prazno = po vrsti materijala (lib/materialGates). */
+    Need_By_Process?: string;
 }
 
 /** A single material definition stored inside a MaterialTemplate. */
@@ -410,6 +414,8 @@ export interface Order {
     Supplier_Name: string;
     Order_Date: string;
     Status: string;
+    /** Kad je narudžba poslana dobavljaču — početak roka isporuke (lib/materialGates.supplierLeadDays). */
+    Sent_At?: string;
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
