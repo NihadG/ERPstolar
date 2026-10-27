@@ -112,12 +112,13 @@ export function preparseMessage(text: string, opts: { knownLocations?: string[];
 }
 
 /** Kratka napomena za model, uz poruku. Prazno kad ERP ništa nije našao. */
-export function factsNote(f: MessageFacts, focusLocation?: string): string {
+export function factsNote(f: MessageFacts, focusLocation?: string, extra: string[] = []): string {
     const parts: string[] = [];
     if (f.locations.length) parts.push(`lokacije ${f.locations.join(', ')}`);
     const sizes = [...f.dims, ...f.widths];
     if (sizes.length) parts.push(`mjere ${sizes.join(', ')} (${sizes.length} — svaka je posebna stvar, osim kad je rečeno da je ista)`);
     if (focusLocation && (f.deictic || !f.locations.length)) parts.push(`lokacija iz razgovora: ${focusLocation}${f.deictic ? ' („u tom stanu" / „na istom hodniku" = ona)' : ''}`);
+    parts.push(...extra);
     return parts.length ? `[ERP u poruci: ${parts.join('; ')}]` : '';
 }
 

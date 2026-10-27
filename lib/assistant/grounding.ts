@@ -101,9 +101,18 @@ export function ungroundedOrders(text: string, all: GroundRef[], ids: string[]):
 }
 
 /** Tekst posla („kuhinja Čorluka") mora biti iz poruka — ne smije ga model izmisliti. */
-export function workSaid(text: string, work: string): boolean {
+export function workSaid(text: string, work: string, share = 0.5): boolean {
     const w = words(work);
     if (!w.length) return true;
     const t = words(text);
-    return w.filter(x => hit(x, t)).length / w.length >= 0.5;
+    return w.filter(x => hit(x, t)).length / w.length >= share;
+}
+
+/**
+ * Naslov zadatka je preformulisan („napravi" → „Napraviti"), pa je prag niži —
+ * ali bar trećina riječi mora biti iz poruke. „Odraditi ploču za Dinu na CNC-u"
+ * iz „Neka Imer napravi Dini dasku" ne prolazi (CNC je iz ranijeg razgovora).
+ */
+export function titleSaid(text: string, title: string): boolean {
+    return workSaid(text, title, 0.34);
 }
