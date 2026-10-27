@@ -31,7 +31,7 @@ import { loadDayProposal } from './dayProposals';
 import type { DayProposal } from '@/lib/dayProposal';
 import { bookEmptyDays, bookWorkDiary, setProgress, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput } from '@/lib/server/workDiary';
 import { markPresence } from '@/lib/server/presence';
-import { mentionsEveryone, ungroundedOrders, ungroundedWorkers, workSaid } from './grounding';
+import { mentionsEveryone, titleSaid, ungroundedOrders, ungroundedWorkers, workSaid } from './grounding';
 import { getOpenWorkOrderIdsForProject, orderStatusLines } from './orderStatus';
 import { dayLabel, diarySummary, presenceSummary, progressSummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
@@ -499,6 +499,9 @@ function shortDay(iso: string, tz: string): string {
 async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const title = text(a.title, 120);
     if (!title) return { ok: false, error: 'Nedostaje naslov.' };
+    if (env.groundText !== undefined && !titleSaid(env.groundText, title)) {
+        return { ok: false, error: `Naslov „${title}" nije iz poruke korisnika. Naslov složi samo od onoga što je rečeno u ovoj poruci (ne iz ranijeg razgovora).` };
+    }
     const category = oneOf<TaskCategory>(a.category, CATEGORIES, 'general');
     const worker = resolveAlias(env.ctx.workers, a.worker);
     const project = resolveAlias(env.ctx.projects, a.project);

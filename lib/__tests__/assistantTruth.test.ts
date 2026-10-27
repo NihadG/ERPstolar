@@ -142,3 +142,55 @@ describe('razumijevanje: predobrada, fokus, pokrivenost', () => {
         expect(mockSent).toHaveLength(1);
     });
 });
+
+describe('faza C: podsjetnici i zadaci (stvarne poruke 23.10.)', () => {
+    const tasks = () => docs('tasks').filter(t => t.Organization_ID === ORG);
+    beforeAll(() => {
+        store.set('workers/i', { Worker_ID: 'w-imer', Name: 'Imer Plećan', Organization_ID: ORG, Status: 'Aktivan' });
+        session = { history: [], pending: null };
+    });
+
+    it('„Neka imer napravi Dini dasku" — model samo odgovori → ERP traži upis (jači model) → zadatak za Imera', async () => {
+        const out = await say('Neka imer napravi Dini dasku', [
+            { text: 'U redu, prenijeću.' },
+            { calls: [{ name: 'create_task', args: { title: 'Napraviti dasku za Dinu', category: 'manufacturing', worker: 'W2' } }] },
+        ]);
+        expect(mockSent[0].messages.at(-1).content).toMatch(/vrsta: zadatak za radnika .*; radnici: Imer Plećan \(W2\)/);
+        expect(mockSent[1]).toMatchObject({ model: 'claude-sonnet-5-5', tool_choice: { type: 'any' } });
+        expect(mockSent[1].messages.at(-1).content).toMatch(/ERP: poruka traži upis \(task\)/);
+        expect(tasks().map(t => `${t.Title}|${t.Assigned_Worker_Name}`)).toEqual(['Napraviti dasku za Dinu|Imer Plećan']);
+        expect(out.outcome).toBe('written');
+    });
+
+    it('naslov iz ranijeg razgovora („na CNC-u") se odbija; zadatak bez rečenog radnika → ERP vrati „radnik Imer"', async () => {
+        const out = await say('Neka imer napravi Dini dasku', [
+            { calls: [{ name: 'create_task', args: { title: 'Odraditi ploču za Dinu na CNC-u', category: 'manufacturing' } }] },
+            { calls: [{ name: 'create_task', args: { title: 'Napraviti dasku za Dinu', category: 'manufacturing' } }] },
+            { calls: [{ name: 'update_task', args: { task: 'T2', note: 'Imer' } }] },
+        ]);
+        expect(JSON.parse(mockSent[1].messages.at(-1).content[0].content)).toMatchObject({ ok: false, error: expect.stringMatching(/nije iz poruke korisnika/) });
+        expect(JSON.stringify(mockSent[2].messages.at(-1).content)).toMatch(/nije upisano: radnik Imer Plećan/);
+        expect(out.outcome).toBe('written');
+    });
+
+    it('„Napisi mi u 00:01 poruku za laku noc" bez vremena u upisu → ERP vrati „vrijeme 00:01"', async () => {
+        await say('Napisi mi u 00:01 poruku za laku noc', [
+            { calls: [{ name: 'create_task', args: { title: 'Poruka za laku noć', category: 'reminder' } }] },
+            { calls: [{ name: 'update_task', args: { task: 'T3', reminder_at: '2026-10-27T00:01' } }] },
+        ]);
+        expect(JSON.stringify(mockSent[1].messages.at(-1).content)).toMatch(/nije upisano: vrijeme 00:01/);
+    });
+
+    it('pitanje se ne tjera u upis', async () => {
+        const out = await say('Sta imam za ponedjeljak', [{ text: 'Za ponedjeljak nemaš ništa.' }]);
+        expect(mockSent).toHaveLength(1);
+        expect(mockSent[0].model).toBe('claude-haiku-5-5');
+        expect(out.outcome).toBe('answer');
+    });
+
+    it('model pita tekstom („Kome?") — to je pitanje, ne neuspjeh', async () => {
+        const out = await say('Reci da se napravi ploča', [{ text: 'Kome da kažem?' }]);
+        expect(mockSent).toHaveLength(1);
+        expect(out.outcome).toBe('answer');
+    });
+});

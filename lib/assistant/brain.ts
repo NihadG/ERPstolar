@@ -30,6 +30,9 @@ import { assistantTimezone, toZoned } from './datetime';
 import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
 import { factsNote, preparseMessage, uncovered } from './preparse';
+import { intentNote, messageIntent, type MessageKind } from './intent';
+import { aliasesOf } from './vocab';
+import { foldText } from '@/lib/voice/text';
 import { runTool, stripAliases, TOOLS, WRITE_TOOLS, type ToolEnv } from './tools';
 import type { AssistantSession, SessionFocus, SessionRefs, SessionTurn } from './store';
 import type { AssistantOutcome, MemoryItem } from '@/lib/types';
@@ -41,6 +44,11 @@ const TIMEOUT_MS = 25_000;
 const HISTORY_HOURS = 3;
 /** Lokacija iz razgovora važi ovoliko („u tom stanu“, poruka bez lokacije odmah poslije). */
 const FOCUS_MINUTES = 20;
+
+/** Jači model: teška poruka i ponovni krug poslije greške (samo taj poziv). */
+function strongModel(): string {
+    return process.env.ASSISTANT_MODEL_STRONG?.trim() || 'claude-sonnet-5-5';
+}
 
 function model(): string {
     return process.env.ASSISTANT_MODEL?.trim() || 'claude-haiku-5-5';
@@ -200,7 +208,15 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const pre = preparseMessage(message, { knownLocations, subjects });
     const focus = input.session.focus;
     const focusLocation = focus?.location && now.getTime() - Date.parse(focus.at) <= FOCUS_MINUTES * 60_000 ? focus.location : undefined;
-    const note = factsNote(pre.facts, focusLocation);
+    // Šta poruka traži (vrsta, radnici, vrijeme) — za napomenu i za provjeru poslije obrade.
+    const workerRefs = ctx.workers.map(w => ({ id: w.value.id, name: w.value.name, aliases: aliasesOf(ctx.vocab || [], 'worker', w.value.id) }));
+    // Zaglavlje proslijeđene poruke („[Proslijeđeno od Amer…]") nije dio onoga što se traži.
+    const intent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
+    const workerOf = (id: string) => ctx.workers.find(w => w.value.id === id);
+    const note = factsNote(pre.facts, focusLocation, intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }));
+    // Teška poruka (mnogo stvari odjednom) ide jačem modelu od prvog kruga.
+    let strong = pre.facts.dims.length + pre.facts.widths.length + pre.facts.locations.length >= 5
+        || pre.text.length > 300 || intent.kinds.filter(k => k !== 'question').length >= 3;
     const modelMessage = note ? `${pre.text}\n${note}` : pre.text;
     nextFocus = focusLocation ? focus! : null;
 
@@ -260,11 +276,28 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     ];
     const messages: Anthropic.MessageParam[] = [...toMessages(history), { role: 'user', content: modelMessage }];
 
-    // Pokrivenost: svaka mjera i lokacija iz poruke mora završiti u upisanoj stavci bilježnice.
-    const missing = () => (env.touchedMemory?.length
-        ? uncovered(pre.facts, env.touchedMemory.map(m => [m.Title, m.Spec, m.Location, m.State_Label].filter(Boolean).join(' · ')))
-        : { sizes: [], locations: [] });
-    const missingText = (m: { sizes: string[]; locations: string[] }) => [...m.sizes, ...m.locations].join(', ');
+    // Pokrivenost: svaka mjera i lokacija iz poruke mora završiti u upisanoj stavci bilježnice,
+    // a rečen radnik i tačno vrijeme u upisu zadatka / rada / prisustva.
+    const usedInputs: string[] = [];
+    let writeAttempted = false;   // model je pokušao upis (i kad ERP kaže da nema šta) — onda ne tjeramo ponovo
+    const missing = (): Missing => {
+        const mem = env.touchedMemory?.length
+            ? uncovered(pre.facts, env.touchedMemory.map(m => [m.Title, m.Spec, m.Location, m.State_Label].filter(Boolean).join(' · ')))
+            : { sizes: [], locations: [] };
+        const used = usedInputs.join(' ');
+        const foldedUsed = foldText(used);
+        const peopleKinds = intent.kinds.some(k => k === 'reminder' || k === 'task' || k === 'work' || k === 'presence');
+        const workers = env.changes.length && peopleKinds && !used.includes('"all":true')
+            ? intent.workerIds.map(workerOf).filter((w): w is NonNullable<typeof w> => !!w)
+                .filter(w => !used.includes(`"${w.alias}"`) && !foldedUsed.includes(foldText(w.value.name.split(' ')[0])))
+                .map(w => w.value.name)
+            : [];
+        const exact = intent.times.filter(t => /\d:\d/.test(t));
+        const times = env.changes.length && intent.kinds.includes('reminder') && exact.length && !used.includes('reminder_at') ? exact : [];
+        return { sizes: mem.sizes, locations: mem.locations, workers, times };
+    };
+    const hasMissing = (m: Missing) => m.sizes.length + m.locations.length + m.workers.length + m.times.length > 0;
+    const missingText = (m: Missing) => [...m.sizes, ...m.locations, ...m.workers.map(w => `radnik ${w}`), ...m.times.map(t => `vrijeme ${t}`)].join(', ');
 
     let reply = '';
     let guarded = false;        // već jednom vraćeno: „tekst nije upis"
@@ -274,7 +307,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         for (let step = 0; step < MAX_STEPS; step++) {
             const started = Date.now();
             const res = await client.messages.create({
-                model: model(),
+                model: strong ? strongModel() : model(),
                 max_tokens: MAX_TOKENS,
                 system,
                 tools: TOOLS,
@@ -287,7 +320,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             });
             forceTool = false;
             const u = res.usage;
-            console.log(`[assistant] korak ${step + 1}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
+            console.log(`[assistant] korak ${step + 1}${strong ? ' (jači model)' : ''}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
 
             if (res.stop_reason === 'refusal') {
                 reply = 'Ovu poruku ne mogu obraditi. Probaj je reći drugačije.';
@@ -300,13 +333,24 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 if (!env.changes.length && !guarded && claimsWrite(text)) {
                     guarded = true;
                     forceTool = true;
+                    strong = true;
                     messages.push({ role: 'assistant', content: res.content });
                     messages.push({ role: 'user', content: NOT_WRITTEN_NOTE });
                     continue;
                 }
+                // Poruka traži upis (podsjetnik, zadatak, bilješka…), a model je samo odgovorio.
+                if (!env.changes.length && !guarded && !writeAttempted && intent.expectsWrite && !asksBack(text)) {
+                    guarded = true;
+                    forceTool = true;
+                    strong = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: expectsWriteNote(intent.kinds) });
+                    continue;
+                }
                 const m = missing();
-                if ((m.sizes.length || m.locations.length) && !coverageAsked) {
+                if (hasMissing(m) && !coverageAsked) {
                     coverageAsked = true;
+                    strong = true;
                     messages.push({ role: 'assistant', content: res.content });
                     messages.push({ role: 'user', content: coverageNote(missingText(m)) });
                     continue;
@@ -320,8 +364,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             let allOk = true;
             // Redom, ne paralelno: drugi alat može zavisiti od prvog (kreiraj → izmijeni).
             for (const use of uses) {
+                if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
                 if (out.ok === false) allOk = false;
+                else usedInputs.push(JSON.stringify(use.input || {}));
                 results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), ...(out.ok === false ? { is_error: true } : {}) });
             }
             if (env.question) break;
@@ -329,8 +375,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             // osim kad nešto iz poruke nije upisano: tad model još jednom, s tačnim spiskom.
             if (allOk && uses.every(x => WRITE_TOOLS.has(x.name)) && env.summaries.length) {
                 const m = missing();
-                if ((m.sizes.length || m.locations.length) && !coverageAsked) {
+                if (hasMissing(m) && !coverageAsked) {
                     coverageAsked = true;
+                    strong = true;
                     messages.push({ role: 'user', content: [...results, { type: 'text', text: coverageNote(missingText(m)) }] });
                     continue;
                 }
@@ -360,14 +407,15 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     }
 
     // Tekst tvrdi upis, a upisa nema — korisnik to mora vidjeti, ne lažnu potvrdu.
-    if (!env.changes.length && (claimsWrite(reply) || !reply)) {
+    // … ili poruka traži upis, a ni poslije ponovnog kruga ništa nije upisano.
+    if (!env.changes.length && (claimsWrite(reply) || !reply || (guarded && !writeAttempted && intent.expectsWrite && !asksBack(reply)))) {
         const msg = '⚠️ Ništa nije upisano — poruka nije razvrstana kako treba.\nPritisni „Pokušaj ponovo" ili je reci drugačije.';
         return finish(msg, retryButtons(input.entryId), null, '[ništa nije upisano]', { created: env.created, outcome: 'failed' });
     }
 
     if (!reply) reply = env.summaries.length ? env.summaries.join('\n\n') : `✅ Sačuvano: ${env.changes.join(', ')}.`;
-    const left = env.changes.length ? missing() : { sizes: [], locations: [] };
-    if (left.sizes.length || left.locations.length) reply += `\n\n⚠️ Iz poruke nije upisano: ${missingText(left)} — reci šta je s tim.`;
+    const left: Missing = env.changes.length ? missing() : { sizes: [], locations: [], workers: [], times: [] };
+    if (hasMissing(left)) reply += `\n\n⚠️ Iz poruke nije upisano: ${missingText(left)} — reci šta je s tim.`;
     const buttons: ButtonRows = [
         // Otvorene stavke bilježnice iz ove poruke: jedan dodir = postavljeno, bez poziva modela.
         ...memoryButtons(env.touchedMemory || []),
@@ -375,7 +423,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     ];
     // Istorija za model: činjenica o upisu, ne tekst potvrde — da je ne bi „prepisao" umjesto alata.
     const modelTurn = env.changes.length
-        ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}${left.sizes.length || left.locations.length ? `; nije upisano: ${missingText(left)}` : ''}]`
+        ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}${hasMissing(left) ? `; nije upisano: ${missingText(left)}` : ''}]`
         : reply;
     return finish(reply, buttons, null, modelTurn, {
         created: env.created, documents: env.documents, changed: env.changes.length > 0,
@@ -392,6 +440,17 @@ export function claimsWrite(text: string): boolean {
 }
 
 const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
+
+interface Missing { sizes: string[]; locations: string[]; workers: string[]; times: string[] }
+
+/** Odgovor je pitanje korisniku (model pita tekstom umjesto ask_user) — to nije neuspjeh. */
+function asksBack(text: string): boolean {
+    return /\?\s*$/.test((text || '').trim());
+}
+
+function expectsWriteNote(kinds: MessageKind[]): string {
+    return `ERP: poruka traži upis (${kinds.filter(k => k !== 'question').join(', ')}), a ništa nije upisano. Upiši alatom; ako stvarno nedostaje podatak bez kojeg se ne može, pitaj ask_user s opcijama.`;
+}
 
 function coverageNote(what: string): string {
     return `ERP: iz poruke nije upisano: ${what}. Svaka mjera i svaka lokacija iz poruke je posebna stvar — upiši i to (remember / update_memory) ili pitaj korisnika šta je s tim. Ne ponavljaj ono što je već upisano.`;
