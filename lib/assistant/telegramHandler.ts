@@ -51,7 +51,10 @@ const HELP =
     '• Proslijeđenu poruku radnika → ažuriram stanje\n' +
     '• Pitanje: „Gdje sve imam nemontirana ogledala?"\n' +
     '• „Naruči 5 baglama za Stan 304" → narudžba (nacrt) + PDF\n' +
-    '• „Amer i Kerim krojili iveral za kuhinju Čorluka, Edin kantirao — završio" → dnevni rad\n' +
+    '• „Svi su prisutni", „Kerim bolovanje" → šihtarica (dnevnice kao u aplikaciji)\n' +
+    '• „Amer i Kerim krojili iveral za kuhinju Čorluka, Edin kantirao — završio" → Knjiga rada\n' +
+    '• „Sve za Čorluku osim vrata je gotovo" → procesi (dan zadnjeg rada iz Knjige rada)\n' +
+    '• „Dokle je kuhinja Čorluka?" → stanje naloga\n' +
     '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Radnim danom u 16:30 stiže prijedlog rada za taj dan — potvrdiš ga jednim klikom.\n\n' +
     'Komande: /danas · /otvoreno · /prijedlog · /pomoc';

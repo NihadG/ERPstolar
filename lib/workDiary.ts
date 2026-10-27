@@ -137,6 +137,37 @@ function processCoverage(query: string, haystack: string): number {
  * plana stavki (`preferred`, redom: nezavršeni prvo) — tačan naziv procesa uvijek pobjeđuje.
  */
 export function matchProcess(name: string, vocabulary: string[], preferred: string[] = []): string | null {
+    // Glagol kako se kaže („pakuje", „zapakovao", „izbrusio") → isti proces kao imenica.
+    for (const variant of processQueryVariants(name)) {
+        const hit = matchProcessExact(variant, vocabulary, preferred);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+/** Oblici rečenog procesa: kako je rečeno, sadašnje vrijeme -uje → -ovanje, bez svršenog prefiksa (za-, iz-, o-…). */
+export function processQueryVariants(name: string): string[] {
+    const words = foldText(name).split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const [verb, ...rest] = words;
+    const forms = new Set<string>([verb]);
+    for (const p of ['za', 'iz', 'is', 'po', 'pre', 'na', 'od', 'do', 'o', 's', 'u']) {
+        if (verb.startsWith(p) && verb.length - p.length >= 5) forms.add(verb.slice(p.length));
+    }
+    for (const f of Array.from(forms)) {
+        if (f.endsWith('uje')) forms.add(`${f.slice(0, -3)}ovanje`);
+        if (f.endsWith('uju')) forms.add(`${f.slice(0, -3)}ovanje`);
+        // brusio / brusili / brusi → brusenje; sklapao / sklapali → sklapanje; sklapa / lakira → sklapanje, lakiranje
+        const m1 = f.match(/^(.{3,}?)(io|ila|ilo|ili|i)$/);
+        if (m1) forms.add(`${m1[1]}enje`);
+        const m2 = f.match(/^(.{3,}?)(ao|ala|alo|ali)$/);
+        if (m2) forms.add(`${m2[1]}anje`);
+        if (/[^aeiou]a$/.test(f) && f.length >= 5) forms.add(`${f}nje`);
+    }
+    return Array.from(forms).map(f => [f, ...rest].join(' '));
+}
+
+function matchProcessExact(name: string, vocabulary: string[], preferred: string[]): string | null {
     const q = foldText(name);
     if (!q) return null;
     const exact = vocabulary.find(v => foldText(v) === q);
@@ -231,26 +262,76 @@ export function itemNodes(graph: ProcessGraph, itemId: string): ProcessNode[] {
 
 /**
  * Proces u grafu naloga za stavku: postojeći čvor (i proširen na stavku ako
- * je bio za druge proizvode) ili nov čvor iza zadnjeg procesa te stavke.
- * Generički čvor „Rad" (nalozi Zadaci) se ne koristi kao prethodnik — stvarni
- * procesi ga zamjenjuju u prikazu toka. `covered` = proces je već bio u planu
- * stavke (samo tada se raniji koraci smiju pretpostaviti završenim).
+ * je bio za druge proizvode) ili nov čvor. Generički čvor „Rad" (nalozi Zadaci)
+ * se ne koristi kao prethodnik — stvarni procesi ga zamjenjuju u prikazu toka.
+ *
+ * Mjesto novog čvora: s `catalogOrder` (redoslijed kataloga procesa) proces dobije
+ * mjesto po katalogu — iza zadnjeg ranijeg koraka stavke, ispred prvog kasnijeg
+ * („pakovanje" na kraj, „brušenje" prije lakiranja). Bez kataloga ide na kraj.
+ * `covered` = proces je bio u planu ILI je smješten po katalogu — tada se raniji
+ * koraci smiju pretpostaviti završenim; proces van kataloga na kraju ne smije.
  */
-export function ensureGraphNode(graph: ProcessGraph | undefined, itemId: string, processName: string, newId: () => string): { graph: ProcessGraph; nodeId: string; added: boolean; covered: boolean } {
+export function ensureGraphNode(
+    graph: ProcessGraph | undefined,
+    itemId: string,
+    processName: string,
+    newId: () => string,
+    catalogOrder?: (name: string) => number | undefined,
+): { graph: ProcessGraph; nodeId: string; added: boolean; covered: boolean } {
     const g: ProcessGraph = graph ? { ...graph, nodes: graph.nodes.map(n => ({ ...n })), edges: [...graph.edges] } : { nodes: [], edges: [] };
     const covering = g.nodes.find(n => nodeMatchesProcess(n, processName) && (!(n.itemIds || []).length || n.itemIds.includes(itemId)));
     if (covering) return { graph: g, nodeId: covering.id, added: false, covered: true };
+
+    const reaches = (from: string, to: string): boolean => {
+        const seen = new Set<string>();
+        const stack = [from];
+        while (stack.length) {
+            const cur = stack.pop()!;
+            if (cur === to) return true;
+            if (seen.has(cur)) continue;
+            seen.add(cur);
+            g.edges.forEach(e => { if (e.source === cur) stack.push(e.target); });
+        }
+        return false;
+    };
+    // Veza se ne dodaje ako bi zatvorila krug (čvor dijeljen s drugim proizvodima).
+    const link = (source: string, target: string) => {
+        if (g.edges.some(e => e.source === source && e.target === target) || reaches(target, source)) return;
+        g.edges.push({ id: newId(), source, target });
+    };
+    const order = catalogOrder?.(processName);
+    const place = (node: ProcessNode): boolean => {
+        const chain = itemNodes(g, itemId).filter(n => foldText(n.name) !== 'rad' && n.id !== node.id);
+        if (order === undefined) {
+            const last = chain[chain.length - 1];
+            if (last) link(last.id, node.id);
+            return false;
+        }
+        const ranked = chain.map(n => ({ n, o: catalogOrder!(n.name) }));
+        let p = -1;
+        ranked.forEach((x, i) => { if (x.o !== undefined && x.o < order) p = i; });
+        const prev = p >= 0 ? ranked[p].n : undefined;
+        // Kasniji korak tek IZA prethodnika u toku — inače bi nastao krug.
+        const next = ranked.slice(p + 1).find(x => x.o !== undefined && x.o > order)?.n;
+        if (prev) link(prev.id, node.id);
+        if (next) link(node.id, next.id);
+        // Direktna veza prev → next postaje suvišna kad oba čvora pripadaju samo ovoj stavci.
+        const own = (n?: ProcessNode) => !!n && (n.itemIds || []).length === 1 && n.itemIds[0] === itemId;
+        if (prev && next && own(prev) && own(next)) g.edges = g.edges.filter(e => !(e.source === prev.id && e.target === next.id));
+        if (!prev && !next && chain.length) link(chain[chain.length - 1].id, node.id);
+        return true;
+    };
+
     const sameName = g.nodes.find(n => nodeMatchesProcess(n, processName));
     if (sameName) {
         sameName.itemIds = Array.from(new Set([...(sameName.itemIds || []), itemId]));
-        return { graph: g, nodeId: sameName.id, added: false, covered: false };
+        const placed = order !== undefined && place(sameName);
+        return { graph: g, nodeId: sameName.id, added: false, covered: placed };
     }
-    const chain = itemNodes(g, itemId).filter(n => foldText(n.name) !== 'rad');
     const node: ProcessNode = { id: newId(), name: processName, itemIds: [itemId] };
     g.nodes.push(node);
-    const last = chain[chain.length - 1];
-    if (last) g.edges.push({ id: newId(), source: last.id, target: node.id });
-    return { graph: g, nodeId: node.id, added: true, covered: false };
+    const placed = place(node);
+    return { graph: g, nodeId: node.id, added: true, covered: placed };
 }
 
 /** Čekiranje procesa na stavci: postojeći → u toku / završen; nov se dodaje. */
@@ -467,4 +548,34 @@ export function emptyWorkDays(input: {
         if (workerIds.length) out.push({ date, workerIds });
     }
     return out;
+}
+
+// ─── „Gotovo je" bez upisa rada ───────────────────────────────────────
+
+/**
+ * Zadnji dan rada po stavci: najkasniji upis na tu stavku; bez njega
+ * najkasniji upis na nalog; bez ičega null (pozivalac uzme danas).
+ * Obrisani nalozi (poništene dnevnice) se ne broje. `before` = samo dani prije tog
+ * (datum pretpostavljenih koraka kad se upisuje kasniji proces).
+ */
+export function lastWorkDays(
+    items: { ID: string; Work_Order_ID: string }[],
+    logs: { Date: string; Work_Order_ID: string; Work_Order_Item_ID?: string; Work_Order_Deleted?: boolean }[],
+    before?: string,
+): Map<string, string | null> {
+    const byItem = new Map<string, string>();
+    const byOrder = new Map<string, string>();
+    for (const l of logs) {
+        if (l.Work_Order_Deleted) continue;
+        const d = String(l.Date || '').slice(0, 10);
+        if (!d || (before && d >= before)) continue;
+        if (l.Work_Order_Item_ID && d > (byItem.get(l.Work_Order_Item_ID) || '')) byItem.set(l.Work_Order_Item_ID, d);
+        if (d > (byOrder.get(l.Work_Order_ID) || '')) byOrder.set(l.Work_Order_ID, d);
+    }
+    return new Map(items.map(i => [i.ID, byItem.get(i.ID) || byOrder.get(i.Work_Order_ID) || null]));
+}
+
+/** Naziv sadrži riječ („vrata" u „Vrata sobna", „kuhinj" u „Kuhinja") — za „sve osim vrata". */
+export function nameHasWord(name: string, word: string): boolean {
+    return coverage(word, name) >= 0.75;
 }

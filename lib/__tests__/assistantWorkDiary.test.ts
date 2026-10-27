@@ -145,10 +145,16 @@ describe('dnevni upis: cijela poruka u jednom pozivu', () => {
 
     it('rezime za korisnika', () => {
         const s = day.summaries[0];
-        expect(s).toMatch(/^🗓 Rad danas:/);
-        expect(s).toMatch(/• Amer — 1 dan · Krojenje Iverala · Corluka - Kuhinja\n/);
-        expect(s).toMatch(/• Edin — 1 dan · Kantiranje ✔ · Corluka - Gardaroberi u djecijoj sobi/);
-        expect(s).toMatch(/• Imer — ½ dana · Farbanje i lakiranje · Meliha A501 - Vrata · novo u grafu/);
+        expect(s).toMatch(/^📒 Knjiga rada, danas:/);
+        expect(s).toMatch(/• Amer — 1 dan · Corluka - Kuhinja\n/);
+        expect(s).toMatch(/⚙️ Procesi:\n/);
+        expect(s).toMatch(/• Krojenje Iverala u toku · Corluka - Kuhinja/);
+        expect(s).toMatch(/• Kantiranje završeno · Corluka - Gardaroberi u djecijoj sobi/);
+        expect(s).toMatch(/• Imer — ½ dana · Meliha A501 - Vrata\n/);
+        expect(s).toMatch(/• Farbanje i lakiranje u toku · Meliha A501 - Vrata · novo u toku naloga/);
+        expect(s.match(/• Krojenje Iverala u toku · Corluka - Kuhinja/g)).toHaveLength(1);   // Amer i Kerim = jedan red procesa
+        // Kantiranje je zadnji korak plana gardarobera → proizvod završen.
+        expect(s).toMatch(/✔ Proizvod završen · Corluka - Gardaroberi u djecijoj sobi/);
         expect(s).toMatch(/➕ U katalog procesa: Montaža/);
     });
 
@@ -255,8 +261,8 @@ describe('plan iz pravila materijala + podrazumijevano završeni raniji koraci',
         const s = day2.summaries[0];
         expect(day1.summaries[0]).toMatch(/📋 Plan iz pravila materijala · Begović - Vrata \(Vrata ulazna\): Krojenje MDF-a → Priprema furnira → Furniranje → Srezivanje → Brušenje → Lakiranje/);
         expect(day1.summaries[0]).toMatch(/📋 Plan s kartice proizvoda · Begović - Vrata \(Vrata sobna\): Krojenje MDF-a → Brušenje → Lakiranje/);
-        expect(s).toMatch(/☑️ Podrazumijeva se završeno · Begović - Vrata \(Vrata ulazna\): Krojenje MDF-a, Priprema furnira, Furniranje, Srezivanje/);
-        expect(s).toMatch(/☑️ Podrazumijeva se završeno · Begović - Vrata \(Vrata sobna\): Krojenje MDF-a/);
+        expect(s).toMatch(/☑️ Pretpostavljeno završeno \d+\.\d+\. \(zadnji rad\) · Begović - Vrata \(Vrata ulazna\): Krojenje MDF-a, Priprema furnira, Furniranje, Srezivanje/);
+        expect(s).toMatch(/☑️ Pretpostavljeno završeno \d+\.\d+\. \(zadnji rad\) · Begović - Vrata \(Vrata sobna\): Krojenje MDF-a/);
     });
 
     it('nov proces (nije bio u planu) ne završava ostatak plana', async () => {
@@ -388,8 +394,11 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
         store.set('worker_attendance/b22', { Attendance_ID: 'b22', Organization_ID: ORG, Worker_ID: 'braco', Worker_Name: 'Braco', Date: '2026-10-22', Status: 'Bolovanje' });
 
         fill = env3();
-        const res = await runTool(fill, 'fill_work_days', { workers: ['W1', 'W2'], orders: ['R1', 'R2'], finish_all: true });
-        expect(res).toMatchObject({ ok: true, finished_products: 2 });
+        // Dva sloja, dva alata: Knjiga rada (prazni dani) i Procesi („sve zapakovali").
+        const res = await runTool(fill, 'fill_work_days', { workers: ['W1', 'W2'], orders: ['R1', 'R2'] });
+        expect(res).toMatchObject({ ok: true, days: 5 });
+        const done = await runTool(fill, 'set_progress', { orders: ['R1', 'R2'] });
+        expect(done).toMatchObject({ ok: true, products: 2 });
     });
 
     it('prazni dani ove sedmice dobiju oba naloga; potvrđen dan i bolovanje ostaju', () => {
@@ -405,7 +414,8 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
     });
 
     it('svi procesi Čorlukinih proizvoda završeni; vrata netaknuta', () => {
-        expect(item('ck')).toMatchObject({ Status: 'Završeno', Labor_Cost_Frozen: true });
+        // Završeno na dan zadnjeg rada iz Knjige rada (petak 23.10.), ne na dan poruke.
+        expect(item('ck')).toMatchObject({ Status: 'Završeno', Labor_Cost_Frozen: true, Completed_At: '2026-10-23T15:00:00.000Z' });
         expect(item('ck').Processes.every((p: any) => p.Status === 'Završeno' && !p.Assumed_Done)).toBe(true);
         expect(item('co').Processes.map((p: any) => `${p.Process_Name}:${p.Status}`)).toEqual(['Krojenje MDF-a:Završeno', 'Lakiranje:Završeno']);
         expect(item('cv').Status).toBe('U toku');
@@ -415,7 +425,8 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
         expect(fill.summaries[0]).toMatch(/Popunjeni prazni dani · Corluka - Kuhinja, Corluka - Ostrvo/);
         expect(fill.summaries[0]).toMatch(/• Bego, Braco: 19\.10\., 20\.10\., 23\.10\./);
         expect(fill.summaries[0]).toMatch(/• Bego: 21\.10\., 22\.10\./);
-        expect(fill.summaries[0]).toMatch(/Završeni svi procesi: 2 proizvoda/);
+        expect(fill.summaries[1]).toMatch(/^⚙️ Procesi — proizvodi završeni \(dan zadnjeg rada iz Knjige rada\):\n• Corluka - Kuhinja — Kuhinja · 23\.10\.\n• Corluka - Ostrvo — Ostrvo · 23\.10\./);
+        expect(fill.summaries[1]).toMatch(/📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani\./);
     });
 
     it('drugi put: nema praznih dana', async () => {
@@ -430,12 +441,12 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
         expect(item('co').Processes).toBeUndefined();
     });
 
-    it('log_work s više naloga i finish_all na jednoj stavci', async () => {
+    it('log_work s više naloga upisuje samo Knjigu rada (proizvodi ostaju otvoreni)', async () => {
         const e = env3();
-        const res = await runTool(e, 'log_work', { date: '2026-10-23', lines: [{ workers: ['W2'], work: 'Čorluka', orders: ['R1', 'R2'], finish_all: true }] });
-        expect(res).toMatchObject({ ok: true, finished_products: 2 });
+        const res = await runTool(e, 'log_work', { date: '2026-10-23', lines: [{ workers: ['W2'], work: 'Čorluka', orders: ['R1', 'R2'] }] });
+        expect(res).toMatchObject({ ok: true, finished_products: 0 });
         expect(logs('braco').filter(l => l.Date === '2026-10-23').map(l => l.Work_Order_ID).sort()).toEqual(['c1', 'c2']);
-        expect(item('co').Status).toBe('Završeno');
+        expect(item('co').Status).toBe('U toku');
         expect(await runTool(e, 'log_work', { lines: [{ workers: ['W2'], work: 'x', orders: ['R9'] }] })).toMatchObject({ ok: false, error: expect.stringMatching(/R9 nije u listi/) });
     });
 });

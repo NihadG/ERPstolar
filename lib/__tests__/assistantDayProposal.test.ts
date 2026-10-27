@@ -60,7 +60,8 @@ describe('večernji prijedlog → upis jednim klikom', () => {
 
         const booked = await handleProposalButton(link, id, 'ok', '', TODAY);
         expect(booked).toMatchObject({ toast: 'Upisano', buttons: [[{ text: '↩️ Poništi', data: `undo:dp-${id}` }]] });
-        expect(booked!.text).toMatch(/^🗓 Rad danas:\n• Amer — 1 dan · Brušenje · Begović - Vrata/);
+        expect(booked!.text).toMatch(/^📒 Knjiga rada, danas:\n• Amer — 1 dan · Begović - Vrata\n/);
+        expect(booked!.text).toMatch(/⚙️ Procesi:\n• Brušenje u toku · Begović - Vrata/);
         expect(booked!.text).toMatch(/Preskočeni jer su već upisani: Kerim/);
 
         expect(logsOf('amer')).toEqual([expect.objectContaining({ Work_Order_Item_ID: 'v1', Process_Name: 'Brušenje', Entry_Source: 'telegram', Daily_Rate: 100 })]);
@@ -101,7 +102,7 @@ describe('prijedlog za raniji dan i preskakanje', () => {
         // Kerimov zadnji potvrđeni dan je sada petak (kuhinja) → prijedlog ga prati.
         expect(msg!.text).toMatch(/Kerim — Sklapanje · Čorluka - Kuhinja/);
         const booked = await handleProposalButton(link, proposalId(msg), 'ok', '', '2026-10-27');
-        expect(booked!.text).toMatch(/^🗓 Rad pon 26\.10\.:/);
+        expect(booked!.text).toMatch(/^📒 Knjiga rada, pon 26\.10\.:/);
         expect(logsOf('amer', '2026-10-26')).toHaveLength(1);
         expect(item('k1').Processes.find((p: any) => p.Process_Name === 'Sklapanje').Status).toBe('U toku');
     });
