@@ -147,6 +147,9 @@ function textOf(res: Anthropic.Message): string {
         .trim();
 }
 
+/** Koliko unazad korisnikove poruke važe kao „rečeno" za upis (nastavak istog razgovora). */
+const GROUND_MINUTES = 30;
+
 export async function runAssistant(input: AssistantTurnInput): Promise<AssistantTurnOutput> {
     const now = input.now || new Date();
     const tz = assistantTimezone();
@@ -196,6 +199,12 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         turnId,
         entryId: input.entryId,
         dateText: [...recentUser, message].join('\n'),
+        // Utemeljenost upisa: ova poruka + korisnikove poruke iz zadnjih 30 min (nastavak razgovora).
+        groundText: [
+            ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-2).map(t => t.text),
+            ...(input.session.pending?.options || []),
+            message,
+        ].join('\n'),
         reporter: input.forward?.from || 'ja',
         searchHits: (prevRefs?.searchHits as ToolEnv['searchHits']) || [],
         ...(prevRefs?.orderGroups ? {
