@@ -29,15 +29,18 @@ import type { ButtonRows } from '@/lib/telegram/api';
 import { assistantTimezone, toZoned } from './datetime';
 import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
+import { factsNote, preparseMessage, uncovered } from './preparse';
 import { runTool, stripAliases, TOOLS, WRITE_TOOLS, type ToolEnv } from './tools';
-import type { AssistantSession, SessionRefs, SessionTurn } from './store';
-import type { MemoryItem } from '@/lib/types';
+import type { AssistantSession, SessionFocus, SessionRefs, SessionTurn } from './store';
+import type { AssistantOutcome, MemoryItem } from '@/lib/types';
 
 const MAX_STEPS = 6;
 const MAX_TOKENS = 8000;
 const TIMEOUT_MS = 25_000;
 /** Poruke starije od ovoga ne idu modelu (osim kad čeka odgovor na pitanje). */
 const HISTORY_HOURS = 3;
+/** Lokacija iz razgovora važi ovoliko („u tom stanu“, poruka bez lokacije odmah poslije). */
+const FOCUS_MINUTES = 20;
 
 function model(): string {
     return process.env.ASSISTANT_MODEL?.trim() || 'claude-haiku-5-5';
@@ -62,6 +65,10 @@ export interface AssistantTurnOutput {
     documents?: { orderId: string; draft: boolean }[];
     /** Poruka je nešto upisala (rad, narudžba…) — kapije materijala se provjere odmah. */
     changed?: boolean;
+    /** Ishod za dnevnik: upisano / pitanje / odgovor / nije upisano / AI nije radio. */
+    outcome?: AssistantOutcome;
+    /** Oznake upisa (kao uz ↩️ Poništi). */
+    changes?: string[];
     degraded?: boolean;
 }
 
@@ -162,6 +169,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     // Oznake iz prethodnih poruka (O#, K#, S#, R#) — dok traje razgovor.
     const prevRefs = input.session.refs && Date.parse(input.session.refs.at) >= cutoff ? input.session.refs : null;
     let turnEnv: ToolEnv | null = null;
+    let nextFocus: SessionFocus | null = null;
 
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
@@ -173,6 +181,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             history: [...history, { role: 'user', text: message, at }, { role: 'model', text: withRefLegend(modelTurn, turnEnv), at }],
             pending,
             refs: turnEnv ? sessionRefs(turnEnv, at) : prevRefs,
+            focus: nextFocus,
         },
     });
 
@@ -180,10 +189,21 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) {
         const reply = '📥 Sačuvao sam poruku u dnevnik, ali AI nije podešen (nedostaje ANTHROPIC_API_KEY), pa je nisam razvrstao.';
-        return finish(reply, [], null, reply, { degraded: true });
+        return finish(reply, [], null, reply, { degraded: true, outcome: 'degraded' });
     }
 
     const ctx = await loadContext(input.orgId, input.uid, now);
+
+    // ── Predobrada: ERP prvo pročita poruku (mjere, lokacije, tipfeleri, „u tom stanu") ──
+    const knownLocations = Array.from(new Set(ctx.memory.map(m => m.value.Location).filter((l): l is string => !!l)));
+    const subjects = Array.from(new Set(ctx.memory.map(m => m.value.Subject).filter((s): s is string => !!s)));
+    const pre = preparseMessage(message, { knownLocations, subjects });
+    const focus = input.session.focus;
+    const focusLocation = focus?.location && now.getTime() - Date.parse(focus.at) <= FOCUS_MINUTES * 60_000 ? focus.location : undefined;
+    const note = factsNote(pre.facts, focusLocation);
+    const modelMessage = note ? `${pre.text}\n${note}` : pre.text;
+    nextFocus = focusLocation ? focus! : null;
+
     // Vrijeme se potvrđuje samo prema OVOJ poruci — osim kad je ovo odgovor na
     // pitanje; tad i prema poruci koja je pitanje izazvala („napomeni me sutra…"
     // → „Ameru"). Starije poruke bi podmetnule pogrešan dan.
@@ -204,7 +224,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-2).map(t => t.text),
             ...(input.session.pending?.options || []),
             message,
+            pre.text,
         ].join('\n'),
+        // „U tom stanu" / poruka bez lokacije odmah poslije upisa → lokacija iz razgovora.
+        ...(focusLocation && (pre.facts.deictic || !pre.facts.locations.length) ? { focusLocation } : {}),
         reporter: input.forward?.from || 'ja',
         searchHits: (prevRefs?.searchHits as ToolEnv['searchHits']) || [],
         ...(prevRefs?.orderGroups ? {
@@ -227,17 +250,26 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         ...(workspace ? { defaultHeaders: { 'anthropic-workspace-id': workspace } } : {}),
     });
     // Bilježnica u promptu: stavke o kojima ova (i prethodne dvije) poruke govore.
-    const focus = [...history.filter(t => t.role === 'user').slice(-2).map(t => t.text), message].join('\n');
-    const prompt = buildPromptParts(ctx, now, tz, focus);
+    const promptFocus = [...history.filter(t => t.role === 'user').slice(-2).map(t => t.text), pre.text].join('\n');
+    const prompt = buildPromptParts(ctx, now, tz, promptFocus);
     const system: Anthropic.TextBlockParam[] = [
         // Tačka keša na kraju stabilnog dijela: alati + pravila + imena se čitaju iz keša.
         // 1 h: poruke s terena stižu u razmacima 5–60 min, a 5-minutni keš bi se stalno ponovo upisivao.
         { type: 'text', text: prompt.stable, cache_control: { type: 'ephemeral', ttl: '1h' } },
         { type: 'text', text: prompt.volatile },
     ];
-    const messages: Anthropic.MessageParam[] = [...toMessages(history), { role: 'user', content: message }];
+    const messages: Anthropic.MessageParam[] = [...toMessages(history), { role: 'user', content: modelMessage }];
+
+    // Pokrivenost: svaka mjera i lokacija iz poruke mora završiti u upisanoj stavci bilježnice.
+    const missing = () => (env.touchedMemory?.length
+        ? uncovered(pre.facts, env.touchedMemory.map(m => [m.Title, m.Spec, m.Location, m.State_Label].filter(Boolean).join(' · ')))
+        : { sizes: [], locations: [] });
+    const missingText = (m: { sizes: string[]; locations: string[] }) => [...m.sizes, ...m.locations].join(', ');
 
     let reply = '';
+    let guarded = false;        // već jednom vraćeno: „tekst nije upis"
+    let coverageAsked = false;  // već jednom vraćeno: „ovo iz poruke nije upisano"
+    let forceTool = false;
     try {
         for (let step = 0; step < MAX_STEPS; step++) {
             const started = Date.now();
@@ -251,7 +283,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 cache_control: { type: 'ephemeral' },
                 thinking: { type: 'disabled' },
                 output_config: { effort: 'low' },
+                ...(forceTool ? { tool_choice: { type: 'any' as const } } : {}),
             });
+            forceTool = false;
             const u = res.usage;
             console.log(`[assistant] korak ${step + 1}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
 
@@ -261,7 +295,23 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             }
             const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
             if (!uses.length) {
-                reply = plainText(textOf(res));
+                const text = plainText(textOf(res));
+                // Model je „potvrdio" tekstom, a ništa nije upisano → još jednom, uz obavezan alat.
+                if (!env.changes.length && !guarded && claimsWrite(text)) {
+                    guarded = true;
+                    forceTool = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: NOT_WRITTEN_NOTE });
+                    continue;
+                }
+                const m = missing();
+                if ((m.sizes.length || m.locations.length) && !coverageAsked) {
+                    coverageAsked = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: coverageNote(missingText(m)) });
+                    continue;
+                }
+                reply = text;
                 break;
             }
 
@@ -275,8 +325,15 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), ...(out.ok === false ? { is_error: true } : {}) });
             }
             if (env.question) break;
-            // Samo upisi, svi uspjeli → potvrdu složi sistem, bez drugog poziva modela.
+            // Samo upisi, svi uspjeli → potvrdu složi sistem, bez drugog poziva modela —
+            // osim kad nešto iz poruke nije upisano: tad model još jednom, s tačnim spiskom.
             if (allOk && uses.every(x => WRITE_TOOLS.has(x.name)) && env.summaries.length) {
+                const m = missing();
+                if ((m.sizes.length || m.locations.length) && !coverageAsked) {
+                    coverageAsked = true;
+                    messages.push({ role: 'user', content: [...results, { type: 'text', text: coverageNote(missingText(m)) }] });
+                    continue;
+                }
                 reply = env.summaries.join('\n\n');
                 break;
             }
@@ -286,27 +343,60 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         console.error('[assistant] model pao:', e instanceof Anthropic.APIError ? `${e.status} ${e.message}` : e);
         if (!env.changes.length && !env.question) {
             const msg = `📥 Sačuvao sam poruku u dnevnik, ali AI se trenutno ne javlja.\nRazlog: ${failureReason(e)}.`;
-            return finish(msg, [], null, msg, { degraded: true });
+            return finish(msg, retryButtons(input.entryId), null, '[AI nije radio — ništa nije upisano]', { degraded: true, outcome: 'degraded' });
         }
     }
+
+    // Fokus razgovora: lokacija zadnje upisane stavke.
+    const lastLoc = [...(env.touchedMemory || [])].reverse().find(m => m.Location)?.Location;
+    if (lastLoc) nextFocus = { location: lastLoc, at };
 
     if (env.question) {
         const { question, options } = env.question;
         const buttons: ButtonRows = options.map((o, i) => [{ text: o, data: `opt:${i}` }]);
         const modelTurn = options.length ? `${question}\n(opcije: ${options.join(' / ')})` : question;
         const pending = { question, options, askedAt: at, ...(input.entryId ? { entryId: input.entryId } : {}) };
-        return finish(question, buttons, pending, modelTurn, { created: env.created });
+        return finish(question, buttons, pending, modelTurn, { created: env.created, outcome: 'question', changes: env.changes });
     }
 
-    if (!reply) {
-        reply = env.summaries.length ? env.summaries.join('\n\n')
-            : env.changes.length ? `✅ Sačuvano: ${env.changes.join(', ')}.`
-                : 'Nisam siguran šta da uradim s ovim. Možeš li reći drugačije?';
+    // Tekst tvrdi upis, a upisa nema — korisnik to mora vidjeti, ne lažnu potvrdu.
+    if (!env.changes.length && (claimsWrite(reply) || !reply)) {
+        const msg = '⚠️ Ništa nije upisano — poruka nije razvrstana kako treba.\nPritisni „Pokušaj ponovo" ili je reci drugačije.';
+        return finish(msg, retryButtons(input.entryId), null, '[ništa nije upisano]', { created: env.created, outcome: 'failed' });
     }
+
+    if (!reply) reply = env.summaries.length ? env.summaries.join('\n\n') : `✅ Sačuvano: ${env.changes.join(', ')}.`;
+    const left = env.changes.length ? missing() : { sizes: [], locations: [] };
+    if (left.sizes.length || left.locations.length) reply += `\n\n⚠️ Iz poruke nije upisano: ${missingText(left)} — reci šta je s tim.`;
     const buttons: ButtonRows = [
         // Otvorene stavke bilježnice iz ove poruke: jedan dodir = postavljeno, bez poziva modela.
         ...memoryButtons(env.touchedMemory || []),
         ...(env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : []),
     ];
-    return finish(reply, buttons, null, reply, { created: env.created, documents: env.documents, changed: env.changes.length > 0 });
+    // Istorija za model: činjenica o upisu, ne tekst potvrde — da je ne bi „prepisao" umjesto alata.
+    const modelTurn = env.changes.length
+        ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}${left.sizes.length || left.locations.length ? `; nije upisano: ${missingText(left)}` : ''}]`
+        : reply;
+    return finish(reply, buttons, null, modelTurn, {
+        created: env.created, documents: env.documents, changed: env.changes.length > 0,
+        outcome: env.changes.length ? 'written' : 'answer', changes: env.changes,
+    });
+}
+
+/** Odgovor koji tvrdi da je nešto upisano (potvrda bez alata). */
+export function claimsWrite(text: string): boolean {
+    const t = (text || '').trim();
+    if (!t) return false;
+    if (/^(📒|✅|🧾|📝|🗓|⚙️|📦|✔|☑|➕)/u.test(t)) return true;
+    return /\b(zapisa[ol]|zapisujem|zapisala|upisa[ol]|upisujem|sa[čc]uva[ol]|zabilje[žz]i[oh]|zabilje[žz]eno|evidentira[ol]|dodao sam|dodala sam|napravio sam (zadatak|podsjetnik|narud))/i.test(t);
+}
+
+const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
+
+function coverageNote(what: string): string {
+    return `ERP: iz poruke nije upisano: ${what}. Svaka mjera i svaka lokacija iz poruke je posebna stvar — upiši i to (remember / update_memory) ili pitaj korisnika šta je s tim. Ne ponavljaj ono što je već upisano.`;
+}
+
+function retryButtons(entryId?: string): ButtonRows {
+    return entryId ? [[{ text: '🔁 Pokušaj ponovo', data: `retry:${entryId}` }]] : [];
 }

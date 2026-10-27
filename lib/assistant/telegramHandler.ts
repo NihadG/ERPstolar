@@ -23,7 +23,7 @@ import { sendOrderPdf } from './orderDocuments';
 import { handleMaterialButton, sendMaterialAlerts } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
-import { runAssistant } from './brain';
+import { runAssistant, type AssistantTurnOutput } from './brain';
 import { memoryButtonState } from './tools';
 import { loadNames } from './context';
 import { assistantTimezone, formatReminder, toZoned } from './datetime';
@@ -33,8 +33,8 @@ import { isIsoDate } from '@/lib/voice/dates';
 import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
 import {
-    addEntry, attachEntryResults, claimUpdate, consumeLinkCode, getLinkByTelegramId,
-    getSession, saveSession, undoTurn, type AssistantLink, type AssistantSession,
+    addEntry, claimUpdate, consumeLinkCode, getEntry, getLinkByTelegramId,
+    getSession, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
 } from './store';
 import type { Task } from '@/lib/types';
 
@@ -156,8 +156,8 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
 async function converse(
     link: AssistantLink,
     chatId: number,
-    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession },
-): Promise<void> {
+    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession; now?: Date },
+): Promise<AssistantTurnOutput> {
     const started = Date.now();
     const session = input.session || await getSession(chatId);
     const out = await runAssistant({
@@ -167,6 +167,7 @@ async function converse(
         forward: input.forward,
         entryId: input.entryId,
         session,
+        ...(input.now ? { now: input.now } : {}),
     });
     // Prvo odgovor korisniku, pa spremanje — sesija i dnevnik ne trebaju da ga čekaju.
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
@@ -175,7 +176,10 @@ async function converse(
     await Promise.all([
         saveSession(chatId, out.session),
         input.entryId
-            ? attachEntryResults(input.entryId, out.created.taskIds, Array.from(new Set(out.created.memoryIds)))
+            ? recordEntryOutcome(input.entryId, {
+                outcome: out.outcome || (out.changed ? 'written' : 'answer'), reply: out.reply, changes: out.changes || [],
+                taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)),
+            })
             : Promise.resolve(),
         ...(out.documents || []).map(async doc => {
             try {
@@ -191,6 +195,7 @@ async function converse(
         await sendMaterialAlerts(new Date(), assistantTimezone(), { orgId: link.orgId })
             .catch(e => console.error('[assistant] kapije materijala:', e));
     }
+    return out;
 }
 
 async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promise<void> {
@@ -216,6 +221,24 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         const result = await memoryButtonState(link.orgId, link.uid, arg, extra === 'f' ? 'fali' : 'postavljeno');
         await answerCallbackQuery(inc.callbackId, result.ok ? 'Sačuvano' : result.error);
         if (result.ok) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${result.line}`, inc.buttons?.filter(row => row.every(b => b.data !== inc.data)));
+        return;
+    }
+
+    // „Pokušaj ponovo": ista poruka iz dnevnika, obrađena iznova (nije upisano / AI nije radio).
+    if (kind === 'retry') {
+        const entry = await getEntry(arg);
+        if (!entry || entry.Owner_UID !== link.uid || entry.Organization_ID !== link.orgId) {
+            await answerCallbackQuery(inc.callbackId, 'Poruka više ne postoji.');
+            return;
+        }
+        if (entry.Outcome === 'written') {
+            await answerCallbackQuery(inc.callbackId, 'Ova poruka je već upisana.');
+            return;
+        }
+        await answerCallbackQuery(inc.callbackId, 'Obrađujem ponovo…');
+        await tg('editMessageReplyMarkup', { chat_id: inc.chatId, message_id: inc.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+        await sendTyping(inc.chatId);
+        await reprocessEntry(link, entry.Entry_ID);
         return;
     }
 
@@ -298,4 +321,20 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
     }
 
     await answerCallbackQuery(inc.callbackId);
+}
+
+/**
+ * Ponovna obrada poruke iz dnevnika (dugme „Pokušaj ponovo" ili ERP → Poruke botu).
+ * Tumači se kao da je rečena tada (datum poruke), a odgovor stiže na Telegram
+ * s ↩️ Poništi, kao i svaki drugi upis.
+ */
+export async function reprocessEntry(link: AssistantLink, entryId: string): Promise<{ ok: true; outcome: string; reply: string } | { ok: false; error: string }> {
+    const entry = await getEntry(entryId);
+    if (!entry || entry.Owner_UID !== link.uid || entry.Organization_ID !== link.orgId) return { ok: false, error: 'Poruka ne postoji.' };
+    if (entry.Outcome === 'written') return { ok: false, error: 'Ova poruka je već upisana.' };
+    const out = await converse(link, link.chatId, {
+        text: entry.Raw_Text, entryId: entry.Entry_ID, now: new Date(entry.Created_At),
+        ...(entry.Forward_From && entry.Forward_Date ? { forward: { from: entry.Forward_From, date: entry.Forward_Date } } : {}),
+    });
+    return { ok: true, outcome: out.outcome || 'answer', reply: out.reply };
 }
