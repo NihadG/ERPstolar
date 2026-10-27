@@ -437,6 +437,8 @@ export interface ToolEnv {
     diaryCandidates?: Aliased<string>[];
     /** „O3 Baglama ravna · Kuhinja Grbavica" — legenda oznaka ove poruke za istoriju modela. */
     refNotes?: string[];
+    /** Lokacija iz razgovora (ERP je vodi): „u tom stanu", poruka bez lokacije odmah poslije upisa. */
+    focusLocation?: string;
     /** Stavke bilježnice upisane ovom porukom — dobijaju dugmad stanja ispod potvrde. */
     touchedMemory?: MemoryItem[];
     /** ERP je ponudio izbor za riječ („305" → E305 / C305); izabrano se zapamti u rječnik. */
@@ -650,7 +652,8 @@ async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const subject = text(a.subject, 60).toLowerCase();
     const state = stateOf(a);
     if (!subject || !state) return { ok: false, error: 'Nedostaje predmet ili stanje.' };
-    const loc = resolveLocation(env, a.location);
+    // Bez lokacije u pozivu: lokacija iz razgovora („u tom stanu").
+    const loc = resolveLocation(env, text(a.location) ? a.location : env.focusLocation);
     if ('error' in loc) return { ok: false, error: loc.error };
     const forLoc = text(a.for_location) ? resolveLocation(env, a.for_location) : { location: '' };
     if ('error' in forLoc) return { ok: false, error: forLoc.error };

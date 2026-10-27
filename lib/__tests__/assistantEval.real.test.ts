@@ -138,6 +138,43 @@ run('stvarne rečenice → pravi sloj (pravi model)', () => {
     });
 });
 
+run('bilježnica: stvarne poruke od 26.10. (pravi model)', () => {
+    jest.setTimeout(120_000);
+    beforeAll(() => { process.env.ASSISTANT_TIMEZONE = 'Europe/Sarajevo'; });
+    beforeEach(seed);
+    const mem = () => docs('memory_items').filter(m => m.Organization_ID === ORG);
+    const sayIn = async (text: string, session: any) => {
+        const out = await runAssistant({ orgId: ORG, uid: 'u1', text, session, now: NOW });
+        return out;
+    };
+
+    it('„U e108 pogresno postavljeno ogledalo, treba 1100x1000. I ima u tom stanu ogledalo 1000x800" → dvije stavke u E108', async () => {
+        const out = await sayIn('U e108 pogresno postavljeno ogledalo, treba 1100x1000.\n\nI ima u tom stanu ogledalo 1000x800', { history: [], pending: null });
+        expect(out.outcome).toBe('written');
+        expect(mem().map(m => `${m.Title}|${m.Location}`).sort()).toEqual(['Ogledalo 1000x800|E108', 'Ogledalo 1100x1000|E108']);
+    });
+
+    it('E308 glasom: četiri mjere + širina → pet stavki, ništa izgubljeno', async () => {
+        const out = await sayIn('U stanu E308 imam jedno ogledalo široko 800 milimetara, a nisam postavio jedno ogledalo 1000 puta 1100, jedno ogledalo 800 puta 900 i jedno ogledalo 800 puta 900 i jedan gornji 1100 širine.', { history: [], pending: null });
+        expect(out.outcome).toBe('written');
+        expect(out.reply).not.toMatch(/nije upisano/);
+        const qty = mem().filter(m => m.Location === 'E308').reduce((s, m) => s + (m.Quantity || 1), 0);
+        expect(qty).toBe(5);
+    });
+
+    it('C604: „imam 1720x1000, a fali 1000x1350" → dvije stavke', async () => {
+        await sayIn('U c604 imam ogledalo 1720x1000, a fali 1000x1350', { history: [], pending: null });
+        expect(mem().filter(m => m.Location === 'C604').map(m => m.Title).sort()).toEqual(['Ogledalo 1000x1350', 'Ogledalo 1720x1000']);
+    });
+
+    it('nastavak: „I još jedno ogledalo na istom hodniku (1000x1350)" → hodnik iz prethodne poruke', async () => {
+        const first = await sayIn('I na hodniku e4 imam dva ogledala 1000x1350', { history: [], pending: null });
+        await sayIn('I jos jedno pgledalo na istom hodniku (1000x1350)', first.session);
+        const onHall = mem().filter(m => /E4/.test(m.Location || ''));
+        expect(onHall.reduce((s, m) => s + (m.Quantity || 1), 0)).toBe(3);
+    });
+});
+
 it('provjera sa stvarnim modelom se pokreće samo izričito', () => {
     expect(typeof live).toBe('boolean');
 });

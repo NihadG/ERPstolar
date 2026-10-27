@@ -1,0 +1,141 @@
+'use client';
+
+// ════════════════════════════════════════════════════════════════════
+// PORUKE BOTU — dnevnik onoga što si poslao botu i šta je stvarno upisano
+//
+// Svaka poruka ima ishod (upisano / pitanje / odgovor / nije upisano). Poruka
+// bez upisa može se obraditi ponovo — odgovor stiže na Telegram s ↩️ Poništi.
+// Čist prikaz (BotMessagesView) da ga /bot-log-preview renderuje bez prijave.
+// ════════════════════════════════════════════════════════════════════
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiGet, apiPost } from '@/lib/apiClient';
+import './BotMessagesLog.css';
+
+export interface BotEntry {
+    id: string;
+    at: string;
+    kind: string;
+    text: string;
+    from: string | null;
+    outcome: 'written' | 'question' | 'answer' | 'failed' | 'degraded' | 'unknown';
+    reply: string | null;
+    changes: string[];
+    attempts: number;
+}
+
+const OUTCOME: Record<BotEntry['outcome'], { label: string; tone: string }> = {
+    written: { label: 'Upisano', tone: 'ok' },
+    question: { label: 'Bot pitao', tone: 'info' },
+    answer: { label: 'Odgovor', tone: 'muted' },
+    failed: { label: 'Nije upisano', tone: 'bad' },
+    degraded: { label: 'AI nije radio', tone: 'bad' },
+    unknown: { label: 'Bez upisa', tone: 'warn' },
+};
+
+/** Poruke koje traže pažnju: ništa nije upisano (ili se ne zna). */
+const needsLook = (e: BotEntry) => e.outcome === 'failed' || e.outcome === 'degraded' || e.outcome === 'unknown';
+
+function when(iso: string): string {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric' })} ${d.toLocaleTimeString('hr-HR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+export function BotMessagesView({ entries, busyId, onReprocess }: {
+    entries: BotEntry[];
+    busyId?: string | null;
+    onReprocess?: (e: BotEntry) => void;
+}) {
+    const [filter, setFilter] = useState<'look' | 'all'>('look');
+    const [open, setOpen] = useState<string | null>(null);
+    const counts = useMemo(() => ({
+        all: entries.length,
+        look: entries.filter(needsLook).length,
+        written: entries.filter(e => e.outcome === 'written').length,
+    }), [entries]);
+    const shown = filter === 'look' ? entries.filter(needsLook) : entries;
+
+    return (
+        <div className="bml">
+            <div className="bml-head">
+                <div className="bml-tabs" role="tablist">
+                    <button role="tab" aria-selected={filter === 'look'} className={filter === 'look' ? 'on' : ''} onClick={() => setFilter('look')}>
+                        Bez upisa <span>{counts.look}</span>
+                    </button>
+                    <button role="tab" aria-selected={filter === 'all'} className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>
+                        Sve <span>{counts.all}</span>
+                    </button>
+                </div>
+                <span className="bml-sum">{counts.written} od {counts.all} upisano</span>
+            </div>
+            {shown.length === 0 ? (
+                <p className="bml-empty">{filter === 'look' ? 'Nema poruka bez upisa. 👍' : 'Nema poruka u ovom periodu.'}</p>
+            ) : (
+                <ul className="bml-list">
+                    {shown.map(e => {
+                        const o = OUTCOME[e.outcome];
+                        const expanded = open === e.id;
+                        return (
+                            <li key={e.id} className={`bml-item ${o.tone}`}>
+                                <button className="bml-main" onClick={() => setOpen(expanded ? null : e.id)} aria-expanded={expanded}>
+                                    <span className="bml-when">{when(e.at)}{e.kind === 'voice' ? ' · 🎙' : ''}{e.from ? ` · od ${e.from}` : ''}</span>
+                                    <span className="bml-text">{e.text}</span>
+                                    <span className={`bml-badge ${o.tone}`}>{o.label}</span>
+                                </button>
+                                {expanded && (
+                                    <div className="bml-detail">
+                                        {e.changes.length > 0 && <p><strong>Upisano:</strong> {e.changes.join(', ')}</p>}
+                                        {e.reply && <p className="bml-reply"><strong>Bot je odgovorio:</strong> {e.reply}</p>}
+                                        {!e.reply && e.outcome === 'unknown' && <p className="bml-reply">Odgovor bota nije sačuvan (poruka je starija od dnevnika ishoda), a u ERP-u nema ničeg upisanog iz nje.</p>}
+                                        {e.attempts > 1 && <p className="bml-muted">Obrađeno {e.attempts} puta.</p>}
+                                    </div>
+                                )}
+                                {needsLook(e) && onReprocess && (
+                                    <button className="btn btn-secondary btn-sm bml-retry" disabled={!!busyId} onClick={() => onReprocess(e)}>
+                                        <span className="material-icons-round">refresh</span>
+                                        {busyId === e.id ? 'Obrađujem…' : 'Obradi ponovo'}
+                                    </button>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+export default function BotMessagesLog({ showMessage }: { showMessage: (text: string, type: 'success' | 'error') => void }) {
+    const [entries, setEntries] = useState<BotEntry[] | null>(null);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    // Roditelj pravi novu funkciju pri svakom renderu — bez refa bi učitavanje išlo u petlji.
+    const messageRef = useRef(showMessage);
+    messageRef.current = showMessage;
+
+    const load = useCallback(async () => {
+        try {
+            setEntries((await apiGet<{ entries: BotEntry[] }>('/api/assistant/entries?days=14')).entries);
+        } catch (e: any) {
+            messageRef.current(e?.message || 'Poruke bota nisu učitane.', 'error');
+            setEntries([]);
+        }
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    const reprocess = async (e: BotEntry) => {
+        setBusyId(e.id);
+        try {
+            const res = await apiPost<{ outcome: string; reply: string }>('/api/assistant/entries', { entryId: e.id });
+            showMessage(res.outcome === 'written' ? 'Upisano — potvrda je stigla i na Telegram.' : 'Obrađeno — odgovor je na Telegramu.', res.outcome === 'written' ? 'success' : 'error');
+            await load();
+        } catch (err: any) {
+            showMessage(err?.message || 'Ponovna obrada nije uspjela.', 'error');
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    if (!entries) return <p className="bml-empty">Učitavam poruke…</p>;
+    return <BotMessagesView entries={entries} busyId={busyId} onReprocess={reprocess} />;
+}

@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
+import BotMessagesLog from './BotMessagesLog';
 
 interface LinkStatus {
     configured: boolean;
@@ -149,6 +150,16 @@ export default function TelegramSection({ showMessage }: { showMessage: (text: s
                             </div>
                         </div>
                     )}
+                </div>
+            )}
+
+            {status?.linked && (
+                <div className="settings-card" style={{ marginTop: 16 }}>
+                    <div className="settings-row-label" style={{ marginBottom: 10 }}>
+                        <strong>Poruke botu (14 dana)</strong>
+                        <span>Šta si poslao i šta je stvarno upisano. Poruku bez upisa obradi ponovo — potvrda stiže na Telegram.</span>
+                    </div>
+                    <BotMessagesLog showMessage={showMessage} />
                 </div>
             )}
         </section>

@@ -19,7 +19,7 @@ import { randomInt } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
-import type { AssistantEntry, MemoryItem } from '@/lib/types';
+import type { AssistantEntry, AssistantOutcome, MemoryItem } from '@/lib/types';
 
 const LINK_CODE_TTL_MS = 10 * 60_000;
 const HISTORY_TURNS = 12;
@@ -161,16 +161,23 @@ export interface SessionRefs {
     pendingVocab?: unknown[];
 }
 
+/** Šta je u fokusu razgovora — „u tom stanu", „na istom hodniku" znače ovo. Vodi ga ERP, ne model. */
+export interface SessionFocus {
+    location?: string;
+    at: string;
+}
+
 export interface AssistantSession {
     history: SessionTurn[];
     pending?: PendingQuestion | null;
     refs?: SessionRefs | null;
+    focus?: SessionFocus | null;
 }
 
 export async function getSession(chatId: number): Promise<AssistantSession> {
     const snap = await adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId)).get();
     const data = snap.data() as Partial<AssistantSession> | undefined;
-    return { history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null };
+    return { history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null, focus: data?.focus || null };
 }
 
 export async function saveSession(chatId: number, session: AssistantSession): Promise<void> {
@@ -178,6 +185,7 @@ export async function saveSession(chatId: number, session: AssistantSession): Pr
         history: session.history.slice(-HISTORY_TURNS),
         pending: session.pending || null,
         refs: session.refs ? JSON.parse(JSON.stringify(session.refs)) : null,
+        focus: session.focus || null,
         updatedAt: new Date().toISOString(),
     });
 }
@@ -190,6 +198,34 @@ export async function addEntry(input: Omit<AssistantEntry, 'Entry_ID' | 'Created
     Object.keys(entry).forEach(k => { if ((entry as any)[k] === undefined) delete (entry as any)[k]; });
     await adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(id).set(entry);
     return id;
+}
+
+/** Ishod obrade poruke u dnevnik — da se vidi šta je bot stvarno uradio. Greška ne ruši odgovor. */
+export async function recordEntryOutcome(entryId: string, input: {
+    outcome: AssistantOutcome; reply: string; changes: string[]; taskIds: string[]; memoryIds: string[]; turnId?: string;
+}): Promise<void> {
+    try {
+        const ref = adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(entryId);
+        const prev = (await ref.get()).data() as AssistantEntry | undefined;
+        if (!prev) return;
+        await ref.update({
+            Outcome: input.outcome,
+            Reply_Text: input.reply.slice(0, 2000),
+            Changes: input.changes.slice(0, 40),
+            Processed_At: new Date().toISOString(),
+            Attempts: (prev.Attempts || 0) + 1,
+            ...(input.turnId ? { Turn_ID: input.turnId } : {}),
+            ...(input.taskIds.length ? { Task_IDs: Array.from(new Set([...(prev.Task_IDs || []), ...input.taskIds])) } : {}),
+            ...(input.memoryIds.length ? { Memory_IDs: Array.from(new Set([...(prev.Memory_IDs || []), ...input.memoryIds])) } : {}),
+        });
+    } catch (e) {
+        console.warn('[assistant] ishod unosa nije zapisan:', entryId, e);
+    }
+}
+
+export async function getEntry(entryId: string): Promise<AssistantEntry | null> {
+    const snap = await adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(entryId).get();
+    return snap.exists ? (snap.data() as AssistantEntry) : null;
 }
 
 /** Veza unos → nastali zadaci/stavke. Knjigovodstvo: greška ovdje ne smije srušiti odgovor. */

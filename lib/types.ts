@@ -718,7 +718,23 @@ export interface AssistantEntry {
     Created_At: string;
     Task_IDs?: string[];
     Memory_IDs?: string[];
+    /**
+     * Ishod obrade (od 27.10.2026): written = ERP je upisao, question = bot pita,
+     * answer = samo odgovor, failed = traženo je upisivanje a ništa nije upisano,
+     * degraded = AI nije radio. Stari unosi nemaju polje.
+     */
+    Outcome?: AssistantOutcome;
+    /** Šta je korisnik dobio kao odgovor (skraćeno). */
+    Reply_Text?: string;
+    /** Šta je ERP upisao (oznake upisa, kao uz ↩️ Poništi). */
+    Changes?: string[];
+    Turn_ID?: string;
+    Processed_At?: string;
+    /** Koliko puta je poruka obrađena (ponovna obrada iz ERP-a ili dugmetom). */
+    Attempts?: number;
 }
+
+export type AssistantOutcome = 'written' | 'question' | 'answer' | 'failed' | 'degraded';
 
 export interface TaskProfile {
     Profile_ID: string;
