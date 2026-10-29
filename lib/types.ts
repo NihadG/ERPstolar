@@ -464,6 +464,54 @@ export interface Supplier {
     JIB?: string;
 }
 
+// ============================================
+// KONTAKTI — ljudi iza firmi (od 10/2026)
+//
+// Dobavljač ima jedno polje Email, a u praksi je to više ljudi: komercijalista,
+// referent, knjigovodstvo, adresa koja samo šalje račune. Kontakt je JEDAN
+// čovjek s jednom adresom; firma (Supplier_ID / Company) ih veže. Isti spisak
+// koristi ERP i bot kad bira kome ide narudžba, ponuda ili situacija.
+// ============================================
+
+export type ContactKind = 'supplier' | 'client' | 'site' | 'internal' | 'other';
+
+/** Uloga čovjeka na jednom projektu (gradilište ima više strana). */
+export type ContactProjectRole = 'kupac' | 'investitor' | 'nadzor' | 'finansije' | 'projektant' | 'izvodjac';
+
+/** Šta se automatski šalje kao kopija ovom kontaktu (npr. ured). */
+export type ContactCopyOn = 'order' | 'offer' | 'invoice' | 'situation';
+
+export interface ContactProjectLink {
+    Project_ID: string;
+    Role: ContactProjectRole;
+}
+
+export interface Contact {
+    Contact_ID: string;
+    Organization_ID: string;
+    First_Name: string;
+    Last_Name: string;
+    Email: string;
+    Phone?: string;
+    /** Naziv firme kad nije dobavljač iz ERP-a (Top Color, TACT, Granoff). */
+    Company?: string;
+    Kind: ContactKind;
+    Supplier_ID?: string;
+    /** Slobodan opis: komercijalista, referent prodaje, knjigovodstvo… */
+    Role?: string;
+    Project_Roles?: ContactProjectLink[];
+    /** Glavni kontakt dobavljača — njemu ide narudžba kad nije rečeno drugačije. */
+    Is_Default?: boolean;
+    /** Kako mu se obraćaš u mailu: „Pozdrav Lejla," (ti) ili „Poštovani," (vi). */
+    Address_Form?: 'ti' | 'vi';
+    Copy_On?: ContactCopyOn[];
+    /** Adresa samo šalje (računi, obavijesti) — nikad primalac. */
+    Receive_Only?: boolean;
+    Notes?: string;
+    Last_Emailed_At?: string;
+    Created_At: string;
+}
+
 export interface Worker {
     Worker_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization

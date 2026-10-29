@@ -19,6 +19,8 @@ export const COLLECTIONS = {
     ORDERS: 'orders',
     ORDER_ITEMS: 'order_items',
     SUPPLIERS: 'suppliers',
+    // Ljudi iza firmi (komercijalista, referent, knjigovodstvo) — lib/contacts.ts.
+    CONTACTS: 'contacts',
     WORKERS: 'workers',
     WORK_ORDERS: 'work_orders',
     WORK_ORDER_ITEMS: 'work_order_items',
