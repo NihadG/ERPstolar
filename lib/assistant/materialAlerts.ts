@@ -21,7 +21,7 @@ import {
 import { orderItemAllocations } from '@/lib/orderMaterialAllocation';
 import { materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { foldText } from '@/lib/voice/text';
-import { addDays } from '@/lib/voice/dates';
+import { addDays, findDateMentions } from '@/lib/voice/dates';
 import { matchScore } from '@/lib/voice/match';
 import { sendMessage } from '@/lib/telegram/api';
 import { workOrderDisplayName } from '@/lib/utils';
@@ -498,6 +498,8 @@ export interface ArrivalOutcome {
     candidates?: string[];
     /** Narudžbe kojima ERP ne zna kad su naručene (bile nacrt ili su sad napravljene). */
     assumed?: { orderId: string; orderNumber: string }[];
+    /** Narudžbe čije su stavke sad primljene (za „kad je stiglo?"). */
+    received?: { orderId: string; orderNumber: string }[];
     /** Ništa nije promijenjeno (sve je već bilo primljeno). */
     unchanged?: boolean;
 }
@@ -513,7 +515,7 @@ export interface ArrivalOutcome {
  */
 export async function receiveArrival(
     orgId: string,
-    input: { projectIds: string[]; name: string; quantity?: number; exact?: boolean; all?: boolean; orderName?: string },
+    input: { projectIds: string[]; name: string; quantity?: number; exact?: boolean; all?: boolean; orderName?: string; receivedAt?: string },
     before: BeforeHook,
     onCreated: (path: string) => void,
 ): Promise<ArrivalOutcome> {
@@ -547,6 +549,7 @@ export async function receiveArrival(
     let left = input.quantity;
     const parts: string[] = [];
     const assumed: { orderId: string; orderNumber: string }[] = [];
+    const received: { orderId: string; orderNumber: string }[] = [];
     // Rečena količina se troši redom po stavkama; bez nje stiže sve što je ostalo.
     const receive = async (orderId: string, items: OrderItem[]) => {
         const qty: Record<string, number> = {};
@@ -558,7 +561,9 @@ export async function receiveArrival(
             if (left !== undefined) left = roundQty(left - take);
         }
         if (!Object.keys(qty).length) return null;
-        return receiveOrderItems(orgId, orderId, Object.keys(qty), before, qty);
+        const res = await receiveOrderItems(orgId, orderId, Object.keys(qty), before, qty, input.receivedAt);
+        if (res.ok) received.push({ orderId, orderNumber: res.orderNumber });
+        return res;
     };
 
     for (const orderId of Array.from(new Set(hits.map(i => i.Order_ID)))) {
@@ -592,7 +597,7 @@ export async function receiveArrival(
     }
     if (!parts.length) return { ok: false, error: `„${label}": nema ničega za primiti.` };
     const q = input.quantity !== undefined ? `${input.quantity} ` : '';
-    return { ok: true, line: `📦 Stiglo: ${q}${label} — ${parts.join('; ')}`, assumed };
+    return { ok: true, line: `📦 Stiglo: ${q}${label} — ${parts.join('; ')}`, assumed, received };
 }
 
 /**
@@ -604,6 +609,39 @@ export async function setOrderSentDaysAgo(orgId: string, orderId: string, days: 
     if (snap.empty) return false;
     const day = addDays(toZoned(now, tz).date, -days);
     await snap.docs[0].ref.update({ Sent_At: new Date(zonedToUtcMs(day, 9, 0, tz)).toISOString(), Sent_At_Assumed: false });
+    leadCache.delete(orgId);
+    return true;
+}
+
+/**
+ * Dan prijema rečen u poruci: „danas je došao", „jučer stiglo", „prekjučer", „26.10.".
+ * null = nije rečeno → bot pita dugmadima (prijem se upisuje kao danas dok se ne odgovori).
+ */
+export function arrivalDay(text: string, today: string): string | null {
+    const t = ` ${foldText(text)} `;
+    if (/\bprekjuc?er\w*/.test(t)) return addDays(today, -2);
+    if (/\bjuc?er\w*/.test(t)) return addDays(today, -1);
+    if (/\b(danas|jutros|maloprije|upravo|sad|sada|evo)\b/.test(t)) return today;
+    const said = findDateMentions(text, today).map(m => m.date).find(d => d <= today);
+    return said || null;
+}
+
+/**
+ * Odgovor na „Kad je stiglo?": stavke te narudžbe primljene ovim prijemom (danas)
+ * dobiju dan prije `days` dana. false = narudžba ne postoji.
+ */
+export async function setOrderReceivedDaysAgo(orgId: string, orderId: string, days: number, tz: string, now = new Date()): Promise<boolean> {
+    const db = adminDb();
+    const items = await db.collection('order_items').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).get();
+    if (items.empty) return false;
+    const today = toZoned(now, tz).date;
+    const at = new Date(zonedToUtcMs(addDays(today, -days), 10, 0, tz)).toISOString();
+    const batch = db.batch();
+    items.docs.forEach(d => {
+        const i = d.data() as OrderItem;
+        if (i.Received_Date && toZoned(i.Received_Date, tz).date === today) batch.update(d.ref, { Received_Date: at });
+    });
+    await batch.commit();
     leadCache.delete(orgId);
     return true;
 }

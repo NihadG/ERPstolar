@@ -15,7 +15,7 @@ import { adminDb } from '@/lib/server/firebaseAdmin';
 import { isIsoDate } from '@/lib/voice/dates';
 import { foldText, tokens, stem } from '@/lib/voice/text';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
-import { formatReminder, resolveReminderAt, toZoned } from './datetime';
+import { formatReminder, resolveReminderAt, toZoned, zonedToUtcMs } from './datetime';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
 import { memoryLine, taskLine } from './prompt';
 import { getAllTasks, getItemsForWorkOrders } from '@/lib/server/fieldRepo';
@@ -41,7 +41,7 @@ import { coverage } from '@/lib/workDiary';
 import { projectHistoryLines } from '@/lib/projectHistory';
 import { aliasesOf, bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
 import { learnVocab } from './vocabStore';
-import { gatesForProjects, gatesText, loadStockRules, receiveArrival, receiveByName } from './materialAlerts';
+import { arrivalDay, gatesForProjects, gatesText, loadStockRules, receiveArrival, receiveByName } from './materialAlerts';
 import { isStockMaterial } from '@/lib/materialGates';
 import {
     MEMORY_STATE_KEYS, MEMORY_STATES, filterNotebook, isStateKey, locationKey, memoryTitle, normalizeLocation, notebookListText, parseDimensions, stateLabel,
@@ -1844,6 +1844,11 @@ async function materialArrivedTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const done: string[] = [];
     const problems: string[] = [];
     const assumed: { orderId: string; orderNumber: string }[] = [];
+    const received: { orderId: string; orderNumber: string }[] = [];
+    // Dan prijema iz poruke („danas", „jučer", „26.10."); nije rečen → upis danas + dugme „kad je stiglo?".
+    const today = toZoned(env.now, env.tz).date;
+    const day = arrivalDay(env.dateText, today);
+    const receivedAt = day && day !== today ? new Date(zonedToUtcMs(day, 10, 0, env.tz)).toISOString() : undefined;
     for (const item of items) {
         const said = text(item.material, 80);
         if (!said) continue;
@@ -1853,7 +1858,7 @@ async function materialArrivedTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         const before = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
         let res = await receiveArrival(env.orgId, {
             projectIds, name, quantity: number(item.quantity), exact: item.exact === true, all: item.all === true,
-            orderName: projectNames.length === 1 ? projectNames[0] : undefined,
+            orderName: projectNames.length === 1 ? projectNames[0] : undefined, receivedAt,
         }, before, path => before(path, null));
         // Nije u sastavnici: stari put (kapije, poslane narudžbe, katalog → na stanju).
         if (!res.ok && !res.candidates) {
@@ -1884,6 +1889,19 @@ async function materialArrivedTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         }
         if (res.line) done.push(res.line);
         assumed.push(...(res.assumed || []));
+        received.push(...(res.received || []));
+    }
+    const short = (n: string) => n.split('/').pop() || n;
+    const uniqueReceived = Array.from(new Map(received.map(o => [o.orderId, o])).values());
+    if (!day && uniqueReceived.length) {
+        // Dan prijema nije rečen — upisano je danas; dugme ga ispravi (ne čeka odgovor).
+        done.push(`📅 Kad je stiglo ${uniqueReceived.map(o => short(o.orderNumber)).join(', ')}? Upisano je danas — ako nije, izaberi dan ispod.`);
+        env.followUp = [...(env.followUp || []), ...uniqueReceived.map(o => [
+            { text: `${short(o.orderNumber)} stiglo: jučer`, data: `rcvd:${o.orderId}:1` },
+            { text: 'pr. 2 d', data: `rcvd:${o.orderId}:2` },
+            { text: 'pr. 3 d', data: `rcvd:${o.orderId}:3` },
+            { text: 'pr. 7 d', data: `rcvd:${o.orderId}:7` },
+        ])];
     }
     if (assumed.length) {
         // Kad je naručeno — za rok isporuke dobavljača. Ne čeka odgovor; bez njega se samo ne uči rok.
