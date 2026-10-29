@@ -25,7 +25,7 @@ import type { ProcessCatalogItem, ProcessMaterialRule } from './types';
  * Pravila koja standard upiše nose je (Standard_Version); Auto prijedlog primijeni
  * standard ponovo čim baza ima stariju verziju („zadnja pravila aplikacije").
  */
-export const STANDARD_VERSION = '2026-10-25.2';
+export const STANDARD_VERSION = '2026-10-29.1';
 
 /** Kanonski redoslijed proizvodnje. Procesi van liste ostaju u katalogu, iza ovih. */
 export const STANDARD_CATALOG: string[] = [
@@ -46,11 +46,13 @@ export const STANDARD_CATALOG: string[] = [
     'Kantiranje iverala',
     'Kantiranje furnira',
     'Izrada fronti',
+    // Podkonstrukcije (OSB, jela/smreka) prije sklapanja: iveral se montira NA podkonstrukciju.
+    'Izrada podkonstrukcije od OSB-a',
+    'Izrada podkonstrukcije od jele/smreke',
     'Sklapanje kutija',
     'Postavljanje leđa',
     'Izrada cokla',
     'Izrada rešetke baze',
-    'Izrada podkonstrukcije',
     'Izrada ladica',
     'Probna montaža',
     'Brušenje',
@@ -87,6 +89,8 @@ export const STANDARD_RENAMES: { canonical: string; members: string[] }[] = [
     // Kantiranje iverala ide odmah poslije krojenja; furnira tek poslije srezivanja na tačnu mjeru.
     { canonical: 'Kantiranje iverala', members: ['Kantiranje'] },
     { canonical: 'Kantiranje furnira', members: ['Kantiranje fronti'] },
+    // Do 29.10. jedna „Izrada podkonstrukcije" (samo od OSB-a); jela/smreka dobija vlastiti korak.
+    { canonical: 'Izrada podkonstrukcije od OSB-a', members: ['Izrada podkonstrukcije'] },
 ];
 
 export type StandardRule = RuleLite & { note: string };
@@ -163,13 +167,19 @@ export const STANDARD_RULES: StandardRule[] = [
     rule(['masiv'], ['Priprema masive'], 'Vidljivi masiv (hrast, tik, jasen) — priprema'),
     rule(['masiv', 'furnir'], ['Priprema masive', 'Probna montaža'], 'Masivni detalji uz furnirane dijelove — probaju se zajedno', { notFor: KREVET }),
     rule(['masiv'], ['Priprema masive', 'Izrada rešetke baze', 'Probna montaža'], 'Krevet: masiv je za rešetku baze', { only: KREVET }),
-    rule(['jela'], ['Priprema masive'], 'Jela/smreka — letve i podkonstrukcije'),
+    rule(['jela'], ['Priprema masive'], 'Jela/smreka — priprema letvi'),
+    // Podkonstrukcija od jele/smreke (stolovi, obloge…); kod ormara jela je cokl, kod kreveta rešetka baze.
+    rule(['jela'], ['Priprema masive', 'Izrada podkonstrukcije od jele/smreke'], 'Jela/smreka — podkonstrukcija', { notFor: [...ORMAR, ...KREVET] }),
     rule(['jela'], ['Priprema masive', 'Izrada rešetke baze', 'Probna montaža'], 'Krevet: rešetka baze od jele/smreke', { only: KREVET }),
     rule(['jela', 'iveral'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', { only: ORMAR }),
     rule(['jela', 'furnir'], ['Priprema masive', 'Izrada cokla'], 'Cokl od jele/smreke kod ormara', { only: ORMAR }),
 
     // ── OSB: podkonstrukcija ──
-    rule(['osb'], ['Krojenje OSB-a', 'Izrada podkonstrukcije'], 'OSB — uglavnom podkonstrukcija'),
+    rule(['osb'], ['Krojenje OSB-a', 'Izrada podkonstrukcije od OSB-a'], 'OSB — uglavnom podkonstrukcija'),
+
+    // ── Podkonstrukcija + iveral: iveral se montira na podkonstrukciju (sklapanje kutija) ──
+    rule(['osb', 'iveral'], ['Izrada podkonstrukcije od OSB-a', 'Sklapanje kutija'], 'Iveral se sklapa na podkonstrukciju od OSB-a', { notFor: KREVET }),
+    rule(['jela', 'iveral'], ['Izrada podkonstrukcije od jele/smreke', 'Sklapanje kutija'], 'Iveral se sklapa na podkonstrukciju od jele/smreke', { notFor: [...ORMAR, ...KREVET] }),
 
     // ── Akrilni kamen ──
     rule(['kerrock'], ['Krojenje Kerrocka', 'Lijepljenje Kerrocka', 'Brušenje Kerrocka', 'Montaža Kerrocka'], 'Kerrock — krojenje, lijepljenje, brušenje, montaža'),
@@ -253,3 +263,21 @@ export function planStandardization(
         templates: STANDARD_TEMPLATE_KEYWORDS.filter(t => flowTemplateNames.some(n => normKey(n) === normKey(t.template))),
     };
 }
+
+// ─── Kako korisnik zove procese ───────────────────────────────────────
+
+/**
+ * Kanonski proces → riječi kojima ga korisnik govori botu („montaža iverala" = Sklapanje kutija).
+ * Aliasi se prepoznaju kad su SVE njihove riječi u rečenoj frazi („montaža iverala na podkonstrukcije").
+ * Korisnik dodaje svoje u Procesi → ⚙ (ProcessCatalogItem.Aliases), a bot ih uči iz izbora dugmadima.
+ */
+export const STANDARD_ALIASES: Record<string, string[]> = {
+    'Sklapanje kutija': ['montaža iverala', 'sklapanje iverala', 'sklapanje korpusa', 'montaža korpusa', 'montaža kutija'],
+    'Izrada podkonstrukcije od OSB-a': ['podkonstrukcija od osb', 'podkonstrukcija osb', 'osb podkonstrukcija'],
+    'Izrada podkonstrukcije od jele/smreke': ['podkonstrukcija od jele', 'podkonstrukcija od smreke', 'podkonstrukcija jela smreka'],
+    'Krojenje iverala': ['rezanje iverala', 'sječenje iverala'],
+    'Postavljanje leđa': ['stavljanje leđa', 'montaža leđa'],
+    'Izrada ladica': ['sklapanje ladica', 'montaža ladica'],
+    'Okivanje': ['montaža okova', 'ugradnja okova', 'stavljanje okova'],
+    'Završno sklapanje': ['završna montaža', 'finalno sklapanje'],
+};

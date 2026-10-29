@@ -55,7 +55,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    project samo kad je projekat rečen u poruci (klijent, mjesto, naziv) — inače bez projekta.
 2. ČINJENICA O STANJU STVARI (šta gdje stoji, koliko, u kakvom stanju: „u stanu 304 imam 3 ogledala od 1 m") → remember, ODMAH, bez pitanja i bez potvrde (mjere nisu obavezne; nejasnu lokaciju ERP sam vrati kao pitanje). Ako ista stvar na istoj lokaciji već postoji u bilježnici → update_memory umjesto nove stavke. Više stvari u poruci = više poziva u jednom koraku.
 3. IZVJEŠTAJ RADNIKA (proslijeđena poruka „[Proslijeđeno od X, …]" ili zalijepljen tekst radnika) → uporedi s bilježnicom i zadacima: ono što je urađeno zatvori (update_memory state=postavljeno, update_task status=completed), novo stanje zapamti. U bilješci napiši ko je javio.
-4. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
+4. PITANJE o stanju u ERP-u (materijal projekta „koji iveral/dekor smo koristili", ko je šta radio, dokle je nalog, narudžbe) → NIKAD ne odgovaraj „nemam zapisano" prije nego pozoveš alat za čitanje (project_info, order_status, product_materials, work_report, list_orders). „Nemam" smiješ reći tek kad je alat vratio prazno. PITANJE („gdje sve imam…", „šta trebam…", „jesu li…") o bilježnici i zadacima → odgovori iz bilježnice i zadataka na kraju uputa. Tamo su samo otvorene stavke i bliski zadaci (±30 dana); za riješene stavke, starije ili daleke zadatke, istoriju i stare poruke pozovi search_memory. Ako nema zapisa, reci da nemaš zapisano — NIKAD ne izmišljaj.
    SPISAK iz bilježnice („daj mi spisak svih ogledala koja nisu montirana na E i C lameli", „šta sve fali u E3", „šta je u kombiju") → list_notebook s predmetom, lamelama/lokacijama i stanjem. „Na E i C lameli" = locations ["E","C"]; „nisu montirana/postavljena" = otvoreno. ERP složi spisak i pošalje ga — ti ga ne prepričavaš i ne filtriraš sam.
    KAD je nešto rađeno („kad smo počeli Čorluku", „koliko dugo radimo na…", „kad je rađena kuhinja") → project_history (svi nalozi projekta, i završeni). Početak je PRVI dan rada — zadnji dan rada nije početak.
 5. ISPRAVKA prethodnog („ne, u utorak", „to je bilo 4 ogledala", „to je sve E308") → ODMAH update_task / update_memory na stavkama o kojima se upravo pričalo (više stavki = items), bez pitanja „da li da ispravim".
@@ -75,7 +75,7 @@ const RULES = `ŠTA RADIŠ S PORUKOM — poruka može imati više dijelova, urad
    • RADNIK + POSAO/PROCES — ko je radio na čemu ili šta je počeo/završio („Kemo je počeo montažu na stolovima za Budnju", „Bego završio izradu podkonstrukcije", „Amer i Kerim krojili iveral za kuhinju Čorluka", „Edin kantirao, završio", „Imer pola dana lakirao", „Bego danas pakuje sve za Čorluku osim vrata") → log_work, SVE iz poruke u jednom pozivu: radnici + posao kako je rečen + proces kako je rečen + dio dana samo ako je rečen + done kad je rečeno da je gotovo. Odsutni u absent. ERP čekira proces (u toku / završen), pretpostavi ranije korake, završi proizvod kad je zadnji korak gotov, a Knjigu rada i prisustvo upiše SAMO ako taj dan radniku još nije ručno knjižen — ne pitaj za to.
      Nalog rečen bilo gdje u poruci važi za sve njene rečenice („Kemo… na stolovima za Budnju. Bego završio podkonstrukciju" → Budnja za oba). Kad nalog nije rečen nigdje, izostavi work i order — ERP nađe nalog iz podataka (gdje taj proces čeka, gdje radnik radi) ili pita dugmadima. Nikad ne pitaj „za koji nalog" sam.
      Nadimak: kad ERP u poruci napiše „„kemo" je nadimak: Kemal …", to je taj radnik — upiši ga bez pitanja.
-   • PROCESI bez rada — rečeno je stanje, a NE ko je radio („sve za Čorluku osim vrata je gotovo", „kuhinja je ušla u lakiranje", „okivanje na ormaru završeno") → set_progress s nalozima (R#), except/only riječima i procesom ako je rečen. Datum NE računaj i ne pitaj — ERP uzme dan zadnjeg rada iz Knjige rada.
+   • PROCESI bez rada — rečeno je stanje, a NE ko je radio („sve za Čorluku osim vrata je gotovo", „kuhinja je ušla u lakiranje", „okivanje na ormaru završeno", „za Budnju su napravljene sve podkonstrukcije od OSB-a, skrojen iveral, u toku je montaža iverala") → set_progress s nalozima (R#); više procesa iz jedne poruke = JEDAN poziv sa steps (svaki proces svoj korak, redom kako su rečeni). Nazive procesa uzmi iz TOK NALOGA na kraju uputa (tačan naziv iz karte; „montaža iverala" = Sklapanje kutija, „napravljena podkonstrukcija od jele" = Izrada podkonstrukcije od jele/smreke). „U toku je X" = started, „napravljeno/skrojeno/gotovo" = done. Šta je PRIJE rečenog procesa ERP zaključi sam (ne nabrajaj ranije korake). Datum NE računaj i ne pitaj — ERP uzme dan zadnjeg rada iz Knjige rada. Proces koji ne možeš naći u TOK NALOGA pošalji kako je rečen — ERP će ponuditi dugmad.
    UPISUJE SE SAMO REČENO: radnik, nalog i posao moraju biti u porukama korisnika. Nikad ne dodaj radnika, nalog ili posao koji nije rečen (ni iz ranije istorije, ni „da popuniš"); ERP takav upis odbija. Ako za Knjigu rada nedostaje ko ili na čemu — pitaj (ask_user).
    NALOZI: kad je iz poruke jasno o kojim nalozima je riječ, izaberi ih SAM iz liste NALOZI i pošalji orders (R#) — „sve za Čorluku osim vrata" = svi Čorlukini nalozi iz liste (vrata isključi i s except: ["vrata"]). Pitaj samo kad stvarno ima dvije razumne mogućnosti.
    STANJE („dokle je kuhinja", „kad se zadnji put radilo na Čorluki", „šta je ostalo") → order_status. work_report je samo za „ko je radio šta" po danima — ne prebiraj ga da bi našao datume ili stanje.
@@ -112,7 +112,7 @@ export interface PromptParts {
  * @param focus tekst poruke (i prethodne korisnikove) — po njemu se bira koje stavke
  *   bilježnice idu u prompt; prazno = sve (mala bilježnica ionako ide cijela).
  */
-export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string, focus = ''): PromptParts {
+export function buildPromptParts(ctx: AssistantContext, now: Date, tz: string, focus = '', flow = ''): PromptParts {
     const today = toZoned(now, tz).date;
     // Naučene riječi uz stavku liste: model po njima bira oznaku („Jerko" → projekat Čorluka).
     const vocab = ctx.vocab || [];
@@ -158,7 +158,10 @@ ${memoryHead} (oznaka | predmet | naziv | količina · opis | lokacija | stanje 
 ${memory}
 
 OTVORENI ZADACI, BLISKI (oznaka | naslov | podsjetnik | rok | radnik | projekat | lista):
-${tasks}`;
+${tasks}${flow ? `
+
+TOK NALOGA O KOJIMA PORUKA GOVORI (proces — stanje (gotovo/ukupno proizvoda); „samo …" = proizvodi koji taj proces imaju):
+${flow}` : ''}`;
 
     return { stable, volatile };
 }

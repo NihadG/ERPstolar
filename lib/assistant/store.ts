@@ -19,7 +19,8 @@ import { randomInt } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
-import type { AssistantEntry, AssistantOutcome, MemoryItem } from '@/lib/types';
+import { capToolCalls } from './toolLog';
+import type { AssistantEntry, AssistantOutcome, MemoryItem, ToolCallLog } from '@/lib/types';
 
 const LINK_CODE_TTL_MS = 10 * 60_000;
 const HISTORY_TURNS = 12;
@@ -214,7 +215,7 @@ export async function addEntry(input: Omit<AssistantEntry, 'Entry_ID' | 'Created
 
 /** Ishod obrade poruke u dnevnik — da se vidi šta je bot stvarno uradio. Greška ne ruši odgovor. */
 export async function recordEntryOutcome(entryId: string, input: {
-    outcome: AssistantOutcome; reply: string; changes: string[]; taskIds: string[]; memoryIds: string[]; turnId?: string;
+    outcome: AssistantOutcome; reply: string; changes: string[]; taskIds: string[]; memoryIds: string[]; turnId?: string; toolCalls?: ToolCallLog[];
 }): Promise<void> {
     try {
         const ref = adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(entryId);
@@ -224,6 +225,7 @@ export async function recordEntryOutcome(entryId: string, input: {
             Outcome: input.outcome,
             Reply_Text: input.reply.slice(0, 2000),
             Changes: input.changes.slice(0, 40),
+            ...(input.toolCalls?.length ? { Tool_Calls: capToolCalls(input.toolCalls) } : {}),
             Processed_At: new Date().toISOString(),
             Attempts: (prev.Attempts || 0) + 1,
             ...(input.turnId ? { Turn_ID: input.turnId } : {}),

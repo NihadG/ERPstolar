@@ -21,6 +21,8 @@ export interface BotEntry {
     outcome: 'written' | 'question' | 'answer' | 'failed' | 'degraded' | 'unknown';
     reply: string | null;
     changes: string[];
+    /** Šta je model poslao alatima (skraćeno) i šta je ERP vratio. */
+    toolCalls?: { name: string; args: string; ok: boolean; error?: string }[];
     attempts: number;
 }
 
@@ -87,6 +89,19 @@ export function BotMessagesView({ entries, busyId, onReprocess }: {
                                         {e.changes.length > 0 && <p><strong>Upisano:</strong> {e.changes.join(', ')}</p>}
                                         {e.reply && <p className="bml-reply"><strong>Bot je odgovorio:</strong> {e.reply}</p>}
                                         {!e.reply && e.outcome === 'unknown' && <p className="bml-reply">Odgovor bota nije sačuvan (poruka je starija od dnevnika ishoda), a u ERP-u nema ničeg upisanog iz nje.</p>}
+                                        {!!e.toolCalls?.length && (
+                                            <div className="bml-calls">
+                                                <strong>Alati:</strong>
+                                                <ul>
+                                                    {e.toolCalls.map((c, i) => (
+                                                        <li key={i} className={c.ok ? '' : 'bad'}>
+                                                            <code>{c.name}</code> <span className="bml-args">{c.args}</span>
+                                                            {!c.ok && c.error && <em> → {c.error}</em>}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
                                         {e.attempts > 1 && <p className="bml-muted">Obrađeno {e.attempts} puta.</p>}
                                     </div>
                                 )}

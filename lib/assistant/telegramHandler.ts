@@ -184,7 +184,7 @@ async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOu
         entryId
             ? recordEntryOutcome(entryId, {
                 outcome: out.outcome || (out.changed ? 'written' : 'answer'), reply: out.reply, changes: out.changes || [],
-                taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)),
+                taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)), toolCalls: out.toolCalls,
             })
             : Promise.resolve(),
         ...(out.documents || []).map(async doc => {

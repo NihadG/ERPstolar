@@ -31,12 +31,16 @@ import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
 import { factsNote, preparseMessage, uncovered } from './preparse';
 import { intentNote, messageIntent, type MessageKind } from './intent';
-import { workerMentioned } from './grounding';
+import { orderMentioned, workerMentioned } from './grounding';
+import { loadFlowMaps } from './orderStatus';
 import { aliasesOf } from './vocab';
+import { foldText } from '@/lib/voice/text';
+import { projectLabel } from '@/lib/voice/extract';
 import { claimsWrite, composeReply, sanitizeModelText } from './replyText';
 import { DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, type ErpQuestion, type ToolEnv } from './tools';
 import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, SessionTurn } from './store';
-import type { AssistantOutcome, MemoryItem } from '@/lib/types';
+import type { AssistantOutcome, MemoryItem, ToolCallLog } from '@/lib/types';
+import { toolCallLog } from './toolLog';
 
 export { claimsWrite } from './replyText';
 
@@ -80,6 +84,8 @@ export interface AssistantTurnOutput {
     outcome?: AssistantOutcome;
     /** Oznake upisa (kao uz ↩️ Poništi). */
     changes?: string[];
+    /** Pozivi alata (argumenti i ishod) za dnevnik. */
+    toolCalls?: ToolCallLog[];
     degraded?: boolean;
 }
 
@@ -181,11 +187,13 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const prevRefs = input.session.refs && Date.parse(input.session.refs.at) >= cutoff ? input.session.refs : null;
     let turnEnv: ToolEnv | null = null;
     let nextFocus: SessionFocus | null = null;
+    const toolCalls: ToolCallLog[] = [];
 
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
         buttons,
         created: { taskIds: [], memoryIds: [] },
+        toolCalls,
         ...extra,
         session: {
             // Model u istoriji vidi i šta znače oznake koje je ova poruka dala (korisnik ih ne vidi).
@@ -222,6 +230,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const sentenceCount = pre.text.split(/[.!?\n]+/).filter(s => s.trim().length > 3).length;
     let strong = pre.facts.dims.length + pre.facts.widths.length + pre.facts.locations.length >= 5
         || pre.text.length > 300 || intent.kinds.filter(k => k !== 'question').length >= 3
+        || intent.kinds.includes('progress')
         || (people > 0 && (people >= 2 || sentenceCount >= 2) && !intent.kinds.every(k => k === 'question'));
     const modelMessage = note ? `${pre.text}\n${note}` : pre.text;
     nextFocus = focusLocation ? focus! : null;
@@ -273,7 +282,19 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     });
     // Bilježnica u promptu: stavke o kojima ova (i prethodne dvije) poruke govore.
     const promptFocus = [...history.filter(t => t.role === 'user').slice(-2).map(t => t.text), pre.text].join('\n');
-    const prompt = buildPromptParts(ctx, now, tz, promptFocus);
+    // Tok naloga o kojima poruka govori: model bira tačne nazive procesa iz karte, ne pogađa riječi.
+    const orderGround = (ctx.orders || []).map(o => ({ id: o.value.id, name: o.value.name, aliases: aliasesOf(ctx.vocab || [], 'order', o.value.id) }));
+    const wantsFlow = intent.kinds.length === 0 || intent.kinds.some(k => k === 'work' || k === 'progress' || k === 'question');
+    const flowOrders = wantsFlow ? (ctx.orders || []).filter(o => orderMentioned(promptFocus, orderGround.find(g => g.id === o.value.id)!, orderGround)).slice(0, 3) : [];
+    const flow = flowOrders.length
+        ? await loadFlowMaps(input.orgId, flowOrders.map(o => ({ alias: o.alias, id: o.value.id, name: o.value.name }))).catch(e => { console.warn('[assistant] tok naloga:', e); return ''; })
+        : '';
+    // Pitanje o podacima u ERP-u (projekat ili nalog spomenut): jači model, a „nemam zapisano" tek poslije čitanja.
+    const projectGround = ctx.projects.map(p => ({ id: p.value.id, name: projectLabel(p.value), aliases: aliasesOf(ctx.vocab || [], 'project', p.value.id) }));
+    const erpQuestion = intent.kinds.includes('question')
+        && (flowOrders.length > 0 || projectGround.some(p => orderMentioned(promptFocus, p, projectGround)));
+    if (erpQuestion) strong = true;
+    const prompt = buildPromptParts(ctx, now, tz, promptFocus, flow);
     const system: Anthropic.TextBlockParam[] = [
         // Tačka keša na kraju stabilnog dijela: alati + pravila + imena se čitaju iz keša.
         // 1 h: poruke s terena stižu u razmacima 5–60 min, a 5-minutni keš bi se stalno ponovo upisivao.
@@ -311,6 +332,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     let guarded = false;        // već jednom vraćeno: „tekst nije upis"
     let coverageAsked = false;  // već jednom vraćeno: „ovo iz poruke nije upisano"
     let forceTool = false;
+    let readFirst = false;      // pitanje o ERP-u bez čitanja: sljedeći krug samo alati za čitanje
+    let readAsked = false;
     let readUsed = false;       // model je čitao ERP — tekst bez upisa je odgovor iz podataka
     const isQuestion = intent.kinds.includes('question');
     try {
@@ -320,7 +343,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 model: strong ? strongModel() : model(),
                 max_tokens: MAX_TOKENS,
                 system,
-                tools: TOOLS,
+                tools: readFirst ? TOOLS.filter(t => READ_TOOLS.has(t.name) || t.name === 'ask_user') : TOOLS,
                 messages,
                 // Automatski keš za rastući rep (razgovor + rezultati alata).
                 cache_control: { type: 'ephemeral' },
@@ -329,6 +352,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 ...(forceTool ? { tool_choice: { type: 'any' as const } } : {}),
             });
             forceTool = false;
+            readFirst = false;
             const u = res.usage;
             console.log(`[assistant] korak ${step + 1}${strong ? ' (jači model)' : ''}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
 
@@ -339,6 +363,15 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
             if (!uses.length) {
                 const text = plainText(textOf(res));
+                // „Nemam zapisano" bez ijednog čitanja ERP-a: podaci (materijal, tok, rad) su u ERP-u, ne u bilježnici.
+                if (erpQuestion && !readUsed && !readAsked && !env.changes.length && NO_DATA.test(foldText(text))) {
+                    readAsked = true;
+                    forceTool = true;
+                    readFirst = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: READ_FIRST_NOTE });
+                    continue;
+                }
                 // Model je „potvrdio" tekstom, a ništa nije upisano → još jednom, uz obavezan alat.
                 if (!env.changes.length && !guarded && !isQuestion && claimsWrite(text)) {
                     guarded = true;
@@ -377,6 +410,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
                 const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
+                toolCalls.push(toolCallLog(use.name, use.input, out));
                 if (out.ok === false) allOk = false;
                 else usedInputs.push(JSON.stringify(use.input || {}));
                 results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), ...(out.ok === false ? { is_error: true } : {}) });
@@ -501,9 +535,10 @@ export async function runPendingAction(input: {
     };
     const out = await runTool(env, action.tool, args);
     const undoRow: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
+    const toolCalls = [toolCallLog(action.tool, args, out)];
     const facts = env.changes.length ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}]` : '[ništa nije upisano]';
     const turns = (modelTurn: string): SessionTurn[] => [...history, { role: 'user', text: `→ ${label}`, at }, { role: 'model', text: modelTurn, at }];
-    const extra = { created: env.created, documents: env.documents, changed: env.changes.length > 0, changes: env.changes };
+    const extra = { created: env.created, documents: env.documents, changed: env.changes.length > 0, changes: env.changes, toolCalls };
 
     // Izbor je otvorio novo pitanje (npr. drugi radnik u istoj poruci).
     if (env.erpQuestion) {
@@ -523,6 +558,10 @@ export async function runPendingAction(input: {
         outcome: env.changes.length ? 'written' : out.ok === false ? 'failed' : 'answer', ...extra,
     };
 }
+
+/** Odgovor „nemam podatak" — izgovara se prije nego što je išta pročitano. */
+const NO_DATA = /\b(nemam|ne znam|nije zapisan\w*|nisam nasao|ne vidim|nema podatak\w*)\b/;
+const READ_FIRST_NOTE = 'ERP: pitanje je o podacima u ERP-u (materijal proizvoda, tok naloga, ko je radio, narudžbe) — ne o bilježnici. Pozovi alat za čitanje (product_materials s project ili orders i material=vrsta, order_status, project_history, work_report, list_orders) pa odgovori iz rezultata. „Nemam" reci tek ako alat vrati prazno.';
 
 const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
 

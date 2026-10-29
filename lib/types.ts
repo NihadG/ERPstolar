@@ -730,10 +730,20 @@ export interface AssistantEntry {
     Reply_Text?: string;
     /** Šta je ERP upisao (oznake upisa, kao uz ↩️ Poništi). */
     Changes?: string[];
+    /** Šta je model poslao alatima i šta je ERP vratio (skraćeno) — za dijagnozu pogrešnog razumijevanja. */
+    Tool_Calls?: ToolCallLog[];
     Turn_ID?: string;
     Processed_At?: string;
     /** Koliko puta je poruka obrađena (ponovna obrada iz ERP-a ili dugmetom). */
     Attempts?: number;
+}
+
+export interface ToolCallLog {
+    name: string;
+    /** Argumenti kao JSON (skraćeno). */
+    args: string;
+    ok: boolean;
+    error?: string;
 }
 
 export type AssistantOutcome = 'written' | 'question' | 'answer' | 'failed' | 'degraded';
@@ -860,6 +870,8 @@ export interface ProcessCatalogItem {
     Organization_ID: string;
     Name: string;
     Order: number;
+    /** Kako korisnik zove proces (npr. „montaža iverala" = Sklapanje kutija) — dodatak standardnim aliasima. */
+    Aliases?: string[];
     Created_At?: string;
 }
 

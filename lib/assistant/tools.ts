@@ -31,14 +31,15 @@ import {
 import { loadDayProposal } from './dayProposals';
 import type { DayProposal } from '@/lib/dayProposal';
 import {
-    bookEmptyDays, bookWorkDiary, setProgress, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput, type ProgressChoice,
+    bookEmptyDays, bookWorkDiary, setProgress, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput, type ProgressChoice, type ProgressResult,
 } from '@/lib/server/workDiary';
 import { markPresence } from '@/lib/server/presence';
 import { mentionsEveryone, orderMentioned, titleSaid, ungroundedOrders, ungroundedWorkers, workerNicknames, workSaid } from './grounding';
 import { getOpenWorkOrderIdsForProject, loadProjectHistory, orderStatusLines } from './orderStatus';
-import { dayLabel, diarySummary, presenceSummary, progressSummary } from './diaryText';
+import { dayLabel, diarySummary, presenceSummary, progressStepsSummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import { projectHistoryLines } from '@/lib/projectHistory';
+import { learnedAliases } from '@/lib/processVocabulary';
 import { aliasesOf, bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
 import { learnVocab } from './vocabStore';
 import { arrivalDay, gatesForProjects, gatesText, loadStockRules, receiveArrival, receiveByName } from './materialAlerts';
@@ -47,7 +48,8 @@ import {
     MEMORY_STATE_KEYS, MEMORY_STATES, filterNotebook, isStateKey, locationKey, memoryTitle, normalizeLocation, notebookListText, parseDimensions, stateLabel,
     type MemoryStateKey,
 } from './memoryRules';
-import type { Material, MemoryItem, Product, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import { materialTypeFromName } from '@/lib/productProcesses';
+import type { Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -193,15 +195,15 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'product_materials',
-        description: 'Sastavnica iz Projekti → proizvod → Materijali: materijali proizvoda s količinom, cijenom, statusom i naručeno/primljeno. Za „koje materijale ima kuhinja…", „šta je definisano za…".',
+        description: 'Sastavnica iz Projekti → proizvod → Materijali: materijali proizvoda s količinom, cijenom, statusom i naručeno/primljeno. Za „koje materijale ima kuhinja…", „šta je definisano za…" i „KOJI IVERAL / DEKOR / KANT / FURNIR smo koristili ili idu za projekat/nalog" (material = vrsta, npr. iveral — vrati dekore svih proizvoda). Projekat (P#) ILI nalog (R#, npr. „Umivaonici, 1. faza") — proizvode naloga ne moraš imenovati.',
         input_schema: {
             type: 'object',
             properties: {
                 project: { ...str, description: 'Oznaka P#.' },
-                product: { ...str, description: 'Naziv proizvoda (neobavezno — bez njega svi proizvodi projekta).' },
-                material: { ...str, description: 'Samo materijali ovog naziva (neobavezno).' },
+                orders: { ...strList, description: 'Nalozi R# — materijali proizvoda tih naloga.' },
+                product: { ...str, description: 'Naziv proizvoda (neobavezno — bez njega svi proizvodi projekta/naloga).' },
+                material: { ...str, description: 'Vrsta ili naziv materijala: „iveral", „kant", „furnir", „okov" ili dio naziva (neobavezno).' },
             },
-            required: ['project'],
         },
     },
     {
@@ -309,14 +311,27 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'set_progress',
-        description: 'SLOJ PROCESI, bez Knjige rada: stanje proizvoda kad NIJE rečeno ko je radio. „Sve za Čorluku osim vrata je gotovo" (bez process = proizvodi završeni, svaki na dan zadnjeg rada iz Knjige rada), „kuhinja je ušla u lakiranje" (process + started), „okivanje na ormaru završeno" (process + done). Bez naloga a s procesom: ERP nađe nalog gdje proces čeka. Datum ne računaj — ERP ga uzme iz Knjige rada.',
+        description: 'SLOJ PROCESI, bez Knjige rada: stanje proizvodnje kad NIJE rečeno ko je radio. Korisnik javlja DOKLE je posao stigao, često u više grana odjednom: „za Budnju su napravljene sve podkonstrukcije od jele i od OSB-a, skrojen sav iveral, u toku je montaža iverala na podkonstrukcije" = JEDAN poziv sa steps (svaki proces svoj korak). Procese biraj iz TOK NALOGA (tačan naziv iz karte) — „montaža iverala" je Sklapanje kutija, „podkonstrukcije od jele" je Izrada podkonstrukcije od jele/smreke. ERP sam završi sve što je prije toga u toku naloga (npr. u toku Sklapanje kutija → krojenje i kantiranje iverala završeni) i upiše samo na proizvode koji taj proces imaju. „Sve za Čorluku osim vrata je gotovo" = bez steps/process (proizvodi završeni na dan zadnjeg rada). Bez naloga a s procesom: ERP nađe nalog gdje proces čeka. Datum ne računaj.',
         input_schema: {
             type: 'object',
             properties: {
                 orders: { ...strList, description: 'Nalozi R# iz liste NALOZI koje je korisnik naveo. Izostavi kad nalog nije rečen (uz process).' },
+                steps: {
+                    type: 'array',
+                    description: 'Stanje po procesima iz jedne poruke, redom kako su rečeni.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            process: { ...str, description: 'Naziv procesa iz TOK NALOGA (ili kako je rečen ako ga u toku nema).' },
+                            state: { ...enumOf(['done', 'started']), description: 'done = završeno / napravljeno / skrojeno, started = u toku / počelo.' },
+                            only: { ...strList, description: 'Samo proizvodi čiji naziv ima riječ (samo kad je korisnik rekao koje proizvode).' },
+                        },
+                        required: ['process', 'state'],
+                    },
+                },
                 except: { ...strList, description: 'Riječi naziva proizvoda/naloga koji se izuzimaju: „osim vrata" → ["vrata"].' },
                 only: { ...strList, description: 'Samo proizvodi čiji naziv ima riječ: „samo gornji elementi" → ["gornji"].' },
-                process: { ...str, description: 'Proces kako je rečen; bez toga = cijeli proizvod gotov.' },
+                process: { ...str, description: 'Jedan proces kako je rečen (kad nema steps); bez toga i bez steps = cijeli proizvod gotov.' },
                 state: { ...enumOf(['done', 'started']), description: 'done = završeno (podrazumijevano), started = počelo / u toku.' },
                 workers: { ...strList, description: 'W# ako je rečeno ko je to uradio (zapis na procesu).' },
                 date: { ...str, description: 'Samo kad je dan izričito rečen (YYYY-MM-DD).' },
@@ -1339,15 +1354,58 @@ async function createOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 }
 
 async function productMaterialsTool(env: ToolEnv, a: Args): Promise<ToolResult> {
-    const project = resolveAlias(env.ctx.projects, a.project);
-    if (!project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const orderIds = (Array.isArray(a.orders) ? a.orders : []).map(x => orderOf(env, x));
+    if (orderIds.some(id => !id)) return { ok: false, error: `Nalog ${JSON.stringify(a.orders)} nije u listi NALOZI.` };
+    if (!project && !orderIds.length) return { ok: false, error: 'Navedi projekat (P#) ili nalog (R#).' };
     const productName = text(a.product, 80);
     const materialName = text(a.material, 80);
 
-    let products = await loadProjectProducts(env.orgId, project.id);
+    // Proizvodi: svi projekta, ili samo oni koje nalozi sadrže (nalog pokriva i proizvode više projekata).
+    let products: Product[] = [];
+    if (orderIds.length) {
+        const items = await getItemsForWorkOrders(env.orgId, orderIds as string[]);
+        const inOrder = new Set(items.map(i => i.Product_ID).filter(Boolean));
+        const projectIds = Array.from(new Set(items.map(i => i.Project_ID).filter((x): x is string => !!x)));
+        products = (await Promise.all(projectIds.map(id => loadProjectProducts(env.orgId, id)))).flat().filter(p => inOrder.has(p.Product_ID));
+        if (project) products = products.filter(p => p.Project_ID === project.id);
+    } else {
+        products = await loadProjectProducts(env.orgId, project!.id);
+    }
+    const all = products;
     if (productName) products = products.filter(p => matchScore(productName, [p.Name || '']) >= 0.7);
-    if (!products.length) return { ok: false, error: productName ? `Projekat nema proizvod „${productName}".` : 'Projekat nema proizvoda.' };
+    if (!products.length) {
+        const names = all.map(p => p.Name).filter(Boolean).slice(0, 12).join('; ');
+        return { ok: false, error: productName ? `Nema proizvoda „${productName}".${names ? ` Proizvodi: ${names}.` : ''}` : 'Nema proizvoda.' };
+    }
     const materials = await loadProductMaterials(env.orgId, products.map(p => p.Product_ID));
+    // „iveral" = vrsta (Iveral / U960 ST9 Onyx siva, ne i kant „KT / U960…"); inače dio naziva.
+    const wantType = materialName ? materialTypeFromName(materialName) : null;
+    const wanted = (m: ProductMaterial) => !materialName
+        || (wantType ? materialTypeFromName(m.Material_Name) === wantType : matchScore(materialName, [m.Material_Name]) >= 0.7);
+    const label = project ? projectLabel(project) : (env.ctx.orders || []).filter(o => orderIds.includes(o.value.id)).map(o => o.value.name).join(', ');
+
+    // Pitanje o jednoj vrsti: jedan red po materijalu (dekoru) s proizvodima koji ga imaju.
+    if (materialName) {
+        const groups = new Map<string, { name: string; products: string[]; unit: string; status: Set<string>; supplier: Set<string>; qty: number }>();
+        for (const m of materials.filter(wanted)) {
+            const p = products.find(x => x.Product_ID === m.Product_ID);
+            const key = foldText(m.Material_Name);
+            const g = groups.get(key) || { name: m.Material_Name, products: [], unit: m.Unit || 'kom', status: new Set<string>(), supplier: new Set<string>(), qty: 0 };
+            g.products.push(p ? `${p.Name}${p.Quantity > 1 ? ` ×${p.Quantity}` : ''}` : '—');
+            g.status.add(m.Status || 'Nije naručeno');
+            if (m.Supplier) g.supplier.add(m.Supplier);
+            g.qty += (m.Quantity || 0) * (p && p.Quantity > 0 ? p.Quantity : 1);
+            groups.set(key, g);
+        }
+        if (!groups.size) return { ok: true, project: label, materials: [], note: `Proizvodi (${products.length}) nemaju materijal „${materialName}" u sastavnici.` };
+        return {
+            ok: true, project: label, proizvoda: products.length,
+            materials: Array.from(groups.values()).map(g =>
+                `${g.name} — ${q(g.qty)} ${g.unit} · ${Array.from(g.status).join('/')}${g.supplier.size ? ` · ${Array.from(g.supplier).join(', ')}` : ''} · proizvodi: ${g.products.slice(0, 10).join('; ')}${g.products.length > 10 ? '; …' : ''}`),
+        };
+    }
 
     const lines = products
         .sort((x, y) => (x.Name || '').localeCompare(y.Name || '', 'bs'))
@@ -1355,9 +1413,8 @@ async function productMaterialsTool(env: ToolEnv, a: Args): Promise<ToolResult> 
         .map(p => {
             const count = p.Quantity > 0 ? p.Quantity : 1;
             const own = materials.filter(m => m.Product_ID === p.Product_ID);
-            const shown = materialName ? own.filter(m => matchScore(materialName, [m.Material_Name]) >= 0.7) : own;
             const unitCost = own.reduce((s, m) => s + (m.Total_Price || 0), 0);
-            const rows = shown.slice(0, 30).map(m => {
+            const rows = own.slice(0, 30).map(m => {
                 const c = materialCoverage(m, count);
                 return [
                     `  • ${m.Material_Name}`, `${q(c.needed)} ${m.Unit || 'kom'}${count > 1 ? ` (${q(m.Quantity)}/kom)` : ''}`,
@@ -1367,9 +1424,9 @@ async function productMaterialsTool(env: ToolEnv, a: Args): Promise<ToolResult> 
                 ].join(' | ');
             });
             return [`${p.Name} ×${count} | materijal ${q(unitCost * count)} ukupno (${q(unitCost)}/kom) | ${own.length} stavki`, ...rows,
-                ...(shown.length > 30 ? [`  … još ${shown.length - 30}`] : [])].join('\n');
+                ...(own.length > 30 ? [`  … još ${own.length - 30}`] : [])].join('\n');
         });
-    return { ok: true, project: projectLabel(project), products: lines, ...(products.length > 15 ? { note: `Prikazano 15 od ${products.length} proizvoda — suzi s product.` } : {}) };
+    return { ok: true, project: label, products: lines, ...(products.length > 15 ? { note: `Prikazano 15 od ${products.length} proizvoda — suzi s product.` } : {}) };
 }
 
 async function listOrdersTool(env: ToolEnv, a: Args): Promise<ToolResult> {
@@ -1537,7 +1594,8 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     const befores = new Map<string, Record<string, unknown> | null>();
     const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
-    let result = await bookWorkDiary(env.orgId, date, lines, absences, track);
+    const learned = learnedAliases(env.ctx.vocab || []);
+    let result = await bookWorkDiary(env.orgId, date, lines, absences, track, learned);
     let question: ErpQuestion | null = null;
     if (!result.ok) {
         // Nejasan nalog ili proces: ono što je jasno se upiše, a za ostalo ERP pita dugmadima
@@ -1551,7 +1609,7 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
             env.erpQuestion = question;
             return { ok: true, asked: question.question };
         }
-        result = await bookWorkDiary(env.orgId, date, clear, absences, track);
+        result = await bookWorkDiary(env.orgId, date, clear, absences, track, learned);
         if (!result.ok) return { ok: false, error: `Ništa nije upisano.\n${diaryIssueText(env, result.issues)}` };
     }
 
@@ -1988,13 +2046,31 @@ async function setPresenceTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
 // ─── Sloj „Procesi" ───────────────────────────────────────────────────
 
+/** Jedan korak stanja: proces + stanje (+ „samo ovi proizvodi", + tačan naziv iz dugmeta). */
+interface ProgressStep { process?: string; state: 'done' | 'started'; only?: string[]; exact?: boolean; said?: string }
+
+/** `steps[]` (više procesa iz jedne poruke) ili stari oblik (jedan proces / cijeli proizvod). */
+function progressSteps(a: Args, words: (v: unknown) => string[]): ProgressStep[] {
+    const given = Array.isArray(a.steps) ? a.steps : [];
+    const steps = given.filter((x): x is Args => !!x && typeof x === 'object').map(x => ({
+        process: text(x.process, 80) || undefined,
+        state: x.state === 'started' ? 'started' as const : 'done' as const,
+        ...(words(x.only).length ? { only: words(x.only) } : {}),
+        ...(x.exact === true ? { exact: true } : {}),
+        ...(text(x.said, 80) ? { said: text(x.said, 80) } : {}),
+    })).filter(x => x.process);
+    if (steps.length) return steps;
+    return [{ process: text(a.process, 80) || undefined, state: a.state === 'started' ? 'started' : 'done', ...(a.exact_process === true ? { exact: true } : {}) }];
+}
+
 async function setProgressTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const today = toZoned(env.now, env.tz).date;
     const aliases = Array.isArray(a.orders) ? a.orders : [];
     const orderIds = aliases.map(x => orderOf(env, x));
-    const process = text(a.process, 80);
+    const words = (v: unknown) => (Array.isArray(v) ? v.map(x => text(x, 40)).filter(Boolean) : []);
+    const steps = progressSteps(a, words);
     // Bez naloga može samo uz proces — tad ERP nađe nalog gdje taj proces čeka.
-    if (!orderIds.length && !process) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI) ili proces.' };
+    if (!orderIds.length && !steps.some(s => s.process)) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI) ili proces.' };
     const bad = aliases.find((_, i) => !orderIds[i]);
     if (bad !== undefined) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
     const ids = Array.from(new Set(orderIds as string[]));
@@ -2006,52 +2082,78 @@ async function setProgressTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (workersErr) return { ok: false, error: workersErr };
     const date = isIsoDate(a.date) ? a.date : undefined;
     if (date && date > today) return { ok: false, error: 'Stanje se ne upisuje unaprijed.' };
-    const words = (v: unknown) => (Array.isArray(v) ? v.map(x => text(x, 40)).filter(Boolean) : []);
 
     const befores = new Map<string, Record<string, unknown> | null>();
     const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
-    const res = await setProgress(env.orgId, {
-        workOrderIds: ids, only: words(a.only), except: words(a.except),
-        process: process || undefined, exactProcess: a.exact_process === true, workerIds: workerIds as string[],
-        state: a.state === 'started' ? 'started' : 'done', date, today,
-    }, track);
-    if (!res.ok) {
-        // ERP ne zna sam (nalog ili proces) → dugmad; izbor završava upis bez modela.
-        if (res.choice) {
-            env.erpQuestion = progressQuestion(a, res.choice);
-            return { ok: true, asked: env.erpQuestion.question };
+    const learned = learnedAliases(env.ctx.vocab || []);
+    const results: Extract<ProgressResult, { ok: true }>[] = [];
+    const errors: string[] = [];
+    const taught: { said: string; process: string }[] = [];
+    // Redom: jedan korak može završiti ranije (podkonstrukcija), drugi pretpostaviti njegove prethodnike.
+    for (let k = 0; k < steps.length; k++) {
+        const st = steps[k];
+        const res = await setProgress(env.orgId, {
+            workOrderIds: ids, only: st.only || words(a.only), except: words(a.except),
+            process: st.process, exactProcess: st.exact === true, workerIds: workerIds as string[],
+            state: st.state, date, today, aliases: learned,
+        }, track);
+        if (res.ok) {
+            results.push(res);
+            // Korisnik je dugmetom rekao šta njegova riječ znači → pamti se („montaža iverala" = Sklapanje kutija).
+            if (st.exact && st.said && st.process && foldText(st.said) !== foldText(st.process)) taught.push({ said: st.said, process: st.process });
+            continue;
         }
-        return { ok: false, error: res.error };
+        // ERP ne zna sam (nalog ili proces) → dugmad; izbor završava ovaj i preostale korake bez modela.
+        if (res.choice) {
+            env.erpQuestion = progressQuestion(a, steps, k, res.choice);
+            break;
+        }
+        errors.push(res.error);
     }
-    if (!res.orders.some(o => o.products.length)) {
-        return { ok: true, changed: 0, note: 'Ništa nije promijenjeno — ti proizvodi su već završeni ili ih „osim/samo" isključuje. Reci korisniku.' };
+    if (!results.length && !env.erpQuestion) return { ok: false, error: errors.join(' ') || 'Ništa nije upisano.' };
+    if (results.length && !results.some(r => r.orders.some(o => o.products.length))) {
+        if (!env.erpQuestion) return { ok: true, changed: 0, note: 'Ništa nije promijenjeno — ti proizvodi su već završeni ili ih „osim/samo" isključuje. Reci korisniku.' };
+    } else if (results.length) {
+        const label = 'stanje proizvodnje';
+        await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
+            recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
+        env.changes.push(label);
+        env.summaries.push(progressStepsSummary(results, d => shortDay(`${d}T12:00:00Z`, env.tz)));
+        for (const w of taught) {
+            if (await rememberWord(env, { phrase: w.said, kind: 'process', targetId: w.process, targetLabel: w.process, source: 'confirmed' })) {
+                env.summaries.push(`📌 Zapamtio: „${w.said}" = ${w.process}`);
+            }
+        }
     }
-    const label = 'stanje proizvodnje';
-    await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
-        recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
-    env.changes.push(label);
-    env.summaries.push(progressSummary(res, d => shortDay(`${d}T12:00:00Z`, env.tz)));
-    return { ok: true, products: res.orders.reduce((s, o) => s + o.products.length, 0), finished: res.finished };
+    if (env.erpQuestion) return { ok: true, asked: env.erpQuestion.question };
+    return {
+        ok: true, products: results.reduce((n, r) => n + r.orders.reduce((m, o) => m + o.products.length, 0), 0),
+        finished: results.reduce((n, r) => n + r.finished, 0), ...(errors.length ? { notDone: errors } : {}),
+    };
 }
 
-/** Dugmad za stanje procesa: izabran nalog („@id") ili tačan naziv procesa. */
-function progressQuestion(a: Args, choice: ProgressChoice): ErpQuestion {
+/** Dugmad za stanje procesa: izabran nalog („@id") ili tačan naziv procesa — uz preostale korake poruke. */
+function progressQuestion(a: Args, steps: ProgressStep[], k: number, choice: ProgressChoice): ErpQuestion {
+    const rest = steps.slice(k).map(s => ({ ...s }));
+    const withSteps = (first: Partial<ProgressStep>, extra: Args = {}): Args => ({
+        ...a, ...extra, steps: [{ ...rest[0], ...first }, ...rest.slice(1)], process: undefined, state: undefined, exact_process: undefined,
+    });
     if (choice.kind === 'order') {
         return {
             tool: 'set_progress',
             question: `„${choice.said}" — na kojem nalogu?`,
             options: [
-                ...choice.options.map(o => ({ label: o.label.slice(0, 60), args: { ...a, orders: [`@${o.value}`] } })),
+                ...choice.options.map(o => ({ label: o.label.slice(0, 60), args: withSteps({}, { orders: [`@${o.value}`] }) })),
                 { label: 'Preskoči', args: { ...SKIP_ARGS } },
             ],
         };
     }
     return {
         tool: 'set_progress',
-        question: `„${choice.said}" — koji je to proces? (Ne pretpostavljam ranije korake koji nisu ni počeli.)`,
+        question: `„${choice.said}" — koji je to proces?`,
         options: [
-            ...choice.options.map(o => ({ label: o.label, args: { ...a, process: o.value, exact_process: true } })),
-            { label: `➕ Nov proces: ${capitalizeFirst(choice.said)}`, args: { ...a, process: capitalizeFirst(choice.said), exact_process: true } },
+            ...choice.options.map(o => ({ label: o.label, args: withSteps({ process: o.value, exact: true, said: choice.said }) })),
+            { label: `➕ Nov proces: ${capitalizeFirst(choice.said)}`, args: withSteps({ process: capitalizeFirst(choice.said), exact: true }) },
             { label: 'Preskoči', args: { ...SKIP_ARGS } },
         ],
     };

@@ -91,3 +91,34 @@ export function progressSummary(res: Extract<ProgressResult, { ok: true }>, fmt:
     lines.push('📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani.');
     return lines.join('\n');
 }
+
+/**
+ * Potvrda za više koraka iz jedne poruke („podkonstrukcije gotove, u toku sklapanje"): jedan
+ * blok — proces, stanje i koliko proizvoda — pa šta je ERP pretpostavio završenim ranije.
+ * Jedan korak ide kroz `progressSummary`.
+ */
+export function progressStepsSummary(results: Extract<ProgressResult, { ok: true }>[], fmt: (date: string) => string): string {
+    if (results.length === 1) return progressSummary(results[0], fmt);
+    const lines = ['⚙️ Procesi (završeno = dan zadnjeg rada iz Knjige rada):'];
+    const said = new Set(results.map(r => r.process).filter(Boolean) as string[]);
+    const assumed = new Set<string>();
+    const notTouched = new Set<string>();
+    let finished = 0;
+    for (const r of results) {
+        const label = r.process || 'proizvodi završeni';
+        const where = r.orders.filter(o => o.products.length).map(o => {
+            const dates = Array.from(new Set(o.products.map(p => p.date)));
+            const what = o.products.length === 1 ? o.products[0].product : `${o.products.length} proizvoda`;
+            return `${o.name} — ${what}${dates.length === 1 ? ` · ${fmt(dates[0])}` : ''}`;
+        });
+        lines.push(`• ${label} ${r.state === 'done' ? '✓ završeno' : '▶ u toku'}${where.length ? ` — ${where.join('; ')}` : ' — nema šta mijenjati'}${r.workers?.length ? ` (${people(r.workers)})` : ''}`);
+        r.orders.forEach(o => o.assumed.forEach(n => { if (!said.has(n)) assumed.add(n); }));
+        r.orders.forEach(o => o.skipped.forEach(n => notTouched.add(n)));
+        finished += r.finished;
+    }
+    if (assumed.size) lines.push(`☑️ pretpostavljeno završeno ranije: ${Array.from(assumed).join(', ')}`);
+    if (finished) lines.push(`✔ Proizvoda završeno: ${finished}`);
+    if (notTouched.size) lines.push(`Nije dirano: ${Array.from(notTouched).join(', ')}`);
+    lines.push('📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani.');
+    return lines.join('\n');
+}

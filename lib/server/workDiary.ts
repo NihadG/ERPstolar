@@ -29,6 +29,7 @@ import {
     unstartedUpstream, unsaidTrack, type DiaryTarget, type TargetMatch,
 } from '@/lib/workDiary';
 import { nodeMatchesProcess, planGraphForProduct, planToStages } from '@/lib/productProcesses';
+import { catalogAliases, graphAliases, mergeAliases, standardAliases, type ProcessAlias } from '@/lib/processVocabulary';
 import { addDays } from '@/lib/voice/dates';
 import { foldText } from '@/lib/voice/text';
 
@@ -171,6 +172,8 @@ export async function bookWorkDiary(
     lines: DiaryLineInput[],
     absences: DiaryAbsenceInput[],
     track: TrackHook = () => undefined,
+    /** Riječi koje je bot naučio (assistant_vocab, vrsta proces). */
+    learned: ProcessAlias[] = [],
 ): Promise<DiaryResult> {
     const db = adminDb();
     const [orders, workers, projectsSnap, catalogSnap, rulesSnap] = await Promise.all([
@@ -190,6 +193,7 @@ export async function bookWorkDiary(
         ...orders.flatMap(o => (o.Process_Graph?.nodes || []).map(n => n.name)),
         ...rules.flatMap(r => r.Processes || []),
     ].filter(n => n && n.trim().toLowerCase() !== 'rad')));
+    const aliases = mergeAliases(standardAliases(), catalogAliases(catalog), graphAliases(orders.map(o => o.Process_Graph)), learned);
     const workerById = new Map(workers.map(w => [w.Worker_ID, w]));
     // Redoslijed kataloga: proces van plana stavke dobije mjesto po katalogu.
     const catalogRank = new Map(catalog.map(c => [foldText(c.Name).trim(), c.Order]));
@@ -271,10 +275,10 @@ export async function bookWorkDiary(
             // Potvrđen nov proces: rečeni naziv, bez pogađanja sličnog iz kataloga.
             process = line.newProcess
                 ? vocabulary.find(v => foldText(v) === foldText(line.process!)) || capitalize(line.process)
-                : matchProcess(line.process, vocabulary, preferred) || undefined;
+                : matchProcess(line.process, vocabulary, preferred, aliases) || undefined;
             if (!process) {
                 issues.push({ kind: 'process', line: lines.indexOf(line), name: line.process.trim() });
-            } else if (!line.newProcess && !processFullySaid(line.process, process)) {
+            } else if (!line.newProcess && !processFullySaid(line.process, process, aliases)) {
                 // „montaža" → Montaža Kerrocka, a Kerrock nije ni krojen: upis bi pretpostavio pola plana.
                 // Kad bi se preskočila bar dva nezapočeta koraka, ERP pita dugmadima umjesto da pogađa.
                 const p = process;
@@ -287,7 +291,7 @@ export async function bookWorkDiary(
                 }
             }
         }
-        const also = (line.alsoProcesses || []).map(p => matchProcess(p, vocabulary, preferred) || capitalize(p)).filter(Boolean);
+        const also = (line.alsoProcesses || []).map(p => matchProcess(p, vocabulary, preferred, aliases) || capitalize(p)).filter(Boolean);
         return { ...t, process, also };
     });
     if (issues.length) return { ok: false, issues };
@@ -676,6 +680,8 @@ export interface ProgressInput {
     /** Ko je radio (samo zapis na procesu; Knjiga rada se ne dira). */
     workerIds?: string[];
     state: 'done' | 'started';
+    /** Riječi koje je bot naučio (assistant_vocab, vrsta proces). */
+    aliases?: ProcessAlias[];
     /** Rečen dan; bez njega: završetak = zadnji dan rada iz Knjige rada, početak = danas. */
     date?: string;
     today: string;
@@ -749,18 +755,28 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
     const worker = (workers as { Worker_ID: string; Name: string }[]).find(w => input.workerIds?.includes(w.Worker_ID));
 
     let process: string | undefined;
+    let aliases: ProcessAlias[] = [];
     if (input.process?.trim()) {
         const vocabulary = Array.from(new Set([
             ...catalog.map(c => c.Name),
             ...chosenOrders.flatMap(o => (o.Process_Graph?.nodes || []).map(n => n.name)),
-        ].filter(n => n && foldText(n) !== 'rad')));
+            ].filter(n => n && foldText(n) !== 'rad')));
         const preferred = chosenOrders.flatMap(o => planProcessNames(o.Process_Graph, items.filter(i => i.Work_Order_ID === o.Work_Order_ID)));
+        aliases = mergeAliases(standardAliases(), catalogAliases(catalog), graphAliases(chosenOrders.map(o => o.Process_Graph)), input.aliases || []);
         process = input.exactProcess
             ? vocabulary.find(v => foldText(v) === foldText(input.process!)) || input.process.trim()
-            : matchProcess(input.process, vocabulary, preferred) || undefined;
-        if (!process) return { ok: false, error: `Proces „${input.process.trim()}" nije u katalogu procesa — pitaj koji je, ili neka ga doda u ERP-u (Procesi → ⚙).` };
+            : matchProcess(input.process, vocabulary, preferred, aliases) || undefined;
+        if (!process) {
+            // Nepoznata fraza: ne „nije u katalogu — pitaj" nego dugmad s procesima koji su na redu u planu stavki.
+            const said = processCandidates(input.process, vocabulary, preferred);
+            const options = said.length ? said : preferred.slice(0, 4);   // plan: nezavršeni procesi prvi
+            return {
+                ok: false, error: `Proces „${input.process.trim()}" ERP ne prepoznaje — korisnik bira.`,
+                choice: { kind: 'process', said: input.process.trim(), options: options.map(v => ({ label: v, value: v })) },
+            };
+        }
         // Djelimično rečen proces koji bi preskočio bar dva nezapočeta koraka → korisnik bira.
-        if (!input.exactProcess && !processFullySaid(input.process, process)) {
+        if (!input.exactProcess && !processFullySaid(input.process, process, aliases)) {
             const p = process;
             const skipped = unsaidTrack(input.process, p, Array.from(new Set(items.flatMap(i => unstartedUpstream(chosenOrders.find(o => o.Work_Order_ID === i.Work_Order_ID)?.Process_Graph, i.ID, p, i.Processes)))));
             if (skipped.length >= 2) {
@@ -785,7 +801,12 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
             skipped: mine.filter(i => !chosen.includes(i)).map(i => i.Product_Name),
             already: chosen.filter(i => i.Status === 'Završeno').map(i => i.Product_Name),
         };
-        const open = chosen.filter(i => i.Status !== 'Završeno');
+        // Proces koji nalog ima samo na nekim proizvodima (podkonstrukcija: Poz 1–2) piše se samo na njima —
+        // osim kad je korisnik izričito rekao koje proizvode („samo …").
+        const node = process && !input.only?.length ? (wo.Process_Graph?.nodes || []).find(n => nodeMatchesProcess(n, process)) : undefined;
+        const hasProcess = (i: WorkOrderItem) => !node?.itemIds?.length || node.itemIds.includes(i.ID);
+        const open = chosen.filter(i => i.Status !== 'Završeno' && hasProcess(i));
+        entry.skipped.push(...chosen.filter(i => i.Status !== 'Završeno' && !hasProcess(i)).map(i => `${i.Product_Name} (nema taj proces)`));
         out.push(entry);
         if (!open.length) continue;
         const logs = await getWorkLogsForWorkOrder(orgId, wo.Work_Order_ID);

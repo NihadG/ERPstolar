@@ -17,6 +17,7 @@ import {
     attachItems, getBookableWorkOrders, getItemsForWorkOrders, getOpenWorkOrders, getWorkLogsForWorkOrder,
 } from '@/lib/server/fieldRepo';
 import type { WorkOrder, WorkOrderItem } from '@/lib/types';
+import { flowMapText, flowMapsText, type FlowMapOrder } from './flowMap';
 
 const day = (iso?: string | null) => (iso ? `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.` : '');
 
@@ -61,8 +62,23 @@ export async function orderStatusLines(orgId: string, workOrderIds: string[], to
             const l = last.get(i.ID);
             out.push(`  • ${i.Product_Name} — ${itemState(i, wo.Process_Graph)}${l && i.Status !== 'Završeno' ? ` · zadnji rad ${day(l)}` : ''}`);
         }
+        // Cijeli tok naloga (kao tabla „Tok"): koji proces je gdje, ne samo front po proizvodu.
+        const flow = flowMapText({ alias: '', name: wo.Name || wo.Work_Order_Number || 'Nalog', graph: wo.Process_Graph, items });
+        if (flow) out.push('TOK PROCESA:', ...flow.split('\n').slice(1));
     }
     return out;
+}
+
+/** Tokovi naloga za prompt: samo otvoreni nalozi koje je poruka spomenula (R# oznaka uz svaki). */
+export async function loadFlowMaps(orgId: string, refs: { alias: string; id: string; name: string }[]): Promise<string> {
+    if (!refs.length) return '';
+    const orders = (await getBookableWorkOrders(orgId)).filter(o => refs.some(r => r.id === o.Work_Order_ID));
+    attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
+    const maps: FlowMapOrder[] = orders.map(o => {
+        const ref = refs.find(r => r.id === o.Work_Order_ID)!;
+        return { alias: ref.alias, name: ref.name, graph: o.Process_Graph, items: o.items || [] };
+    });
+    return flowMapsText(maps);
 }
 
 /**
