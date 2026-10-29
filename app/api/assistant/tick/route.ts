@@ -14,6 +14,7 @@ import { assistantTimezone } from '@/lib/assistant/datetime';
 import { sendDayProposals, sendDueReminders, sendMorningDigests } from '@/lib/assistant/reminders';
 import { sendMaterialAlerts } from '@/lib/assistant/materialAlerts';
 import { checkBounces } from '@/lib/server/emailDrafts';
+import { syncAllMailboxes } from '@/lib/server/mailSync';
 import { errorResponse } from '@/lib/server/requireUser';
 
 export const runtime = 'nodejs';
@@ -43,7 +44,11 @@ async function tick(req: Request) {
         const bounces = now.getUTCMinutes() % 5 === 0
             ? await checkBounces(now).catch(e => { console.error('[tick] vraćeni mailovi:', e); return 0; })
             : 0;
-        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, bounces, at: now.toISOString() });
+        // Ulazna pošta (svake 2 min): predračuni, „spremno", računi, primjedbe → prijedlozi na Telegram.
+        const mail = now.getUTCMinutes() % 2 === 1
+            ? await syncAllMailboxes(now).catch(e => { console.error('[tick] ulazna pošta:', e); return 0; })
+            : 0;
+        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, bounces, mail, at: now.toISOString() });
     } catch (e) {
         return errorResponse(e);
     }

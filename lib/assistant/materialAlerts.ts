@@ -109,7 +109,10 @@ export async function loadLeadDays(orgId: string): Promise<Map<string, number>> 
     // Narudžba kojoj datum slanja nije poznat (nacrt primljen porukom) ne uči rok isporuke.
     const value = supplierLeadDays(items.docs.map(d => d.data() as OrderItem).flatMap(i => {
         const o = byId.get(i.Order_ID);
-        return o && i.Received_Date && !o.Sent_At_Assumed ? [{ supplier: o.Supplier_Name, orderedAt: o.Sent_At || o.Order_Date, receivedAt: i.Received_Date }] : [];
+        if (!o || !i.Received_Date || o.Sent_At_Assumed) return [];
+        // Dobavljač je javio mailom da je spremno (PR ulazne pošte) — to je njegov stvarni rok, ne naše preuzimanje.
+        const ready = o.Ready_At && o.Ready_At < i.Received_Date ? o.Ready_At : i.Received_Date;
+        return [{ supplier: o.Supplier_Name, orderedAt: o.Sent_At || o.Order_Date, receivedAt: ready }];
     }));
     leadCache.set(orgId, { at: Date.now(), value });
     return value;

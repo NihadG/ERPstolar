@@ -21,6 +21,7 @@ import {
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
 import { consumeDraftText, handleEmailButton, sendDraftToChat } from './emailButtons';
+import { handleMailButton } from './mailButtons';
 import { handleMaterialButton, sendMaterialAlerts, setOrderReceivedDaysAgo, setOrderSentDaysAgo } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
@@ -313,6 +314,13 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await answerCallbackQuery(inc.callbackId);
         const msg = await createProposalMessage(link, arg, today);
         await sendMessage(inc.chatId, msg?.text || `Za ${shortDate(arg)} nema prijedloga — nijedan radnik nema raniji upis. Izdiktiraj taj dan porukom.`, msg?.buttons);
+        return;
+    }
+
+    if (kind === 'mx') {
+        const res = await handleMailButton(inc, link, arg, extra || '');
+        // Tekst maila ide botu kao proslijeđena poruka — isto razumijevanje kao za proslijeđen Telegram.
+        if (res.forward) await converse(link, inc.chatId, { text: res.forward.text, forward: { from: res.forward.from, date: res.forward.date } });
         return;
     }
 

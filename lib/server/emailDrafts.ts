@@ -333,7 +333,7 @@ export async function sendDraft(orgId: string, uid: string, draftId: string, now
 
     let sent: { id: string; threadId: string };
     try {
-        sent = await sendGmail(uid, { to: d.To, cc: d.Cc, subject: d.Subject, text: d.Body, attachments, threadId: d.Thread_ID });
+        sent = await sendGmail(uid, { to: d.To, cc: d.Cc, subject: d.Subject, text: d.Body, attachments, threadId: d.Thread_ID, inReplyTo: d.In_Reply_To });
     } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         await drafts().doc(draftId).set({ Status: 'failed', Error: message, Updated_At: now.toISOString() }, { merge: true });
@@ -408,4 +408,41 @@ export async function checkBounces(now = new Date()): Promise<number> {
         }
     }
     return bounced;
+}
+
+/**
+ * Odgovor u istoj niti (ulazna pošta: „Potvrđujem" na predračun). Ide kao
+ * nacrt s dugmetom „Pošalji", kao i svaki drugi mail.
+ */
+export async function createReplyDraft(input: {
+    orgId: string; uid: string; to: EmailDraftAddress; subject: string; text: string;
+    threadId: string; inReplyTo?: string; source: EmailDraft['Source']; now?: Date;
+}): Promise<EmailDraft> {
+    const { orgId, uid } = input;
+    const account = await getEmailAccount(uid);
+    if (!account || account.Organization_ID !== orgId) throw new GmailError('not-connected', 'Gmail nije povezan — poveži ga u Postavke → Kontakti.');
+    const contact = (await loadContacts(orgId)).find(c => normalizeEmail(c.Email) === normalizeEmail(input.to.email));
+    const parts = { greeting: greeting(contact), text: input.text.trim(), signature: await signatureFor(uid, account.Signature) };
+    const now = (input.now || new Date()).toISOString();
+    const subject = /^\s*(re|odg|aw)\s*:/i.test(input.subject) ? input.subject.trim() : `Re: ${input.subject.trim()}`;
+    const draft: EmailDraft = {
+        Draft_ID: randomUUID(),
+        Organization_ID: orgId,
+        Owner_UID: uid,
+        Purpose: 'general',
+        To: [contact ? addr(contact) : input.to],
+        Cc: [],
+        Subject: subject.slice(0, 200),
+        Body: composeText({ greeting: parts.greeting, body: parts.text, signature: parts.signature }),
+        Parts: parts,
+        Attachments: [],
+        Status: 'draft',
+        Source: input.source,
+        Thread_ID: input.threadId,
+        ...(input.inReplyTo ? { In_Reply_To: input.inReplyTo } : {}),
+        Created_At: now,
+        Updated_At: now,
+    };
+    await drafts().doc(draft.Draft_ID).set(draft);
+    return draft;
 }
