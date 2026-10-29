@@ -2,7 +2,7 @@ import type { Contact } from '../types';
 import {
     contactCountBySupplier, contactFullName, duplicateOf, emailDomain, filterContacts, formatAddress,
     groupContacts, importCandidates, isSharedMailDomain, isValidEmail, looksLikeCompany, matchSender,
-    normalizeEmail, resolveRecipient, splitEmails, splitName, staleDefaults,
+    normalizeEmail, resolveRecipient, singleDefaults, splitEmails, splitName, staleDefaults,
 } from '../contacts';
 
 const person = (id: string, email: string, extra: Partial<Contact> = {}): Contact => ({
@@ -253,5 +253,18 @@ describe('glavni kontakt', () => {
         expect(staleDefaults(list, { Contact_ID: '2', Supplier_ID: 's1', Is_Default: true }).map(c => c.Contact_ID)).toEqual(['1']);
         expect(staleDefaults(list, { Contact_ID: '2', Supplier_ID: 's1', Is_Default: false })).toEqual([]);
         expect(staleDefaults(list, { Contact_ID: '9', Is_Default: true })).toEqual([]);
+    });
+});
+
+describe('uvoz iz više izvora', () => {
+    it('jedna ★ po dobavljaču, nijedna ako dobavljač već ima glavnog', () => {
+        const drafts = [
+            { Email: 'a@x.example', Supplier_ID: 's1', Is_Default: true },
+            { Email: 'b@x.example', Supplier_ID: 's1', Is_Default: true },
+            { Email: 'c@y.example', Supplier_ID: 's2', Is_Default: true },
+            { Email: 'd@z.example', Is_Default: true },
+        ];
+        const out = singleDefaults(drafts, [person('e', 'e@y.example', { Supplier_ID: 's2', Is_Default: true })]);
+        expect(out.map(d => !!d.Is_Default)).toEqual([true, false, false, true]);
     });
 });

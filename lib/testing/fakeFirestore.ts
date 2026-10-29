@@ -19,7 +19,9 @@ class FakeDoc {
         const d = fakeStore.get(this.path);
         return { exists: d !== undefined, id: this.id, ref: this, data: () => clone(d) };
     }
-    async set(data: Data) { fakeStore.set(this.path, clone(data)); }
+    async set(data: Data, opts?: { merge?: boolean }) {
+        fakeStore.set(this.path, opts?.merge ? { ...(fakeStore.get(this.path) || {}), ...clone(data) } : clone(data));
+    }
     async update(patch: Data) {
         if (!fakeStore.has(this.path)) throw new Error(`nema dokumenta ${this.path}`);
         fakeStore.set(this.path, { ...fakeStore.get(this.path), ...clone(patch) });

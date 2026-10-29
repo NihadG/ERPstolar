@@ -6,15 +6,38 @@
 // Postavke su iza prijave, pa se ovdje vidi tabela kakva će biti: dobavljač s pet
 // adresa (komercijalista, referent, adresa samo za račune), gradilište s ulogama,
 // uvoz iz dobavljača i projekata. Svi podaci su izmišljeni (domene .example).
-// Upis je u memoriji. ?w=380 suzi okvir kao na telefonu; ?empty=1 prazno stanje.
+// Upis je u memoriji. ?w=380 suzi okvir kao na telefonu; ?empty=1 prazno stanje;
+// ?gmail=off|on|expired|none stanje Gmail kartice (zadano: on).
 // U produkciji ruta ne postoji.
 // ════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
 import { notFound } from 'next/navigation';
 import ContactsView from '@/components/settings/ContactsView';
-import { importCandidates, normalizeEmail, staleDefaults } from '@/lib/contacts';
+import GmailCard, { type GmailBusy, type GmailState } from '@/components/settings/GmailCard';
+import { importCandidates, normalizeEmail, singleDefaults, staleDefaults, type ImportCandidate } from '@/lib/contacts';
+import { gmailContactCandidates } from '@/lib/email/gmailContacts';
 import type { Contact } from '@/lib/types';
+
+const GMAIL: Record<string, GmailState> = {
+    none: { configured: false, connected: false, email: null, sendAs: null, status: null },
+    off: { configured: true, connected: false, email: null, sendAs: null, status: null },
+    expired: { configured: true, connected: true, email: 'ja@luxco-demo.example', sendAs: 'ja@luxco-demo.example', status: 'reconnect' },
+    on: { configured: true, connected: true, email: 'ja@luxco-demo.example', sendAs: 'ja@luxco-demo.example', status: 'ok' },
+};
+
+/** Izmišljena poslana pošta — šta bi /api/email/google/contacts pročitao. */
+const SENT = [
+    { to: '"Emir Hadžić" <emir.hadzic@ploce-demo.example>', date: '2026-10-22T08:00:00Z', snippet: 'Pozdrav Emire, potvrđujem' },
+    { to: 'Amra Delić <amra.delic@staklo-demo.example>', date: '2026-10-14T08:00:00Z', snippet: 'Pozdrav Amra, u prilogu je narudžba' },
+    { to: 'Amra Delić <amra.delic@staklo-demo.example>', date: '2026-09-30T08:00:00Z', snippet: 'Hvala Amra' },
+    { to: 'Mirza Avdić <mirza.avdic@staklo-demo.example>', date: '2026-10-02T08:00:00Z', snippet: 'Pozdrav Mirza' },
+    { to: 'Dario Pilav <dario.pilav@boja-demo.example>', date: '2026-10-19T07:00:00Z', snippet: 'Poštovani,', cc: 'ured@luxco-demo.example' },
+    { to: 'Lejla Kapetanović <lejla.k@hotel-demo.example>', date: '2026-10-11T07:00:00Z', snippet: 'Poštovana,' },
+    { to: 'Lejla Kapetanović <lejla.k@hotel-demo.example>', date: '2026-10-16T07:00:00Z', snippet: 'Poštovana,' },
+    { to: 'jednom@nepoznato.example', date: '2026-08-01T07:00:00Z', snippet: 'Šaljem' },
+    { to: 'no-reply@banka.example', date: '2026-10-01T07:00:00Z' },
+];
 
 export const dynamic = 'force-dynamic';
 
@@ -59,16 +82,36 @@ export default function ContactsPreview() {
     const [width, setWidth] = useState<number | null>(null);
     const [contacts, setContacts] = useState<Contact[]>(SEED);
     const [mounted, setMounted] = useState(false);
+    const [gmail, setGmail] = useState<GmailState>(GMAIL.on);
+    const [busy, setBusy] = useState<GmailBusy>(null);
+    const [fromMail, setFromMail] = useState<ImportCandidate[]>([]);
+    const [scanned, setScanned] = useState<number | null>(null);
+    const [reveal, setReveal] = useState(0);
 
     useEffect(() => {
         const q = new URLSearchParams(window.location.search);
         const w = Number(q.get('w'));
         if (w > 0) setWidth(w);
         if (q.get('empty')) setContacts([]);
+        if (GMAIL[q.get('gmail') || '']) setGmail(GMAIL[q.get('gmail')!]);
         setMounted(true);
     }, []);
 
-    const candidates = useMemo(() => importCandidates(SUPPLIERS, PROJECTS, contacts), [contacts]);
+    const candidates = useMemo(() => {
+        const own = importCandidates(SUPPLIERS, PROJECTS, contacts);
+        const known = new Set([...contacts.map(c => normalizeEmail(c.Email)), ...own.map(c => c.draft.Email)]);
+        return [...own, ...fromMail.filter(c => !known.has(c.draft.Email))];
+    }, [contacts, fromMail]);
+
+    async function onSuggest() {
+        setBusy('suggest');
+        await new Promise(r => setTimeout(r, 400));
+        const list = gmailContactCandidates(SENT, { own: ['ja@luxco-demo.example', 'ured@luxco-demo.example'], contacts, suppliers: SUPPLIERS });
+        setFromMail(list);
+        setScanned(SENT.length);
+        if (list.length) setReveal(n => n + 1);
+        setBusy(null);
+    }
 
     async function onSave(patch: Partial<Contact>) {
         setContacts(prev => {
@@ -93,7 +136,7 @@ export default function ContactsPreview() {
     }
 
     async function onImport(drafts: Omit<Contact, 'Contact_ID' | 'Organization_ID' | 'Created_At'>[]) {
-        setContacts(prev => [...prev, ...drafts.map((d, i) => ({
+        setContacts(prev => [...prev, ...singleDefaults(drafts, prev).map((d, i) => ({
             ...d, Contact_ID: `imp-${prev.length + i}`, Organization_ID: 'demo', Created_At: new Date().toISOString(),
         }))]);
     }
@@ -112,6 +155,17 @@ export default function ContactsPreview() {
                     onSave={onSave}
                     onDelete={onDelete}
                     onImport={onImport}
+                    revealImport={reveal}
+                    top={
+                        <GmailCard
+                            state={gmail} busy={busy}
+                            lastScan={scanned === null ? null : { scanned, found: candidates.filter(c => c.source.startsWith('Gmail')).length }}
+                            onConnect={() => setGmail(GMAIL.on)}
+                            onDisconnect={() => { setGmail(GMAIL.off); setFromMail([]); setScanned(null); }}
+                            onSuggest={onSuggest}
+                            onSendAs={async email => setGmail(g => ({ ...g, sendAs: email }))}
+                        />
+                    }
                 />
             </div>
         </div>

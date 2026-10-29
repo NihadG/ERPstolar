@@ -14,7 +14,7 @@
 // isti prikaz može provjeriti bez prijave (/contacts-preview).
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Contact, ContactCopyOn, ContactKind, ContactProjectLink, ContactProjectRole } from '@/lib/types';
 import {
     contactCompany, contactFullName, duplicateOf, filterContacts, groupContacts, isValidEmail,
@@ -32,6 +32,10 @@ export interface ContactsViewProps {
     onSave: (contact: Partial<Contact>) => Promise<boolean>;
     onDelete: (contact: Contact) => Promise<void>;
     onImport: (drafts: ContactDraft[]) => Promise<void>;
+    /** Iznad uvoza (npr. kartica Gmail veze). */
+    top?: ReactNode;
+    /** Promjena broja otvara listu uvoza (stigli prijedlozi iz Gmaila). */
+    revealImport?: number;
 }
 
 const KINDS: ContactKind[] = ['supplier', 'client', 'site', 'internal', 'other'];
@@ -55,7 +59,7 @@ const day = (iso?: string) => {
     return isNaN(d.getTime()) ? '' : `${d.getDate()}.${d.getMonth() + 1}.`;
 };
 
-export default function ContactsView({ contacts, suppliers, projects, candidates, loading, onSave, onDelete, onImport }: ContactsViewProps) {
+export default function ContactsView({ contacts, suppliers, projects, candidates, loading, onSave, onDelete, onImport, top, revealImport }: ContactsViewProps) {
     const [kind, setKind] = useState<'all' | ContactKind>('all');
     const [query, setQuery] = useState('');
     const [view, setView] = useState<View>('groups');
@@ -63,7 +67,10 @@ export default function ContactsView({ contacts, suppliers, projects, candidates
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
-    const [skipped, setSkipped] = useState<Set<number>>(new Set());
+    /** Ručno (od)štiklirano po adresi; ostalo prati `preselect` prijedloga. */
+    const [picks, setPicks] = useState<Map<string, boolean>>(new Map());
+
+    useEffect(() => { if (revealImport) setImportOpen(true); }, [revealImport]);
 
     const supplierNames = useMemo(() => new Map(suppliers.map(s => [s.Supplier_ID, s.Name])), [suppliers]);
     const supplierName = (id: string) => supplierNames.get(id);
@@ -125,11 +132,13 @@ export default function ContactsView({ contacts, suppliers, projects, candidates
         await onDelete(c);
     }
 
-    const picked = candidates.filter((_, i) => !skipped.has(i));
+    const isPicked = (c: ImportCandidate) => picks.get(c.draft.Email) ?? c.preselect !== false;
+    const picked = candidates.filter(isPicked);
+    const fromMail = candidates.filter(c => c.source.startsWith('Gmail')).length;
     async function runImport() {
         await onImport(picked.map(c => c.draft));
         setImportOpen(false);
-        setSkipped(new Set());
+        setPicks(new Map());
     }
 
     const editor = draft && (
@@ -211,13 +220,17 @@ export default function ContactsView({ contacts, suppliers, projects, candidates
                 </button>
             </div>
 
+            {top}
+
             {candidates.length > 0 && (
                 <div className="ct-import">
                     <div className="ct-import-head">
                         <span className="material-icons-round">move_to_inbox</span>
                         <div>
-                            <strong>{candidates.length} {adresa(candidates.length)} iz dobavljača i projekata još {candidates.length === 1 ? 'nije' : 'nisu'} u Kontaktima</strong>
-                            <p>Preuzmi ih jednim klikom; prije toga možeš odznačiti one koje ne trebaju.</p>
+                            <strong>
+                                {candidates.length} {adresa(candidates.length)} {fromMail === candidates.length ? 'iz poslane pošte' : fromMail ? 'iz dobavljača, projekata i pošte' : 'iz dobavljača i projekata'} još {candidates.length === 1 ? 'nije' : 'nisu'} u Kontaktima
+                            </strong>
+                            <p>{fromMail ? 'Unaprijed su označeni dobavljači i oni kojima si pisao više puta. ' : ''}Preuzmi ih jednim klikom, a prije toga odznači one koji ne trebaju.</p>
                         </div>
                         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setImportOpen(o => !o)}>
                             {importOpen ? 'Zatvori' : 'Pregledaj'}
@@ -225,16 +238,21 @@ export default function ContactsView({ contacts, suppliers, projects, candidates
                     </div>
                     {importOpen && (
                         <div className="ct-import-body">
-                            {candidates.map((c, i) => (
+                            {candidates.map(c => (
                                 <label key={c.draft.Email} className="ct-import-row">
                                     <input
-                                        type="checkbox" checked={!skipped.has(i)}
-                                        onChange={() => setSkipped(s => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
+                                        type="checkbox" checked={isPicked(c)}
+                                        onChange={() => setPicks(m => new Map(m).set(c.draft.Email, !isPicked(c)))}
                                     />
                                     <span className="ct-import-name">{[c.draft.First_Name, c.draft.Last_Name].filter(Boolean).join(' ') || c.draft.Company || '—'}</span>
                                     <span className="ct-email">{c.draft.Email}</span>
-                                    <span className="ct-sub">{c.source}</span>
-                                    {c.draft.Is_Default && <span className="ct-chip amber">★ glavni</span>}
+                                    <span className="ct-sub">
+                                        {c.draft.Supplier_ID && c.source.startsWith('Gmail') ? `${supplierName(c.draft.Supplier_ID) || 'Dobavljač'} · ` : ''}{c.source}
+                                    </span>
+                                    <span className="ct-chips">
+                                        {c.draft.Is_Default && <span className="ct-chip amber">★ glavni</span>}
+                                        {c.draft.Address_Form && <span className="ct-chip muted" title="Kako mu se obraćaš u mailovima">{c.draft.Address_Form}</span>}
+                                    </span>
                                 </label>
                             ))}
                             <div className="ct-import-foot">

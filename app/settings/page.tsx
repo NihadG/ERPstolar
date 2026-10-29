@@ -94,6 +94,25 @@ export default function SettingsPage() {
     const [googleSettings, setGoogleSettings] = useState<GoogleIntegrationSettings>({});
     const [googleBusy, setGoogleBusy] = useState(false);
 
+    // Povratak sa Googleove saglasnosti (Gmail veza): /settings?section=kontakti&gmail=ok
+    useEffect(() => {
+        const q = new URLSearchParams(window.location.search);
+        const section = q.get('section');
+        const gmail = q.get('gmail');
+        if (section) setActiveSection(section);
+        if (gmail) {
+            const outcome: Record<string, [string, 'success' | 'error']> = {
+                ok: ['Gmail je povezan.', 'success'],
+                denied: ['Povezivanje s Gmailom je otkazano.', 'error'],
+                scopes: ['Za slanje i čitanje pošte obje Gmail dozvole moraju ostati označene.', 'error'],
+                error: ['Povezivanje s Gmailom nije uspjelo. Pokušaj ponovo.', 'error'],
+            };
+            const [text, type] = outcome[gmail] || outcome.error;
+            showMessage(text, type);
+        }
+        if (section || gmail) window.history.replaceState(null, '', window.location.pathname);
+    }, []);
+
     // Load settings from Firestore (with localStorage fallback)
     useEffect(() => {
         async function loadSettings() {

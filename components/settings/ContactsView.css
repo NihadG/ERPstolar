@@ -71,7 +71,7 @@
 
 .ct-import-row {
     display: grid;
-    grid-template-columns: 22px minmax(120px, 1fr) minmax(180px, 1.5fr) minmax(120px, 1fr) auto;
+    grid-template-columns: 22px minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1.2fr) 96px;
     align-items: center;
     gap: 10px;
     padding: 7px 10px;
@@ -516,4 +516,66 @@
     .ct-group .ct-editor { margin: 8px 6px; }
     .ct-editor { padding: 14px 12px; }
     .ct-editor-foot .btn { flex: 1; justify-content: center; }
+}
+
+/* ── Kartica Gmail veze ────────────────────────────────────────────── */
+
+.gm-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+}
+
+.gm-card > .material-icons-round { font-size: 24px; flex: none; color: var(--accent); }
+.gm-card.muted > .material-icons-round { color: var(--text-tertiary); }
+.gm-card.ok > .material-icons-round { color: #248a3d; }
+.gm-card.warn { background: var(--warning-bg); border-color: rgba(255, 149, 0, 0.35); }
+.gm-card.warn > .material-icons-round { color: var(--cm-warn-text); }
+
+.gm-main { flex: 1; min-width: 0; }
+.gm-main strong { display: block; font-size: 14px; color: var(--text-primary); overflow-wrap: anywhere; }
+.gm-main p { margin: 3px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.gm-main b { color: var(--text-primary); font-weight: 600; }
+.gm-main code { font-size: 12px; background: var(--surface); padding: 1px 5px; border-radius: 4px; }
+.gm-card.muted p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+.gm-hint { color: var(--text-tertiary); font-size: 12px; }
+.gm-scan { color: #248a3d !important; }
+
+.gm-alias { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.gm-alias input {
+    height: 30px;
+    min-width: 0;
+    flex: 1 1 200px;
+    max-width: 280px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    font-size: 13px;
+}
+.gm-alias input:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
+
+.gm-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.gm-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.gm-actions .btn .material-icons-round { font-size: 17px; }
+.ct-link.danger { color: var(--error); }
+.ct-link.danger:hover { background: var(--error-bg); }
+.ct-link:disabled { opacity: 0.5; cursor: default; }
+
+@container ct (max-width: 720px) {
+    .gm-card { flex-wrap: wrap; align-items: flex-start; }
+    .gm-card > .gm-main { flex-basis: calc(100% - 40px); }
+    .gm-card > .btn, .gm-actions { width: 100%; align-items: stretch; }
+    .gm-card > .btn, .gm-actions .btn { justify-content: center; }
+    .gm-actions .ct-link { align-self: center; }
+}
+
+.ct-import-row > .ct-chips { justify-content: flex-end; }
+@container ct (max-width: 720px) {
+    .ct-import-row > .ct-chips { justify-content: flex-start; }
 }
