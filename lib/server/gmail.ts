@@ -47,6 +47,8 @@ export interface EmailAccount {
     Email: string;
     /** Adresa u polju „Od" (potvrđeni alias u Gmailu, npr. nihad@firma.ba); prazno = Email. */
     Send_As?: string;
+    /** Potpis koji ERP dodaje na kraj svakog maila; prazno = „Srdačno, ime". */
+    Signature?: string;
     Refresh_Token_Enc: string;
     Scopes: string[];
     Status: 'ok' | 'reconnect';
@@ -139,6 +141,7 @@ export async function saveEmailAccount(input: {
         Email: input.email,
         // Isti Google nalog zadržava izabrani „šalje kao"; novi nalog kreće od svoje adrese.
         ...(prev?.Send_As && prev.Email === input.email ? { Send_As: prev.Send_As } : {}),
+        ...(prev?.Signature ? { Signature: prev.Signature } : {}),
         Refresh_Token_Enc: encryptSecret(input.refreshToken),
         Scopes: input.scopes,
         Status: 'ok',
@@ -151,7 +154,7 @@ export async function saveEmailAccount(input: {
     return account;
 }
 
-export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'History_ID' | 'Status' | 'Last_Error'>>) {
+export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'Signature' | 'History_ID' | 'Status' | 'Last_Error'>>) {
     await accounts().doc(uid).set({ ...patch, Updated_At: new Date().toISOString() }, { merge: true });
 }
 
@@ -315,4 +318,11 @@ const HTTP_STATUS: Record<GmailErrorCode, number> = { 'not-configured': 503, 'no
 /** GmailError → odgovor s porukom i stabilnim `code` (Postavke po njemu nude ponovno povezivanje). */
 export function gmailErrorJson(e: GmailError): { body: { error: string; code: GmailErrorCode }; status: number } {
     return { body: { error: e.message, code: e.code }, status: HTTP_STATUS[e.code] };
+}
+
+/** Pošiljaoci poruka u niti (zaglavlje From) — za provjeru vraćenog maila. */
+export async function getThreadSenders(uid: string, threadId: string): Promise<string[]> {
+    const t = await gmailApi<{ messages?: { payload?: { headers?: { name: string; value: string }[] } }[] }>(
+        uid, `/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=From`);
+    return (t.messages || []).map(m => (m.payload?.headers || []).find(h => h.name.toLowerCase() === 'from')?.value || '');
 }

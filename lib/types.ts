@@ -418,6 +418,13 @@ export interface Order {
     Sent_At?: string;
     /** Datum slanja nije poznat (nacrt primljen porukom „stiglo je…") — ne uči rok isporuke dok ga korisnik ne kaže. */
     Sent_At_Assumed?: boolean;
+    /** POŠTA (od 10/2026): narudžba poslana mailom iz ERP-a ili bota (lib/server/emailDrafts.ts). */
+    Emailed_At?: string;
+    Emailed_To?: string[];
+    /** Gmail nit — odgovori dobavljača u njoj se vežu za ovu narudžbu bez pogađanja. */
+    Gmail_Thread_ID?: string;
+    /** Mail se vratio (adresa ne postoji) — narudžba možda nije stigla. */
+    Email_Bounced?: boolean;
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
@@ -510,6 +517,49 @@ export interface Contact {
     Notes?: string;
     Last_Emailed_At?: string;
     Created_At: string;
+}
+
+// ============================================
+// NACRT MAILA — jedan put za ERP i bota (lib/server/emailDrafts.ts)
+//
+// Nacrt se pravi, pregleda i mijenja, a šalje tek na klik („Pošalji").
+// ERP bira primaoca iz Kontakata i slaže naslov, prilog i potpis; model
+// smije pisati samo tijelo. Poslan mail se ne može poništiti.
+// ============================================
+
+export interface EmailDraftAddress {
+    name?: string;
+    email: string;
+}
+
+export type EmailDraftPurpose = 'order' | 'general';
+export type EmailDraftStatus = 'draft' | 'sent' | 'failed' | 'cancelled';
+
+export interface EmailDraft {
+    Draft_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Purpose: EmailDraftPurpose;
+    /** Narudžba (Purpose 'order'). */
+    Entity_ID?: string;
+    To: EmailDraftAddress[];
+    Cc: EmailDraftAddress[];
+    /** Više mogućih primalaca, nijedan glavni — korisnik bira. */
+    Candidates?: EmailDraftAddress[];
+    Subject: string;
+    Body: string;
+    Attachments: { kind: 'order'; id: string; filename: string }[];
+    Status: EmailDraftStatus;
+    Source: 'app' | 'telegram';
+    Created_At: string;
+    Updated_At: string;
+    Sent_At?: string;
+    Gmail_Message_ID?: string;
+    Thread_ID?: string;
+    Error?: string;
+    /** Provjera vraćenog maila (MAILER-DAEMON) još nije gotova. */
+    Bounce_Pending?: boolean;
+    Bounced?: boolean;
 }
 
 export interface Worker {

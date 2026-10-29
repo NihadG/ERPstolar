@@ -22,6 +22,7 @@ import OrderItemGroupList from './OrderItemGroupList';
 import { materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { allocationsAfterOrderQuantityChange, orderItemAllocations, planMaterialGroupOrder, splitMaterialQuantity } from '@/lib/orderMaterialAllocation';
 import OrdersPulse from '@/components/materials/OrdersPulse';
+import EmailDraftModal from '@/components/email/EmailDraftModal';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -63,6 +64,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [dateFromFilter, setDateFromFilter] = useState('');
     const [dateToFilter, setDateToFilter] = useState('');
     const [showReceived, setShowReceived] = useState(false);
+
+    // Slanje narudžbe mailom (Gmail korisnika) — components/email/EmailDraftModal
+    const [emailOrderId, setEmailOrderId] = useState<string | null>(null);
 
     // Create Order Wizard
     const [wizardModal, setWizardModal] = useState(false);
@@ -1846,6 +1850,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 Printaj
                                                             </div>
 
+                                                            <div className="dropdown-item" onClick={() => setEmailOrderId(order.Order_ID)}>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>{order.Email_Bounced ? 'mark_email_unread' : order.Emailed_At ? 'forward_to_inbox' : 'mail'}</span>
+                                                                {order.Emailed_At ? 'Pošalji emailom ponovo' : 'Pošalji emailom'}
+                                                            </div>
+
                                                             {order.Status.toLowerCase() === 'nacrt' && (
                                                                 <div className="dropdown-item" onClick={() => handleSendOrder(order.Order_ID)}>
                                                                     <span className="material-icons-round" style={{ fontSize: 18 }}>send</span>
@@ -1993,6 +2002,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 setGroupOnStock={setGroupOnStock}
                 orderName={orderName}
                 setOrderName={setOrderName}
+            />
+
+            <EmailDraftModal
+                isOpen={!!emailOrderId}
+                orderId={emailOrderId}
+                onClose={() => setEmailOrderId(null)}
+                onSent={res => {
+                    setEmailOrderId(null);
+                    showToast(`Narudžba ${res.orderNumber || ''} poslana: ${res.to.join(', ')}${res.orderSent ? ' · prešla u Poslano' : ''}`, 'success');
+                    onRefresh('orders', 'projects');
+                }}
             />
 
             {/* Delete Order Confirmation Modal */}

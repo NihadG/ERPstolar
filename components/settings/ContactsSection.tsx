@@ -151,6 +151,14 @@ export default function ContactsSection({ showMessage }: Props) {
         });
     };
 
+    const onSignature = async (text: string) => {
+        await gmailCall('signature', async () => {
+            await apiPatch('/api/email/google', { signature: text });
+            notify('Potpis je sačuvan.', 'success');
+            await loadGmail();
+        });
+    };
+
     return (
         <ContactsView
             contacts={contacts}
@@ -166,7 +174,7 @@ export default function ContactsSection({ showMessage }: Props) {
                 <GmailCard
                     state={gmail} busy={busy}
                     lastScan={scanned === null ? null : { scanned, found: candidates.filter(c => c.source.startsWith('Gmail')).length }}
-                    onConnect={onConnect} onDisconnect={onDisconnect} onSuggest={onSuggest} onSendAs={onSendAs}
+                    onConnect={onConnect} onDisconnect={onDisconnect} onSuggest={onSuggest} onSendAs={onSendAs} onSignature={onSignature}
                 />
             }
         />

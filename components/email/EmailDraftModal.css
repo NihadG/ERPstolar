@@ -1,0 +1,159 @@
+/* ═══════════════════════════════════════════════════════════════════
+   „POŠALJI EMAILOM" — prefiks ed-. Globalno: .btn* i tokeni iz globals.css.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ed-form { display: flex; flex-direction: column; gap: 14px; }
+
+.ed-loading { padding: 30px 0; text-align: center; color: var(--text-secondary); font-size: 14px; }
+
+.ed-field { display: flex; flex-direction: column; gap: 5px; }
+
+.ed-field > span {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.ed-field input,
+.ed-field textarea {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    background: var(--background);
+    font: inherit;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.ed-field textarea { resize: vertical; line-height: 1.5; min-height: 160px; }
+
+.ed-field input:focus,
+.ed-field textarea:focus,
+.ed-chips:focus-within {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--cm-focus-ring);
+}
+
+.ed-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--cm-h-control);
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    background: var(--background);
+}
+
+.ed-chips input {
+    flex: 1 1 160px;
+    min-width: 120px;
+    border: none;
+    padding: 4px;
+    box-shadow: none !important;
+}
+
+.ed-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px 2px 10px;
+    border-radius: var(--cm-r-pill);
+    background: var(--accent-light);
+    color: #0058b0;
+    font-size: 13px;
+}
+
+.ed-chip button {
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 16px;
+    line-height: 1;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.ed-chip button:hover { background: rgba(0, 113, 227, 0.15); }
+
+.ed-hint {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: var(--cm-r-control);
+    background: var(--surface);
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.ed-hint.warn { background: var(--warning-bg); color: var(--cm-warn-text); }
+
+.ed-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.ed-pill {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-pill);
+    background: var(--background);
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.ed-pill:hover { border-color: var(--accent); color: var(--accent); }
+
+.ed-attachment {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 9px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--cm-r-control);
+    font-size: 13.5px;
+    color: var(--text-primary);
+}
+
+.ed-attachment .material-icons-round { color: #d93025; font-size: 20px; }
+.ed-sub { color: var(--text-tertiary); font-size: 12px; }
+
+.ed-note { margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+.ed-problem {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: var(--error-bg);
+    color: #b3261e;
+}
+
+.ed-problem.gmail { background: var(--level-1-accent); color: var(--text-primary); }
+.ed-problem .material-icons-round { font-size: 24px; }
+.ed-problem strong { display: block; font-size: 14px; }
+.ed-problem p { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); }
+.ed-problem a { color: var(--accent); font-weight: 600; }
+
+.ed-error {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 12px;
+    border-radius: var(--cm-r-control);
+    background: var(--error-bg);
+    color: #b3261e;
+    font-size: 13px;
+}
+
+.ed-error .material-icons-round { font-size: 18px; }
+
+.ed-chips.invalid,
+.ed-chips.invalid:focus-within { border-color: var(--error); box-shadow: 0 0 0 3px var(--error-bg); }

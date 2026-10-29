@@ -579,3 +579,15 @@
 @container ct (max-width: 720px) {
     .ct-import-row > .ct-chips { justify-content: flex-start; }
 }
+
+.gm-signature { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-width: 420px; }
+.gm-signature textarea {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    font: inherit;
+    font-size: 13px;
+    resize: vertical;
+}
+.gm-signature textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
+.gm-sig-preview { color: var(--text-primary); }

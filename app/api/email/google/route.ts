@@ -2,7 +2,7 @@
 // /api/email/google — Gmail veza prijavljenog korisnika
 //
 //   GET     { configured, connected, email, sendAs, status, connectedAt }
-//   PATCH   { sendAs }   adresa u polju „Od" (potvrđeni alias u Gmailu)
+//   PATCH   { sendAs?, signature? }   „Od" (potvrđeni alias u Gmailu) i potpis
 //   DELETE  opozovi token kod Googlea i obriši vezu
 // ════════════════════════════════════════════════════════════════════
 
@@ -26,6 +26,7 @@ export async function GET(req: Request) {
             sendAs: mine?.Send_As || mine?.Email || null,
             status: mine?.Status || null,
             connectedAt: mine?.Connected_At || null,
+            signature: mine?.Signature || '',
         }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (e) {
         return errorResponse(e);
@@ -35,13 +36,18 @@ export async function GET(req: Request) {
 export async function PATCH(req: Request) {
     try {
         const caller = await requireStaff(req);
-        const body = await req.json().catch(() => ({})) as { sendAs?: unknown };
-        const sendAs = normalizeEmail(typeof body.sendAs === 'string' ? body.sendAs : '');
-        if (!isValidEmail(sendAs)) throw new HttpError(400, 'Unesite ispravnu adresu.');
+        const body = await req.json().catch(() => ({})) as { sendAs?: unknown; signature?: unknown };
         const account = await getEmailAccount(caller.uid);
         if (!account || account.Organization_ID !== caller.orgId) throw new HttpError(409, 'Gmail nije povezan.');
-        await updateEmailAccount(caller.uid, { Send_As: sendAs === account.Email ? '' : sendAs });
-        return NextResponse.json({ sendAs });
+        if (typeof body.signature === 'string') {
+            await updateEmailAccount(caller.uid, { Signature: body.signature.trim().slice(0, 1000) });
+        }
+        if (body.sendAs !== undefined) {
+            const sendAs = normalizeEmail(typeof body.sendAs === 'string' ? body.sendAs : '');
+            if (!isValidEmail(sendAs)) throw new HttpError(400, 'Unesite ispravnu adresu.');
+            await updateEmailAccount(caller.uid, { Send_As: sendAs === account.Email ? '' : sendAs });
+        }
+        return NextResponse.json({ ok: true });
     } catch (e) {
         return errorResponse(e);
     }
