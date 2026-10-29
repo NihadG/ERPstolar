@@ -191,6 +191,67 @@ function matchProcessExact(name: string, vocabulary: string[], preferred: string
 }
 
 /**
+ * Rečeni naziv pokriva SVE riječi procesa: „izrada podkonstrukcije" → Izrada podkonstrukcije,
+ * „pakuje" → Pakovanje. „montaža" → Montaža Kerrocka nije (Kerrock nije rečen).
+ */
+export function processFullySaid(said: string, process: string): boolean {
+    return processQueryVariants(said).some(v => foldText(v) === foldText(process) || processCoverage(process, v) >= 1);
+}
+
+/**
+ * Procesi koji pristaju rečenom nazivu (za pitanje kad nije jasno): iz plana prvo,
+ * pa iz kataloga — „montaža" → Montaža Kerrocka, Probna montaža.
+ */
+export function processCandidates(name: string, vocabulary: string[], preferred: string[] = [], max = 3): string[] {
+    const inPlan = new Set(preferred.map(p => foldText(p)));
+    const fits = new Map<string, number>();
+    for (const variant of processQueryVariants(name)) {
+        for (const v of vocabulary) {
+            const s = Math.min(processCoverage(variant, v), processCoverage(v, variant) + 0.25);
+            if (s >= 0.75) fits.set(v, Math.max(fits.get(v) || 0, s));
+        }
+    }
+    return Array.from(fits.entries())
+        .sort((a, b) => Number(inPlan.has(foldText(b[0]))) - Number(inPlan.has(foldText(a[0]))) || b[1] - a[1] || a[0].length - b[0].length)
+        .map(([v]) => v)
+        .slice(0, max);
+}
+
+/**
+ * Raniji koraci stavke (prethodnici procesa u grafu) koji nisu ni počeli. Upis procesa bi
+ * ih pretpostavio završenim — kad ih je mnogo, a proces je rečen samo djelimično
+ * („montaža" za Montažu Kerrocka prije krojenja Kerrocka), ERP pita umjesto da pogađa.
+ * Proces van plana stavke → [] (ide na svoje mjesto po katalogu, kao i do sada).
+ */
+export function unstartedUpstream(graph: ProcessGraph | undefined, itemId: string, processName: string, processes: ItemProcessStatus[] | undefined): string[] {
+    if (!graph?.nodes?.length) return [];
+    const mine = new Map(graph.nodes.filter(n => coversItem(n, itemId) && foldText(n.name) !== 'rad').map(n => [n.id, n]));
+    const target = Array.from(mine.values()).find(n => nodeMatchesProcess(n, processName));
+    if (!target) return [];
+    const before = new Set<string>();
+    const stack = [target.id];
+    while (stack.length) {
+        const cur = stack.pop()!;
+        graph.edges.forEach(e => {
+            if (e.target === cur && mine.has(e.source) && !before.has(e.source)) { before.add(e.source); stack.push(e.source); }
+        });
+    }
+    const status = (n: ProcessNode) => (processes || []).find(p => nodeMatchesProcess(n, p.Process_Name))?.Status;
+    return Array.from(before).map(id => mine.get(id)!).filter(n => status(n) !== 'Završeno' && status(n) !== 'U toku').map(n => n.name);
+}
+
+/**
+ * Od nezapočetih ranijih koraka, oni iz „trake" riječi koja NIJE rečena: „montaža" →
+ * Montaža Kerrocka, a Krojenje/Lijepljenje/Brušenje Kerrocka nisu ni počeli → pogrešan
+ * proces. „kantirao" → Kantiranje furnira poslije Furniranja je normalan tok (prazno).
+ */
+export function unsaidTrack(said: string, process: string, skipped: string[]): string[] {
+    const unsaid = tokens(foldText(process)).filter(w => w.length >= 4 && !processFullySaid(said, w));
+    if (!unsaid.length) return [];
+    return skipped.filter(name => tokens(foldText(name)).some(t => unsaid.includes(t)));
+}
+
+/**
  * Procesi iz plana stavki u grafu naloga (bez „Rad"), za prepoznavanje rečenog procesa:
  * nezavršeni prvo, pa redom toka.
  */
@@ -360,6 +421,9 @@ export function markItemProcess(
         existing.Status = 'Završeno';
         existing.Completed_At = atIso;
         existing.Started_At = existing.Started_At || atIso;
+        // Ko je završio, kad niko nije bio upisan kao da radi na procesu.
+        existing.Worker_ID = existing.Worker_ID || worker.id;
+        existing.Worker_Name = existing.Worker_Name || worker.name;
         return { processes: list, change: 'completed' };
     }
     if (existing.Status !== 'U toku') {

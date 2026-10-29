@@ -55,15 +55,58 @@ function phraseIn(phrase: string, textWords: string[]): boolean {
     return p.length > 0 && p.every(w => hit(w, textWords));
 }
 
-export function workerMentioned(text: string, w: GroundRef): boolean {
+/**
+ * Kratke riječi koje liče na nadimak (početak imena + samoglasnik), a nisu ime:
+ * „ime" (Imer), „ima", „ali", „sta"… Iz rečenica s posla, ne iz rječnika jezika.
+ */
+const NOT_NICKNAMES = new Set([
+    'ime', 'ima', 'imo', 'ali', 'ako', 'ova', 'ovo', 'ove', 'ona', 'ono', 'one', 'oni', 'sve', 'svi', 'sva', 'kad', 'kako', 'koja', 'koje',
+    'koji', 'sta', 'sto', 'tako', 'tamo', 'jos', 'samo', 'sami', 'sama', 'neka', 'neko', 'nesto', 'moze', 'mora', 'more', 'bila', 'bilo',
+    'bile', 'bili', 'dana', 'mene', 'tebe', 'sebe', 'nema', 'nije', 'meni', 'dosta', 'bolje', 'gore', 'dole', 'vani', 'malo', 'puno',
+    'jasno', 'jasna', 'nasa', 'nase', 'nasi', 'vasa', 'vase', 'vasi', 'nova', 'novo', 'nove', 'novi', 'prvo', 'prva', 'prvi', 'radi',
+    'rade', 'radio', 'radila', 'radili', 'gotovo', 'gotova', 'kuca', 'kuci', 'stanu', 'sada', 'onda', 'evo', 'eto', 'treba', 'trebao',
+]);
+
+/**
+ * Nadimak iz imena: isti početak (3 slova), ne duži od imena, završava samoglasnikom —
+ * „Kemo" za Kemala, „Meho" za Mehmeda, „Suljo" za Sulejmana, „Edo" za Edina.
+ */
+function nicknameOf(token: string, nameWord: string): boolean {
+    if (token.length < 3 || nameWord.length < 4 || token === nameWord || token.length > nameWord.length) return false;
+    if (NOT_NICKNAMES.has(token) || isGeneric(token) || !/[aeiou]$/.test(token)) return false;
+    return token.slice(0, 3) === nameWord.slice(0, 3);
+}
+
+/**
+ * Riječi iz teksta koje nisu ničije ime, a mogu biti nadimak → radnici kojima
+ * pristaju. „Kemo" → [Kemal]; dva Kemala → oba (pitanje dugmadima).
+ */
+export function workerNicknames(text: string, all: GroundRef[]): { token: string; ids: string[] }[] {
     const t = words(text);
-    return words(w.name).some(x => hit(x, t)) || (w.aliases || []).some(a => phraseIn(a, t));
+    const named = new Set(all.flatMap(w => words(w.name).filter(x => hit(x, t))));
+    const out: { token: string; ids: string[] }[] = [];
+    for (const token of Array.from(new Set(t))) {
+        if (named.has(token) || all.some(w => words(w.name).some(x => hit(x, [token])))) continue;
+        const ids = all.filter(w => words(w.name).some(x => nicknameOf(token, x))).map(w => w.id);
+        if (ids.length) out.push({ token, ids });
+    }
+    return out;
+}
+
+/**
+ * Radnik je rečen: ime ili prezime (s padežima), nadimak iz rječnika, ili — kad je
+ * poznata cijela lista radnika — nadimak koji pristaje SAMO njemu („Kemo" → Kemal).
+ */
+export function workerMentioned(text: string, w: GroundRef, all?: GroundRef[]): boolean {
+    const t = words(text);
+    if (words(w.name).some(x => hit(x, t)) || (w.aliases || []).some(a => phraseIn(a, t))) return true;
+    return !!all && workerNicknames(text, all).some(n => n.ids.length === 1 && n.ids[0] === w.id);
 }
 
 /** Imena radnika koji NISU rečeni (prazno = sve u redu). „Svi" pokriva sve. */
 export function ungroundedWorkers(text: string, all: GroundRef[], ids: string[]): string[] {
     if (mentionsEveryone(text)) return [];
-    return ids.map(id => all.find(w => w.id === id)).filter((w): w is GroundRef => !!w && !workerMentioned(text, w)).map(w => w.name);
+    return ids.map(id => all.find(w => w.id === id)).filter((w): w is GroundRef => !!w && !workerMentioned(text, w, all)).map(w => w.name);
 }
 
 /** Vrste proizvoda — same po sebi ne određuju nalog („kuhinja" ima svaki drugi klijent). */

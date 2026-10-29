@@ -159,3 +159,74 @@ export function relevantMemory<T extends { value: MemoryItem }>(items: T[], text
     [...items].sort((a, b) => b.value.Updated_At.localeCompare(a.value.Updated_At)).slice(0, recent).forEach(x => chosen.add(x));
     return items.filter(x => chosen.has(x));
 }
+
+// ─── Spisak po filteru ────────────────────────────────────────────────
+//
+// „Daj mi spisak svih ogledala koja nisu montirana na E i C lameli": model izvuče
+// predmet, lamele i stanje; filtrira i složi spisak ERP — model ga ne prepričava.
+
+export interface NotebookFilter {
+    subject?: string;
+    /** Lamela (samo slovo: „E") ili tačna lokacija („E308", „Hodnik C5", „kombi"). */
+    locations?: string[];
+    /** otvoreno (podrazumijevano) = nije postavljeno; postavljeno; sve; ili fiksno stanje. */
+    state?: string;
+}
+
+/** Lamela stavke: slovo lokacije, a za stvar na hodniku/u kombiju — stan za koji je („za C502"). */
+function letterOf(m: MemoryItem): string {
+    const own = parseLoc(m.Location || '');
+    if (own?.letter) return own.letter;
+    const target = /\bza ([a-z])\s?-?(\d{1,4})\b/.exec(foldText(m.Title || ''));
+    return target ? target[1].toUpperCase() : '';
+}
+
+export function filterNotebook(items: MemoryItem[], f: NotebookFilter): MemoryItem[] {
+    const subject = f.subject?.trim() ? stem(foldText(f.subject.trim()).split(' ')[0]) : '';
+    const wanted = (f.locations || []).map(l => l.trim()).filter(Boolean);
+    const state = f.state || 'otvoreno';
+    return items.filter(m => {
+        if (subject) {
+            const words = tokens(foldText(`${m.Subject} ${m.Title}`)).map(stem);
+            if (!words.includes(subject)) return false;
+        }
+        if (wanted.length && !wanted.some(w => (/^[a-z]$/i.test(w)
+            ? letterOf(m) === w.toUpperCase()
+            : locationKey(m.Location) === locationKey(w) || foldText(m.Location || '').includes(foldText(w))))) return false;
+        if (state === 'sve') return true;
+        if (state === 'otvoreno') return m.State === 'open' && m.State_Key !== 'info';
+        if (state === 'postavljeno') return m.State === 'resolved';
+        return m.State_Key === state;
+    });
+}
+
+const STATE_HEAD: Record<string, string> = {
+    otvoreno: 'nije postavljeno', postavljeno: 'postavljeno', sve: 'sve',
+};
+
+/** Spisak za korisnika, po lameli pa po lokaciji: „• E104 — 2 kom Ogledalo 1000x1350 · u stanu, nije postavljeno". */
+export function notebookListText(items: MemoryItem[], f: NotebookFilter, since: (iso: string) => string): string {
+    const what = f.subject?.trim() ? cap(f.subject.trim()) : 'Stavke';
+    const where = (f.locations || []).length
+        ? ` · ${(f.locations || []).every(l => /^[a-z]$/i.test(l.trim())) ? `lamel${(f.locations || []).length > 1 ? 'e' : 'a'} ` : ''}${(f.locations || []).map(l => l.trim().toUpperCase()).join(', ')}`
+        : '';
+    const state = STATE_HEAD[f.state || 'otvoreno'] || MEMORY_STATES[f.state as MemoryStateKey]?.label || f.state || '';
+    if (!items.length) return `📋 ${what} — ${state}${where}: nema ničega u bilježnici.`;
+    const qty = items.reduce((s, m) => s + (m.Quantity ?? 1), 0);
+    const places = new Set(items.map(m => locationKey(m.Location))).size;
+    const byLetter = (f.locations || []).some(l => /^[a-z]$/i.test(l.trim())) || new Set(items.map(letterOf)).size > 1;
+    const sorted = [...items].sort((a, b) => letterOf(a).localeCompare(letterOf(b))
+        || (a.Location || '').localeCompare(b.Location || '', 'bs', { numeric: true }) || a.Title.localeCompare(b.Title, 'bs'));
+    const out = [`📋 ${what} — ${state}${where}: ${qty} kom na ${places} ${places === 1 ? 'lokaciji' : 'lokacija'}`];
+    let group = '';
+    for (const m of sorted) {
+        const letter = letterOf(m);
+        if (byLetter && letter !== group) {
+            group = letter;
+            out.push(letter ? `${letter} lamela:` : 'Bez lamele:');
+        }
+        const amount = m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
+        out.push(`• ${m.Location || '—'} — ${amount}${m.Title}${m.Spec ? ` (${m.Spec})` : ''} · ${m.State_Label} · od ${since(m.Created_At)}`);
+    }
+    return out.join('\n');
+}
