@@ -38,7 +38,7 @@ export class DraftError extends Error {
     }
 }
 
-async function loadContacts(orgId: string): Promise<Contact[]> {
+export async function loadContacts(orgId: string): Promise<Contact[]> {
     const snap = await adminDb().collection(COLLECTIONS.CONTACTS).where('Organization_ID', '==', orgId).get();
     return snap.docs.map(d => d.data() as Contact);
 }
@@ -79,7 +79,16 @@ function contactOptions(contacts: Contact[], supplierName: (id?: string) => stri
     }));
 }
 
-export async function createOrderDraft(input: { orgId: string; uid: string; orderId: string; source: EmailDraft['Source']; now?: Date }): Promise<DraftView> {
+/** Standardni tekst narudžbe po obraćanju primaoca + rečenica koju je korisnik dodao. */
+function orderText(order: Order, contact: Contact | undefined, extra: string): string {
+    return [orderBody(order, addressFormFor(contact)), extra].filter(Boolean).join(' ');
+}
+
+export async function createOrderDraft(input: {
+    orgId: string; uid: string; orderId: string; source: EmailDraft['Source']; now?: Date;
+    /** Rečenica koju je korisnik rekao botu („isporuka do petka") — ide iza standardne. */
+    extraText?: string;
+}): Promise<DraftView> {
     const { orgId, uid, orderId } = input;
     const account = await getEmailAccount(uid);
     if (!account || account.Organization_ID !== orgId) throw new GmailError('not-connected', 'Gmail nije povezan — poveži ga u Postavke → Kontakti.');
@@ -112,11 +121,16 @@ export async function createOrderDraft(input: { orgId: string; uid: string; orde
     }
 
     const subject = orderSubject(order, projects, companyTag(company.name || ''));
-    const body = composeText({
+    const raw = (input.extraText || '').trim();
+    const extra = raw && !/[.!?]$/.test(raw) ? `${raw}.` : raw;
+    const parts = {
         greeting: greeting(toContact),
-        body: orderBody(order, addressFormFor(toContact)),
+        text: orderText(order, toContact, extra),
         signature: await signatureFor(uid, account.Signature),
-    });
+        auto: true,
+        extra,
+    };
+    const body = composeText({ greeting: parts.greeting, body: parts.text, signature: parts.signature });
     const now = (input.now || new Date()).toISOString();
     const draft: EmailDraft = {
         Draft_ID: randomUUID(),
@@ -129,6 +143,7 @@ export async function createOrderDraft(input: { orgId: string; uid: string; orde
         ...(candidates ? { Candidates: candidates } : {}),
         Subject: subject,
         Body: body,
+        Parts: parts,
         Attachments: [{ kind: 'order', id: orderId, filename: attachmentName(subject) }],
         Status: 'draft',
         Source: input.source,
@@ -137,6 +152,108 @@ export async function createOrderDraft(input: { orgId: string; uid: string; orde
     };
     await drafts().doc(draft.Draft_ID).set(draft);
     return { draft, contacts: contactOptions(contacts, id => (id ? supplierNames.get(id) : undefined)), recipient, orderStatus: order.Status };
+}
+
+/**
+ * Opšti mail osobi iz Kontakata („javi Selmi mailom da kasnimo s lajsnama"):
+ * naslov i tekst piše model, pozdrav i potpis ERP. Više mogućih osoba → izbor.
+ */
+export async function createContactDraft(input: {
+    orgId: string; uid: string; recipients: Contact[]; subject: string; text: string; source: EmailDraft['Source']; now?: Date;
+}): Promise<EmailDraft> {
+    const { orgId, uid } = input;
+    const account = await getEmailAccount(uid);
+    if (!account || account.Organization_ID !== orgId) throw new GmailError('not-connected', 'Gmail nije povezan — poveži ga u Postavke → Kontakti.');
+    if (!input.recipients.length) throw new DraftError('Nema primaoca.');
+    const single = input.recipients.length === 1 ? input.recipients[0] : undefined;
+    const parts = {
+        greeting: greeting(single),
+        text: input.text.trim(),
+        signature: await signatureFor(uid, account.Signature),
+    };
+    const now = (input.now || new Date()).toISOString();
+    const draft: EmailDraft = {
+        Draft_ID: randomUUID(),
+        Organization_ID: orgId,
+        Owner_UID: uid,
+        Purpose: 'general',
+        To: single ? [addr(single)] : [],
+        Cc: [],
+        ...(single ? {} : { Candidates: input.recipients.slice(0, 6).map(addr) }),
+        Subject: input.subject.replace(/\s+/g, ' ').trim().slice(0, 200),
+        Body: composeText({ greeting: parts.greeting, body: parts.text, signature: parts.signature }),
+        Parts: parts,
+        Attachments: [],
+        Status: 'draft',
+        Source: input.source,
+        Created_At: now,
+        Updated_At: now,
+    };
+    await drafts().doc(draft.Draft_ID).set(draft);
+    return draft;
+}
+
+/** Izabran primalac iz ponuđenih: pozdrav se prilagodi njemu (ti/vi, ime). */
+export async function chooseRecipient(orgId: string, uid: string, draftId: string, index: number): Promise<EmailDraft> {
+    const d = await getDraft(orgId, uid, draftId);
+    if (d.Status !== 'draft') throw new DraftError('Nacrt je već poslan ili otkazan.', 409);
+    const pick = d.Candidates?.[index];
+    if (!pick) throw new DraftError('Taj izbor više ne postoji.', 404);
+    const contact = (await loadContacts(orgId)).find(c => normalizeEmail(c.Email) === pick.email);
+    const next: Partial<EmailDraft> = { To: [pick], Candidates: [], Updated_At: new Date().toISOString() };
+    if (d.Parts) {
+        const parts = { ...d.Parts, greeting: greeting(contact) };
+        // Tekst koji je ERP složio za narudžbu prati obraćanje izabrane osobe (ti/vi); ručno pisan ostaje.
+        if (d.Purpose === 'order' && d.Parts.auto && d.Entity_ID) {
+            const order = await getOrderWithItems(orgId, d.Entity_ID);
+            if (order) parts.text = orderText(order, contact, d.Parts.extra || '');
+        }
+        next.Parts = parts;
+        next.Body = composeText({ greeting: parts.greeting, body: parts.text, signature: parts.signature });
+    }
+    await drafts().doc(draftId).set(next, { merge: true });
+    return { ...d, ...next } as EmailDraft;
+}
+
+/** Novi tekst maila (bez pozdrava i potpisa — njih zadržava ERP). */
+export async function setDraftText(orgId: string, uid: string, draftId: string, text: string): Promise<EmailDraft> {
+    const d = await getDraft(orgId, uid, draftId);
+    if (d.Status !== 'draft' && d.Status !== 'failed') throw new DraftError('Nacrt je već poslan ili otkazan.', 409);
+    const clean = text.trim().slice(0, 10_000);
+    if (!clean) throw new DraftError('Tekst je prazan.');
+    const parts = { greeting: d.Parts?.greeting || '', text: clean, signature: d.Parts?.signature || '', auto: false };
+    const next: Partial<EmailDraft> = {
+        Parts: parts,
+        Body: composeText({ greeting: parts.greeting, body: parts.text, signature: parts.signature }),
+        Awaiting_Text_Since: null,
+        Updated_At: new Date().toISOString(),
+    };
+    await drafts().doc(draftId).set(next, { merge: true });
+    return { ...d, ...next } as EmailDraft;
+}
+
+const AWAIT_MS = 15 * 60_000;
+
+/** „Izmijeni tekst" na Telegramu: sljedeća poruka (u 15 min) postaje tekst ovog nacrta. */
+export async function awaitDraftText(orgId: string, uid: string, draftId: string, now = new Date()): Promise<void> {
+    const d = await getDraft(orgId, uid, draftId);
+    if (d.Status !== 'draft' && d.Status !== 'failed') throw new DraftError('Nacrt je već poslan ili otkazan.', 409);
+    // Samo jedan nacrt čeka tekst.
+    const others = await drafts().where('Owner_UID', '==', uid).get();
+    await Promise.all(others.docs
+        .filter(doc => (doc.data() as EmailDraft).Awaiting_Text_Since && doc.id !== draftId)
+        .map(doc => doc.ref.set({ Awaiting_Text_Since: null }, { merge: true })));
+    await drafts().doc(draftId).set({ Awaiting_Text_Since: now.toISOString() }, { merge: true });
+}
+
+/** Nacrt koji čeka novi tekst (klik prije najviše 15 min), ako postoji. */
+export async function draftAwaitingText(orgId: string, uid: string, now = new Date()): Promise<EmailDraft | null> {
+    const snap = await drafts().where('Owner_UID', '==', uid).get();
+    const waiting = snap.docs.map(d => d.data() as EmailDraft)
+        .filter(d => d.Organization_ID === orgId && (d.Status === 'draft' || d.Status === 'failed') && d.Awaiting_Text_Since
+            && now.getTime() - new Date(d.Awaiting_Text_Since).getTime() <= AWAIT_MS)
+        .sort((a, b) => String(b.Awaiting_Text_Since).localeCompare(String(a.Awaiting_Text_Since)));
+    return waiting[0] || null;
 }
 
 export async function getDraft(orgId: string, uid: string, draftId: string): Promise<EmailDraft> {
@@ -166,7 +283,8 @@ export async function updateDraft(orgId: string, uid: string, draftId: string, p
     if (patch.To !== undefined) next.To = cleanAddresses(patch.To, 'Kome');
     if (patch.Cc !== undefined) next.Cc = cleanAddresses(patch.Cc, 'Kopija');
     if (typeof patch.Subject === 'string') next.Subject = patch.Subject.replace(/\s+/g, ' ').trim().slice(0, 300);
-    if (typeof patch.Body === 'string') next.Body = patch.Body.slice(0, 20_000);
+    // Ručno prepravljen cijeli tekst: dijelovi (pozdrav/tekst/potpis) više ne važe.
+    if (typeof patch.Body === 'string' && patch.Body !== d.Body) { next.Body = patch.Body.slice(0, 20_000); next.Parts = null; }
     if (next.Subject !== undefined && d.Purpose === 'order') {
         next.Attachments = d.Attachments.map(a => ({ ...a, filename: attachmentName(next.Subject || d.Subject) }));
     }

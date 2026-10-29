@@ -49,7 +49,10 @@ import {
     type MemoryStateKey,
 } from './memoryRules';
 import { materialTypeFromName } from '@/lib/productProcesses';
-import type { Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import type { Contact, Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import { createContactDraft, createOrderDraft, DraftError, loadContacts } from '@/lib/server/emailDrafts';
+import { GmailError } from '@/lib/server/gmail';
+import { isValidEmail, normalizeEmail, searchContacts } from '@/lib/contacts';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -385,6 +388,59 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'email_order',
+        description: 'Narudžba MAILOM dobavljaču („pošalji Amri narudžbu ogledala mailom", „mailaj narudžbu Staklu"). ERP napravi NACRT: primalac iz Kontakata, PDF narudžbe, naslov i potpis — i pokaže ga korisniku s dugmetom „Pošalji". Ti ništa ne šalješ i NIKAD ne kažeš da je poslano. Narudžba se bira kao kod order_pdf (bez broja → zadnja za projekat/dobavljača). text samo kad korisnik traži da se nešto doda („napiši da isporuka treba do petka" → „Isporuka nam treba do petka").',
+        input_schema: {
+            type: 'object',
+            properties: {
+                number: { ...str, description: 'Broj narudžbe ili njegov dio.' },
+                project: { ...str, description: 'Oznaka P#.' },
+                supplier: str,
+                text: { ...str, description: 'Dodatna rečenica u ime korisnika, bez pozdrava i potpisa.' },
+            },
+        },
+    },
+    {
+        name: 'email_contact',
+        description: 'Opšti mail osobi iz Kontakata („javi Selmi mailom da kasnimo s lajsnama", „pošalji mail Emiru da može poručiti kolone"). ERP napravi NACRT s dugmetom „Pošalji" — ništa se ne šalje bez klika i NIKAD ne kažeš da je poslano. Adresu ne izmišljaj: to je ime/prezime/firma kako je rečeno, ili adresa iz poruke. Narudžbu dobavljaču šalji kroz email_order.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                to: { ...str, description: 'Ime i/ili prezime u nominativu („Selma", „Emir Hadžić"), firma ili adresa iz poruke.' },
+                company: { ...str, description: 'Firma kad je rečena („Selma iz Projekta").' },
+                subject: { ...str, description: 'Kratak naslov („Lajsne kula B").' },
+                text: { ...str, description: 'Tijelo u 1–3 rečenice, korisnikovim riječima, ti-forma; bez pozdrava i potpisa (dodaje ih ERP).' },
+            },
+            required: ['to', 'subject', 'text'],
+        },
+    },
+    {
+        name: 'find_contact',
+        description: 'Ko je ko u Kontaktima: „koji je mail od Stakla?", „ko je komercijalista u Pločama?", „imam li Selminu adresu?".',
+        input_schema: {
+            type: 'object',
+            properties: { query: { ...str, description: 'Ime, prezime, firma, uloga ili dio adrese.' } },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'save_contact',
+        description: 'Novi kontakt: „sačuvaj Marka iz Okova, marko@okovi.ba, komercijalista". Adresa mora biti napisana u poruci. supplier = naziv dobavljača iz ERP-a kad osoba radi kod dobavljača.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                first_name: str,
+                last_name: str,
+                email: { ...str, description: 'Tačno kako je napisano u poruci.' },
+                supplier: { ...str, description: 'Dobavljač iz ERP-a.' },
+                company: { ...str, description: 'Firma kad nije dobavljač (investitor, nadzor…).' },
+                role: { ...str, description: 'komercijalista, referent, knjigovodstvo…' },
+                phone: str,
+            },
+            required: ['email'],
+        },
+    },
+    {
         name: 'material_status',
         description: 'Materijal po fazama naloga u toku (kapije): šta je tu, šta je naručeno i čeka se, šta fali, i za koliko koraka treba. Za „imam li sve za okivanje", „šta fali za Jerka", „šta čekam".',
         input_schema: {
@@ -474,6 +530,8 @@ export interface ToolEnv {
     /** Rezultati find_material: materijali projekata (O#) i katalog (K#). */
     orderGroups?: Aliased<OrderGroup>[];
     catalogHits?: Aliased<Material>[];
+    /** Nacrti mailova koji idu korisniku poslije odgovora, s dugmetom „Pošalji" (šalje se samo na klik). */
+    emailDrafts?: string[];
     /** Narudžbe čiji PDF ide korisniku poslije odgovora (`draft` = dugme „Poslano"). */
     documents?: { orderId: string; draft: boolean }[];
     /** Kandidati naloga (R#) kad dnevni upis nije znao koji nalog. */
@@ -520,10 +578,10 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
-export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_history', 'list_notebook']);
+export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_history', 'list_notebook', 'find_contact']);
 
 /** Spisak koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
 export const DISPLAY_TOOLS = new Set(['list_notebook']);
@@ -1823,6 +1881,164 @@ async function orderPdfTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, order: order.Order_Number, status: order.Status };
 }
 
+// ── Pošta: nacrti mailova (lib/server/emailDrafts) — šalje se SAMO dugmetom ──
+
+/** Ista pravila izbora narudžbe kao order_pdf: broj, projekat, dobavljač, inače zadnja. */
+async function findOrderFor(env: ToolEnv, a: Args): Promise<{ order?: { Order_ID: string; Order_Number: string; Status: string; Supplier_Name: string }; error?: string }> {
+    const wantedNo = foldText(text(a.number, 40)).replace(/\s+/g, '');
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const supplier = text(a.supplier, 80);
+
+    let orders = (await listOrders(env.orgId)).sort((x, y) => String(y.Order_Date).localeCompare(String(x.Order_Date)));
+    if (wantedNo) orders = orders.filter(o => foldText(o.Order_Number).replace(/\s+/g, '').includes(wantedNo));
+    if (supplier) orders = orders.filter(o => matchScore(supplier, [o.Supplier_Name]) >= 0.7);
+    if (project) {
+        const withProject: typeof orders = [];
+        for (const o of orders.slice(0, 40)) {
+            const full = await getOrderWithItems(env.orgId, o.Order_ID);
+            if (full?.items?.some(i => i.Project_ID === project.id)) withProject.push(o);
+            if (withProject.length) break;
+        }
+        orders = withProject;
+    }
+    return orders[0] ? { order: orders[0] } : { error: 'Nema takve narudžbe.' };
+}
+
+function emailToolError(e: unknown): ToolResult {
+    if (e instanceof GmailError) {
+        return {
+            ok: false,
+            error: e.code === 'not-connected' || e.code === 'not-configured'
+                ? 'Gmail nije povezan — korisnik ga povezuje u ERP-u: Postavke → Kontakti. Reci mu to.'
+                : e.message,
+        };
+    }
+    if (e instanceof DraftError) return { ok: false, error: e.message };
+    throw e;
+}
+
+async function supplierNamesOf(orgId: string): Promise<(id: string) => string | undefined> {
+    const snap = await adminDb().collection('suppliers').where('Organization_ID', '==', orgId).get();
+    const names = new Map(snap.docs.map(d => [(d.data() as Supplier).Supplier_ID, (d.data() as Supplier).Name]));
+    return id => names.get(id);
+}
+
+async function emailOrderTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const found = await findOrderFor(env, a);
+    if (!found.order) return { ok: false, error: found.error };
+    try {
+        const view = await createOrderDraft({ orgId: env.orgId, uid: env.uid, orderId: found.order.Order_ID, source: 'telegram', extraText: text(a.text, 400) });
+        env.emailDrafts = [...(env.emailDrafts || []), view.draft.Draft_ID];
+        const to = view.draft.To.map(t => t.name || t.email).join(', ');
+        env.summaries.push(view.draft.To.length
+            ? `✉️ Nacrt maila za narudžbu ${found.order.Order_Number} → ${to}. Pogledaj ga ispod i pošalji dugmetom — ništa još nije poslano.`
+            : `✉️ Nacrt maila za narudžbu ${found.order.Order_Number} je ispod — izaberi kome ide, pa ga pošalji dugmetom.`);
+        return { ok: true, draft: true, order: found.order.Order_Number, to: to || null, note: 'Mail NIJE poslan — šalje ga korisnik dugmetom.' };
+    } catch (e) {
+        return emailToolError(e);
+    }
+}
+
+async function emailContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const to = text(a.to, 120);
+    const company = text(a.company, 80);
+    const subject = text(a.subject, 160);
+    const body = text(a.text, 2000);
+    if (!to || !subject || !body) return { ok: false, error: 'Treba kome, naslov i tekst.' };
+    const contacts = await loadContacts(env.orgId);
+    const supplierName = await supplierNamesOf(env.orgId);
+    const literal = normalizeEmail(to);
+    let recipients: Contact[] = [];
+    if (isValidEmail(literal)) {
+        recipients = searchContacts(contacts, literal);
+        if (!recipients.length) {
+            // Adresa koje nema u Kontaktima smije samo ako ju je korisnik napisao.
+            if (env.groundText !== undefined && !env.groundText.toLowerCase().includes(literal)) {
+                return { ok: false, error: `Adresu ${literal} korisnik nije napisao — ne izmišljaj adrese.` };
+            }
+            recipients = [{ Contact_ID: '', Organization_ID: env.orgId, First_Name: '', Last_Name: '', Email: literal, Kind: 'other', Created_At: '' }];
+        }
+    } else {
+        recipients = searchContacts(contacts, [to, company].filter(Boolean).join(' '), supplierName);
+        if (!recipients.length && company) recipients = searchContacts(contacts, to, supplierName);
+    }
+    if (!recipients.length) {
+        return { ok: false, error: `„${to}${company ? ` (${company})` : ''}" nije u Kontaktima. Pitaj korisnika za adresu ili neka ga doda (save_contact).` };
+    }
+    try {
+        const draft = await createContactDraft({ orgId: env.orgId, uid: env.uid, recipients, subject, text: body, source: 'telegram' });
+        env.emailDrafts = [...(env.emailDrafts || []), draft.Draft_ID];
+        env.summaries.push(draft.To.length
+            ? `✉️ Nacrt maila za ${draft.To.map(t => t.name || t.email).join(', ')} je ispod — pošalji ga dugmetom, ništa još nije poslano.`
+            : `✉️ Više osoba odgovara („${to}") — izaberi kome ide mail ispod.`);
+        return { ok: true, draft: true, to: draft.To.map(t => t.email), note: 'Mail NIJE poslan — šalje ga korisnik dugmetom.' };
+    } catch (e) {
+        return emailToolError(e);
+    }
+}
+
+async function findContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const query = text(a.query, 120);
+    if (!query) return { ok: false, error: 'Koga tražiš?' };
+    const contacts = await loadContacts(env.orgId);
+    const supplierName = await supplierNamesOf(env.orgId);
+    // Pitanje „koji je mail od…" traži i adrese koje samo šalju (računi).
+    const hits = searchContacts(contacts.map(c => ({ ...c, Receive_Only: false })), query, supplierName).slice(0, 10);
+    const original = new Map(contacts.map(c => [c.Contact_ID, c]));
+    return {
+        ok: true,
+        contacts: hits.map(h => {
+            const c = original.get(h.Contact_ID) || h;
+            const name = [c.First_Name, c.Last_Name].filter(Boolean).join(' ') || '—';
+            const firm = (c.Supplier_ID && supplierName(c.Supplier_ID)) || c.Company || '';
+            return [`${name} <${c.Email}>`, firm, c.Role, c.Is_Default ? '★ glavni za narudžbe' : '', c.Receive_Only ? 'samo šalje (računi)' : '', c.Phone]
+                .filter(Boolean).join(' · ');
+        }),
+        ...(hits.length ? {} : { note: 'Nema takvog kontakta u ERP-u (Postavke → Kontakti).' }),
+    };
+}
+
+async function saveContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const email = normalizeEmail(text(a.email, 120));
+    if (!isValidEmail(email)) return { ok: false, error: 'Neispravna adresa.' };
+    if (env.groundText !== undefined && !env.groundText.toLowerCase().includes(email)) {
+        return { ok: false, error: `Adresu ${email} korisnik nije napisao — upiši tačno napisanu.` };
+    }
+    const contacts = await loadContacts(env.orgId);
+    const same = contacts.find(c => normalizeEmail(c.Email) === email);
+    if (same) return { ok: false, error: `${email} je već u Kontaktima (${[same.First_Name, same.Last_Name].filter(Boolean).join(' ') || 'bez imena'}).` };
+
+    const supplierQuery = text(a.supplier, 80);
+    let supplier: Supplier | undefined;
+    if (supplierQuery) {
+        const all = (await adminDb().collection('suppliers').where('Organization_ID', '==', env.orgId).get()).docs.map(d => d.data() as Supplier);
+        supplier = all.map(s => ({ s, score: matchScore(supplierQuery, [s.Name]) })).filter(x => x.score >= 0.7).sort((x, y) => y.score - x.score)[0]?.s;
+    }
+    const contact = clean({
+        Contact_ID: uuidv4(),
+        Organization_ID: env.orgId,
+        First_Name: text(a.first_name, 60),
+        Last_Name: text(a.last_name, 60),
+        Email: email,
+        Phone: text(a.phone, 40) || undefined,
+        Role: text(a.role, 60) || undefined,
+        Kind: supplier ? 'supplier' : 'other',
+        Supplier_ID: supplier?.Supplier_ID,
+        // Dobavljač bez ijednog kontakta: prvi postaje glavni (★).
+        Is_Default: supplier && !contacts.some(c => c.Supplier_ID === supplier!.Supplier_ID) ? true : undefined,
+        Company: supplier ? undefined : (text(a.company, 80) || supplierQuery || undefined),
+        Created_At: env.now.toISOString(),
+    });
+    const ref = adminDb().collection('contacts').doc();
+    await ref.set(contact);
+    const name = [contact.First_Name, contact.Last_Name].filter(Boolean).join(' ') || email;
+    await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before: null, label: `kontakt „${name}"` });
+    env.changes.push(`kontakt „${name}"`);
+    env.summaries.push(`👤 U Kontakte: ${name} <${email}>${supplier ? ` · ${supplier.Name}${contact.Is_Default ? ' ★' : ''}` : contact.Company ? ` · ${contact.Company}` : ''}${contact.Role ? ` · ${contact.Role}` : ''}`);
+    return { ok: true, saved: name, supplier: supplier?.Name || null };
+}
+
 /** Oznake (W9, T6…) su interne — „Imer (W9)" → „Imer". Model ih ponekad ipak napiše. */
 export function stripAliases(s: string): string {
     return s
@@ -2242,6 +2458,10 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'order_status': return await orderStatusTool(env, args);
             case 'work_report': return await workReportTool(env, args);
             case 'order_pdf': return await orderPdfTool(env, args);
+            case 'email_order': return await emailOrderTool(env, args);
+            case 'email_contact': return await emailContactTool(env, args);
+            case 'find_contact': return await findContactTool(env, args);
+            case 'save_contact': return await saveContactTool(env, args);
             case 'learn_name': return await learnNameTool(env, args);
             case 'material_status': return await materialStatusTool(env, args);
             case 'material_arrived': return await materialArrivedTool(env, args);

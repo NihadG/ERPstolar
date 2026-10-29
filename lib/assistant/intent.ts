@@ -14,7 +14,7 @@
 import { foldText } from '@/lib/voice/text';
 import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
 
-export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'question';
+export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'question';
 
 export interface MessageIntent {
     kinds: MessageKind[];
@@ -64,6 +64,12 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
     if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')
         && /\b(gotov|zavrs|napravljen|skrojen|srezan|kantiran|sklopljen|izbrusen|polakiran|zapakovan|montiran|ofarban|furniran|u toku|na (brusenj|lakiranj|kantiranj|krojenj|sklapanj|okivanj|montaz|furniranj|pakovanj|presovanj)|krenul|zapoce|zavrseno)\w*/.test(t)) kinds.add('progress');
+    // Mail („pošalji Amri narudžbu mailom", „javi Selmi mailom da su lajsne gotove"): sadržaj maila
+    // nije upis u ERP — nije nova narudžba, zadatak ni stanje procesa. Pitanje o adresi nije mail.
+    if (/\b(e-?mail|mail|mejl|imejl)\w*/.test(t) && !/\b(koji je|kakav je|adres)\w*/.test(t)) {
+        kinds.clear();
+        kinds.add('email');
+    }
     if (question) kinds.add('question');
 
     const writeKinds = Array.from(kinds).filter(k => k !== 'question');
@@ -81,7 +87,8 @@ const KIND_LABEL: Record<MessageKind, string> = {
     reminder: 'podsjetnik (create_task s reminder_at)', task: 'zadatak za radnika (create_task s worker)',
     notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)',
     progress: 'stanje procesa bez radnika (set_progress; nazive procesa uzmi iz TOK NALOGA)', presence: 'prisustvo (set_presence)',
-    order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)', question: 'pitanje (odgovor, bez upisa)',
+    order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)',
+    email: 'mail (email_order za narudžbu, email_contact za ostalo — samo NACRT, šalje korisnik dugmetom)', question: 'pitanje (odgovor, bez upisa)',
 };
 
 /** Dio napomene za model: vrsta poruke, rečeni radnici (i nadimci) i vrijeme. */
