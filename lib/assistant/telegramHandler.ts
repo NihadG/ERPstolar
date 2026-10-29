@@ -20,7 +20,7 @@ import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
-import { handleMaterialButton, sendMaterialAlerts, setOrderSentDaysAgo } from './materialAlerts';
+import { handleMaterialButton, sendMaterialAlerts, setOrderReceivedDaysAgo, setOrderSentDaysAgo } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
 import { runAssistant, runPendingAction, type AssistantTurnOutput } from './brain';
@@ -238,14 +238,16 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         return;
     }
 
-    // „Kad je naručeno?" uz prijem nacrta: datum slanja za rok isporuke dobavljača.
-    if (kind === 'ordd') {
+    // „Kad je naručeno?" / „Kad je stiglo?" uz prijem: datumi za rok isporuke dobavljača.
+    if (kind === 'ordd' || kind === 'rcvd') {
         const days = Number(extra);
         if (!Number.isFinite(days) || days < 0 || days > 120) {
             await answerCallbackQuery(inc.callbackId);
             return;
         }
-        const ok = await setOrderSentDaysAgo(link.orgId, arg, days, tz);
+        const ok = kind === 'ordd'
+            ? await setOrderSentDaysAgo(link.orgId, arg, days, tz)
+            : await setOrderReceivedDaysAgo(link.orgId, arg, days, tz);
         await answerCallbackQuery(inc.callbackId, ok ? 'Zabilježeno' : 'Narudžba više ne postoji.');
         if (ok) await editMessageText(inc.chatId, inc.messageId, inc.messageText, inc.buttons?.filter(row => !row.some(b => b.data === inc.data)));
         return;
