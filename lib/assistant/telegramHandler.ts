@@ -20,10 +20,10 @@ import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
-import { handleMaterialButton, sendMaterialAlerts } from './materialAlerts';
+import { handleMaterialButton, sendMaterialAlerts, setOrderSentDaysAgo } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
-import { runAssistant, type AssistantTurnOutput } from './brain';
+import { runAssistant, runPendingAction, type AssistantTurnOutput } from './brain';
 import { memoryButtonState } from './tools';
 import { loadNames } from './context';
 import { assistantTimezone, formatReminder, toZoned } from './datetime';
@@ -171,12 +171,18 @@ async function converse(
     });
     // Prvo odgovor korisniku, pa spremanje — sesija i dnevnik ne trebaju da ga čekaju.
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
-    await sendMessage(chatId, prefix + out.reply, out.buttons);
+    await deliver(link, chatId, out, input.entryId, prefix);
     console.log(`[assistant] odgovor za ${Date.now() - started} ms`);
+    return out;
+}
+
+/** Odgovor u Telegram, pa sesija, dnevnik, PDF-ovi i kapije materijala — isto za poruku i za dugme. */
+async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOutput, entryId: string | undefined, prefix = ''): Promise<void> {
+    await sendMessage(chatId, prefix + out.reply, out.buttons);
     await Promise.all([
         saveSession(chatId, out.session),
-        input.entryId
-            ? recordEntryOutcome(input.entryId, {
+        entryId
+            ? recordEntryOutcome(entryId, {
                 outcome: out.outcome || (out.changed ? 'written' : 'answer'), reply: out.reply, changes: out.changes || [],
                 taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)),
             })
@@ -195,7 +201,6 @@ async function converse(
         await sendMaterialAlerts(new Date(), assistantTimezone(), { orgId: link.orgId })
             .catch(e => console.error('[assistant] kapije materijala:', e));
     }
-    return out;
 }
 
 async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promise<void> {
@@ -213,6 +218,36 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${answer}`);
         await sendTyping(inc.chatId);
         await converse(link, inc.chatId, { text: answer, entryId: session.pending?.entryId });
+        return;
+    }
+
+    // ERP-ovo pitanje (nalog, proces, materijal): izbor završava upis bez modela.
+    if (kind === 'act') {
+        const session = await getSession(inc.chatId);
+        const answer = session.pending?.action ? session.pending.options[Number(arg)] : undefined;
+        if (!answer) {
+            await answerCallbackQuery(inc.callbackId, 'Pitanje je isteklo — napiši odgovor porukom.');
+            return;
+        }
+        await answerCallbackQuery(inc.callbackId);
+        // Ostala dugmad pitanja nestaju; ↩️ Poništi za ono što je već upisano ostaje.
+        await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${answer}`, inc.buttons?.filter(row => row.every(b => !b.data.startsWith('act:'))));
+        await sendTyping(inc.chatId);
+        const out = await runPendingAction({ orgId: link.orgId, uid: link.uid, session, choice: Number(arg) });
+        await deliver(link, inc.chatId, out, session.pending?.entryId);
+        return;
+    }
+
+    // „Kad je naručeno?" uz prijem nacrta: datum slanja za rok isporuke dobavljača.
+    if (kind === 'ordd') {
+        const days = Number(extra);
+        if (!Number.isFinite(days) || days < 0 || days > 120) {
+            await answerCallbackQuery(inc.callbackId);
+            return;
+        }
+        const ok = await setOrderSentDaysAgo(link.orgId, arg, days, tz);
+        await answerCallbackQuery(inc.callbackId, ok ? 'Zabilježeno' : 'Narudžba više ne postoji.');
+        if (ok) await editMessageText(inc.chatId, inc.messageId, inc.messageText, inc.buttons?.filter(row => !row.some(b => b.data === inc.data)));
         return;
     }
 

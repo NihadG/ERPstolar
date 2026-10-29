@@ -144,6 +144,17 @@ export interface PendingQuestion {
     askedAt: string;
     /** Unos koji je pokrenuo pitanje — zadatak nastao iz odgovora veže se za njega. */
     entryId?: string;
+    /** ERP-ovo pitanje: za svako dugme gotov poziv alata (`act:<i>` ga izvrši bez modela). */
+    action?: PendingAction;
+}
+
+export interface PendingAction {
+    tool: string;
+    /** Argumenti alata po opciji, istim redom kao `options`. */
+    args: Record<string, unknown>[];
+    /** Šta je korisnik rekao — upis i dalje smije sadržati samo to (grounding). */
+    groundText: string;
+    dateText: string;
 }
 
 /**
@@ -183,7 +194,8 @@ export async function getSession(chatId: number): Promise<AssistantSession> {
 export async function saveSession(chatId: number, session: AssistantSession): Promise<void> {
     await adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId)).set({
         history: session.history.slice(-HISTORY_TURNS),
-        pending: session.pending || null,
+        // JSON: argumenti ERP-ovog pitanja smiju imati undefined, Firestore ga ne prima.
+        pending: session.pending ? JSON.parse(JSON.stringify(session.pending)) : null,
         refs: session.refs ? JSON.parse(JSON.stringify(session.refs)) : null,
         focus: session.focus || null,
         updatedAt: new Date().toISOString(),

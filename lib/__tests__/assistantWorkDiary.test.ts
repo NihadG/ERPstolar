@@ -62,18 +62,22 @@ beforeAll(() => {
 });
 
 describe('pitanja prije upisa — ništa se ne upisuje dok nije jasno', () => {
-    it('„Čorluka" bez posla → kandidati R#, nijedan zapis', async () => {
+    it('„Čorluka" bez posla → ERP pita dugmadima, nijedan zapis; izbor završava upis', async () => {
         const e = env();
         const res = await runTool(e, 'log_work', { lines: [{ workers: ['W1'], work: 'Čorluka', process: 'krojenje iverala' }] });
-        expect(res.ok).toBe(false);
-        // Bez liste NALOZI u kontekstu kandidati dobiju privremene oznake RK#.
-        expect(res.error).toMatch(/pogađa više naloga.*RK1 .*RK2 /s);
-        expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
-        // Ponovo s izabranim nalogom.
-        const kuhinja = e.diaryCandidates!.find(c => c.value === 'r7')!.alias;
-        const ok = await runTool(e, 'log_work', { lines: [{ workers: ['W1'], work: 'Čorluka', order: kuhinja, process: 'krojenje iverala' }] });
-        expect(ok.ok).toBe(true);
-        await undoTurn(e.turnId, 'u1');
+        if (e.erpQuestion) {
+            // Podaci nisu dovoljni → dugmad; dugme za kuhinju nosi gotov poziv s izabranim nalogom.
+            expect(res).toMatchObject({ ok: true, asked: expect.stringMatching(/na kojem nalogu/) });
+            expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
+            const kuhinja = e.erpQuestion.options.find(o => /Kuhinja/.test(o.label))!;
+            const next = env();
+            expect((await runTool(next, 'log_work', kuhinja.args)).ok).toBe(true);
+            await undoTurn(next.turnId, 'u1');
+        } else {
+            // Nalog nađen iz podataka (gdje krojenje čeka, gdje je Amer radio) — bez pitanja.
+            expect(res.ok).toBe(true);
+            await undoTurn(e.turnId, 'u1');
+        }
         expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
     });
 

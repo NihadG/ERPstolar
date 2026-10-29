@@ -391,8 +391,12 @@ export type OrderActionResult =
     | { ok: true; orderNumber: string; materials: number; detail?: string }
     | { ok: false; error: string };
 
-/** Nacrt → Poslano, ista kaskada kao updateOrderStatus u ERP-u. */
-export async function sendOrder(orgId: string, orderId: string, before?: BeforeHook): Promise<OrderActionResult> {
+/**
+ * Nacrt → Poslano, ista kaskada kao updateOrderStatus u ERP-u.
+ * `assumed`: materijal je već stigao, a kad je naručeno se ne zna (nacrt nije bio
+ * označen poslanim) — datum slanja je datum nacrta i ne ulazi u rok isporuke dobavljača.
+ */
+export async function sendOrder(orgId: string, orderId: string, before?: BeforeHook, opts: { assumed?: boolean } = {}): Promise<OrderActionResult> {
     const docs = await orderDocs(orgId, orderId);
     if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
     const order = docs.order.data() as Order;
@@ -404,7 +408,9 @@ export async function sendOrder(orgId: string, orderId: string, before?: BeforeH
     const projectIds = new Set<string>();
     const batch = adminDb().batch();
     before?.(docs.order.ref.path, docs.order.data());
-    batch.update(docs.order.ref, { Status: 'Poslano', Sent_At: new Date().toISOString() });
+    batch.update(docs.order.ref, opts.assumed
+        ? { Status: 'Poslano', Sent_At: order.Order_Date || new Date().toISOString(), Sent_At_Assumed: true }
+        : { Status: 'Poslano', Sent_At: new Date().toISOString() });
     for (const d of docs.items) {
         const item = d.data() as OrderItem;
         if (item.Status === 'Primljeno') continue;

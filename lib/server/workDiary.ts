@@ -25,9 +25,11 @@ import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
     applyPlanToItem, completeUpstream, diaryTargets, emptyWorkDays, ensureGraphNode, finishAllProcesses, graphFromStages, itemHasPlan, itemNodes,
-    lastWorkDays, markItemProcess, matchProcess, matchTarget, nameHasWord, planProcessNames, planWorkerDay, type DiaryTarget,
+    lastWorkDays, markItemProcess, matchProcess, matchTarget, nameHasWord, planProcessNames, planWorkerDay, processCandidates, processFullySaid,
+    unstartedUpstream, unsaidTrack, type DiaryTarget, type TargetMatch,
 } from '@/lib/workDiary';
-import { planGraphForProduct, planToStages } from '@/lib/productProcesses';
+import { nodeMatchesProcess, planGraphForProduct, planToStages } from '@/lib/productProcesses';
+import { addDays } from '@/lib/voice/dates';
 import { foldText } from '@/lib/voice/text';
 
 /** Odakle je plan stavke: kartica proizvoda, šablon vrste proizvoda ili pravila materijala. */
@@ -51,7 +53,7 @@ export interface DiaryLineInput {
     /** Udio dana (0–1) ako je rečen: „pola dana" = 0.5. */
     fraction?: number;
     done?: boolean;
-    /** Korisnik je potvrdio da je proces nov (dodaje se u katalog). */
+    /** Korisnik je potvrdio da je proces nov (dodaje se u katalog) — rečeni naziv se ne pogađa. */
     newProcess?: boolean;
 }
 
@@ -60,6 +62,8 @@ export interface DiaryAbsenceInput { workerId: string; status: 'Bolovanje' | 'Od
 export type DiaryIssue =
     | { kind: 'target'; line: number; text: string; candidates: { workOrderId: string; workOrderName: string; projectName: string }[] }
     | { kind: 'process'; line: number; name: string }
+    /** Proces rečen djelimično, a upis bi pretpostavio mnogo ranijih koraka — korisnik bira dugmetom. */
+    | { kind: 'process_choice'; line: number; said: string; options: string[]; workOrderName: string; skipped: string[] }
     | { kind: 'worker'; line: number; workerId: string };
 
 export interface DiaryRow {
@@ -70,6 +74,53 @@ export interface DiaryRow {
     process?: string;
     done: boolean;
     graphAdded: boolean;
+}
+
+/** Proces upisan na nalog (ne zavisi od toga da li je dan knjižen). */
+export interface DiaryProcessRow {
+    workers: string[];
+    process: string;
+    done: boolean;
+    workOrderName: string;
+    products: string[];
+    graphAdded: boolean;
+}
+
+/** Koliko dana unazad Knjiga rada govori ko je „aktivan" na nalogu. */
+const ACTIVE_DAYS = 21;
+
+/** Nalozi na kojima su radnici bili aktivni: Knjiga rada zadnjih dana ili ekipa stavke naloga. */
+function activeOrderIds(recentLogs: WorkLog[], orders: WorkOrder[], workerIds: string[]): Set<string> {
+    return new Set([
+        ...recentLogs.filter(l => workerIds.includes(l.Worker_ID) && !l.Work_Order_Deleted).map(l => l.Work_Order_ID),
+        ...orders.filter(o => (o.items || []).some(i => (i.Assigned_Workers || []).some(w => workerIds.includes(w.Worker_ID)))).map(o => o.Work_Order_ID),
+    ]);
+}
+
+/**
+ * Otvoreni nalozi čiji plan ima rečeni proces NEZAVRŠEN, sa stavkama na kojima čeka:
+ * „izrada podkonstrukcije" → Budnjo Švedski stolovi (4 stola). Bez plana → nema pogotka.
+ */
+function ordersWithPendingProcess(
+    said: string, scope: DiaryTarget[], orderById: Map<string, WorkOrder>, itemById: Map<string, WorkOrderItem>,
+): { workOrderId: string; items: DiaryTarget[] }[] {
+    const groups = new Map<string, DiaryTarget[]>();
+    scope.filter(t => !t.finished).forEach(t => groups.set(t.workOrderId, [...(groups.get(t.workOrderId) || []), t]));
+    const out: { workOrderId: string; items: DiaryTarget[] }[] = [];
+    groups.forEach((ts, woId) => {
+        const graph = orderById.get(woId)?.Process_Graph;
+        const plan = planProcessNames(graph, ts.map(t => ({ ID: t.itemId, Processes: itemById.get(t.itemId)?.Processes })));
+        const hit = plan.length ? matchProcess(said, plan, plan) : null;
+        if (!hit) return;
+        const pending = ts.filter(t => {
+            const own = itemById.get(t.itemId)?.Processes || [];
+            const inPlan = (graph ? itemNodes(graph, t.itemId).some(n => nodeMatchesProcess(n, hit)) : false)
+                || own.some(p => foldText(p.Process_Name) === foldText(hit));
+            return inPlan && own.find(p => foldText(p.Process_Name) === foldText(hit))?.Status !== 'Završeno';
+        });
+        if (pending.length) out.push({ workOrderId: woId, items: pending });
+    });
+    return out;
 }
 
 /** Procesi dodani ili pretpostavljeni na dijelu naloga (proizvodi prazni = cijeli nalog). */
@@ -86,6 +137,9 @@ export interface DiaryProcessNote {
 export type DiaryResult =
     | {
         ok: true; rows: DiaryRow[]; absences: { worker: string; status: string }[]; affectedWorkOrders: string[]; newCatalog: string[];
+        processRows: DiaryProcessRow[];
+        /** Radnici kojima je dan već bio ručno knjižen — Knjiga rada i prisustvo nisu dirani, samo procesi. */
+        bookedBefore: string[];
         planned: DiaryProcessNote[]; assumedDone: DiaryProcessNote[];
         /** Proizvodi kojima je ovim upisom završen i zadnji korak plana → proizvod završen. */
         finished: DiaryProcessNote[];
@@ -141,6 +195,15 @@ export async function bookWorkDiary(
     const catalogRank = new Map(catalog.map(c => [foldText(c.Name).trim(), c.Order]));
     const catalogOrder = (name: string) => catalogRank.get(foldText(name).trim());
 
+    const orderById = new Map(orders.map(o => [o.Work_Order_ID, o]));
+    const itemById = new Map(orders.flatMap(o => o.items || []).map(i => [i.ID, i]));
+
+    // Nalog nije rečen („Bego završio izradu podkonstrukcije"): ERP ga nađe iz podataka.
+    const needsGuess = lines.some(l => !l.workOrderId && !l.itemIds?.length);
+    const recentLogs = needsGuess ? await getWorkLogsInRange(orgId, addDays(date, -ACTIVE_DAYS), date) : [];
+    const activeOn = (workerIds: string[]) => activeOrderIds(recentLogs, orders, workerIds);
+    const byProcess = (said: string, scope: DiaryTarget[]) => ordersWithPendingProcess(said, scope, orderById, itemById);
+
     // ── 1. Razriješi sve stavke prije ijednog upisa ──
     const issues: DiaryIssue[] = [];
     const targeted: Omit<ResolvedLine, 'process' | 'also'>[] = [];
@@ -148,9 +211,26 @@ export async function bookWorkDiary(
         line.workerIds.filter(id => !workerById.has(id)).forEach(workerId => issues.push({ kind: 'worker', line: i, workerId }));
         const exact = line.itemIds?.length ? targets.filter(t => line.itemIds!.includes(t.itemId)) : [];
         const pool = exact.length ? exact : line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
-        const match = exact.length && new Set(exact.map(t => t.workOrderId)).size === 1
+        const said = line.target?.trim() || '';
+        let match: TargetMatch = exact.length && new Set(exact.map(t => t.workOrderId)).size === 1
             ? { kind: 'ok' as const, workOrderId: exact[0].workOrderId, workOrderName: exact[0].workOrderName, items: exact }
-            : pool.length ? matchTarget(line.target || pool[0]?.workOrderName || '', pool) : { kind: 'none' as const };
+            : !pool.length ? { kind: 'none' as const }
+                // Bez posla i bez naloga se NE uzima prvi nalog s liste — nalog se traži iz podataka.
+                : said || line.workOrderId ? matchTarget(said || pool[0].workOrderName, pool) : { kind: 'none' as const };
+        if (match.kind !== 'ok' && !line.workOrderId && !exact.length && line.process?.trim() && (match.kind === 'ambiguous' || !said)) {
+            const named = match.kind === 'ambiguous' ? match.candidates.map(c => c.workOrderId) : null;
+            const found = byProcess(line.process, named ? pool.filter(t => named.includes(t.workOrderId)) : pool);
+            const active = activeOn(line.workerIds);
+            const pick = found.length === 1 ? found : found.filter(f => active.has(f.workOrderId));
+            if (pick.length === 1) {
+                match = { kind: 'ok', workOrderId: pick[0].workOrderId, workOrderName: pick[0].items[0].workOrderName, items: pick[0].items };
+            } else if (found.length > 1) {
+                match = {
+                    kind: 'ambiguous',
+                    candidates: (pick.length ? pick : found).slice(0, 4).map(f => ({ workOrderId: f.workOrderId, workOrderName: f.items[0].workOrderName, projectName: f.items[0].projectName })),
+                };
+            }
+        }
         const fallback = line.workOrderId && pool.length && match.kind !== 'ok'
             ? { kind: 'ok' as const, workOrderId: line.workOrderId, workOrderName: pool[0].workOrderName, items: pool }
             : match;
@@ -165,8 +245,6 @@ export async function bookWorkDiary(
     // Proizvod bez ikakvog plana dobije plan (kartica proizvoda ili pravila materijala)
     // prije čekiranja — tek tada „brušenje" zna šta je bilo prije njega, a „kantiranje"
     // da li je iverala ili furnira.
-    const orderById = new Map(orders.map(o => [o.Work_Order_ID, o]));
-    const itemById = new Map(orders.flatMap(o => o.items || []).map(i => [i.ID, i]));
     const graphs = new Map<string, ProcessGraph | undefined>();
     const itemProcesses = new Map<string, WorkOrderItem['Processes']>();
     const graphOf = (woId: string) => (graphs.has(woId) ? graphs.get(woId) : orderById.get(woId)?.Process_Graph);
@@ -190,8 +268,24 @@ export async function bookWorkDiary(
         const preferred = planProcessNames(graphOf(t.workOrderId), t.items.map(x => ({ ID: x.itemId, Processes: processesOf(x.itemId) })));
         let process: string | undefined;
         if (line.process?.trim()) {
-            process = matchProcess(line.process, vocabulary, preferred) || (line.newProcess ? capitalize(line.process) : undefined);
-            if (!process) issues.push({ kind: 'process', line: lines.indexOf(line), name: line.process.trim() });
+            // Potvrđen nov proces: rečeni naziv, bez pogađanja sličnog iz kataloga.
+            process = line.newProcess
+                ? vocabulary.find(v => foldText(v) === foldText(line.process!)) || capitalize(line.process)
+                : matchProcess(line.process, vocabulary, preferred) || undefined;
+            if (!process) {
+                issues.push({ kind: 'process', line: lines.indexOf(line), name: line.process.trim() });
+            } else if (!line.newProcess && !processFullySaid(line.process, process)) {
+                // „montaža" → Montaža Kerrocka, a Kerrock nije ni krojen: upis bi pretpostavio pola plana.
+                // Kad bi se preskočila bar dva nezapočeta koraka, ERP pita dugmadima umjesto da pogađa.
+                const p = process;
+                const skipped = unsaidTrack(line.process, p, Array.from(new Set(t.items.flatMap(x => unstartedUpstream(graphOf(t.workOrderId), x.itemId, p, processesOf(x.itemId))))));
+                if (skipped.length >= 2) {
+                    issues.push({
+                        kind: 'process_choice', line: lines.indexOf(line), said: line.process.trim(), workOrderName: t.workOrderName, skipped,
+                        options: processCandidates(line.process, vocabulary, preferred),
+                    });
+                }
+            }
         }
         const also = (line.alsoProcesses || []).map(p => matchProcess(p, vocabulary, preferred) || capitalize(p)).filter(Boolean);
         return { ...t, process, also };
@@ -256,17 +350,37 @@ export async function bookWorkDiary(
         }
     }
 
+    // Procesi po upisu — prikazuju se i kad Knjiga rada nije dirana (dan već knjižen).
+    const productsOf = (r: ResolvedLine) => (r.items.length < (orderById.get(r.workOrderId)?.items || []).length ? r.items.map(t => t.productName) : []);
+    const processRows: DiaryProcessRow[] = [];
+    for (const r of resolved) {
+        for (const name of [r.process, ...r.also].filter(Boolean) as string[]) {
+            const done = r.input.done === true && name === r.process;
+            const names = r.input.workerIds.map(id => workerById.get(id)!.Name);
+            const same = processRows.find(p => p.process === name && p.done === done && p.workOrderName === r.workOrderName && p.products.join('|') === productsOf(r).join('|'));
+            if (same) same.workers = Array.from(new Set([...same.workers, ...names]));
+            else processRows.push({ workers: names, process: name, done, workOrderName: r.workOrderName, products: productsOf(r), graphAdded: graphAdded.has(`${r.workOrderId}|${name}`) });
+        }
+    }
+
     // ── 4. Po radniku: prisustvo, dnevnice, renormalizacija ──
     const affected = new Set<string>();
     const presenceSet: string[] = [];
+    const bookedBefore: string[] = [];
     const workerIds = Array.from(new Set(resolved.flatMap(r => r.input.workerIds)));
     for (const workerId of workerIds) {
         const worker = workerById.get(workerId)!;
         const mine = resolved.filter(r => r.input.workerIds.includes(workerId));
         const plan = planWorkerDay(mine.map(r => r.input.fraction));
 
-        if (await upsertAttendance(orgId, worker.Worker_ID, worker.Name, date, 'Prisutan', track)) presenceSet.push(worker.Name);
         const existing = await getWorkLogRefsForWorkerDate(orgId, workerId, date);
+        // Dan je već ručno knjižen (šihtarica + knjiženje u ERP-u): Knjiga rada i prisustvo
+        // ostaju tačno kako su knjiženi — poruka mijenja samo procese.
+        if (existing.some(l => l.data.Booking_Source === 'manual' && l.data.Entry_Source !== 'telegram' && !l.data.Work_Order_Deleted)) {
+            bookedBefore.push(worker.Name);
+            continue;
+        }
+        if (await upsertAttendance(orgId, worker.Worker_ID, worker.Name, date, 'Prisutan', track)) presenceSet.push(worker.Name);
         const replace = existing.filter(l => l.data.Booking_Source !== 'manual' || l.data.Entry_Source === 'telegram');
         const keep = existing.filter(l => !replace.includes(l));
         const batch = db.batch();
@@ -328,7 +442,7 @@ export async function bookWorkDiary(
             dayFraction: Math.round(plan.presence * (plan.weights[mine.indexOf(r)] ?? 1 / mine.length) * 100) / 100,
             workOrderName: r.workOrderName,
             // Proizvod se navodi samo kad je rad bio na dijelu naloga s više proizvoda.
-            products: r.items.length < (orderById.get(r.workOrderId)?.items || []).length ? r.items.map(t => t.productName) : [],
+            products: productsOf(r),
             process: r.process,
             done: r.input.done === true,
             graphAdded: !!r.process && graphAdded.has(`${r.workOrderId}|${r.process}`),
@@ -419,6 +533,7 @@ export async function bookWorkDiary(
 
     return {
         ok: true, rows, absences: absenceRows, affectedWorkOrders: Array.from(affected), newCatalog,
+        processRows, bookedBefore,
         finished: notes(finishedNotes), presenceSet, assumedDates,
         itemIds: Array.from(new Set(resolved.flatMap(r => r.items.map(t => t.itemId)))),
         lineItemIds: resolved.map(r => r.items.map(t => t.itemId)),
@@ -549,16 +664,28 @@ export async function finishItems(
 }
 
 export interface ProgressInput {
+    /** Prazno + proces = ERP nađe nalog sam (gdje proces čeka, gdje je radnik radio). */
     workOrderIds: string[];
     /** Riječi naziva proizvoda ili naloga: samo ovi / svi osim ovih („vrata"). */
     only?: string[];
     except?: string[];
     /** Proces kako je rečen; bez njega = cijeli proizvod. */
     process?: string;
+    /** Proces je potvrđen dugmetom — tačan naziv, bez pitanja. */
+    exactProcess?: boolean;
+    /** Ko je radio (samo zapis na procesu; Knjiga rada se ne dira). */
+    workerIds?: string[];
     state: 'done' | 'started';
     /** Rečen dan; bez njega: završetak = zadnji dan rada iz Knjige rada, početak = danas. */
     date?: string;
     today: string;
+}
+
+/** ERP ne može sam odlučiti — korisnik bira dugmetom (nalog ili proces). */
+export interface ProgressChoice {
+    kind: 'order' | 'process';
+    said: string;
+    options: { label: string; value: string }[];
 }
 
 export interface ProgressOrder {
@@ -575,8 +702,8 @@ export interface ProgressOrder {
 }
 
 export type ProgressResult =
-    | { ok: true; process?: string; state: 'done' | 'started'; orders: ProgressOrder[]; finished: number }
-    | { ok: false; error: string };
+    | { ok: true; process?: string; state: 'done' | 'started'; orders: ProgressOrder[]; finished: number; workers?: string[] }
+    | { ok: false; error: string; choice?: ProgressChoice };
 
 /**
  * STANJE PROIZVODNJE — sloj „Procesi", bez Knjige rada i prisustva.
@@ -587,16 +714,39 @@ export type ProgressResult =
  */
 export async function setProgress(orgId: string, input: ProgressInput, track: TrackHook = () => undefined): Promise<ProgressResult> {
     const db = adminDb();
-    const [orders, catalogSnap] = await Promise.all([
+    const [orders, catalogSnap, workers] = await Promise.all([
         getBookableWorkOrders(orgId),
         db.collection('process_catalog').where('Organization_ID', '==', orgId).get(),
+        input.workerIds?.length ? getWorkers(orgId) : Promise.resolve([]),
     ]);
-    const chosenOrders = orders.filter(o => input.workOrderIds.includes(o.Work_Order_ID));
+    let chosenOrders = orders.filter(o => input.workOrderIds.includes(o.Work_Order_ID));
+    // Nalog nije rečen, a proces jeste: nalog iz podataka (gdje proces čeka, gdje je radnik radio).
+    if (!input.workOrderIds.length && input.process?.trim()) {
+        attachItems(orders, await getItemsForWorkOrders(orgId, orders.filter(o => o.Status !== 'Završeno').map(o => o.Work_Order_ID)));
+        const projectsSnap = await db.collection('projects').where('Organization_ID', '==', orgId).get();
+        const projectName = new Map(projectsSnap.docs.map(d => { const p = d.data() as Project; return [p.Project_ID, p.Name || p.Client_Name || ''] as const; }));
+        const targets = diaryTargets(orders.filter(o => o.Status !== 'Završeno'), id => projectName.get(id) || '');
+        const found = ordersWithPendingProcess(input.process, targets, new Map(orders.map(o => [o.Work_Order_ID, o])), new Map(orders.flatMap(o => o.items || []).map(i => [i.ID, i])));
+        const recent = input.workerIds?.length ? await getWorkLogsInRange(orgId, addDays(input.today, -ACTIVE_DAYS), input.today) : [];
+        const active = activeOrderIds(recent, orders, input.workerIds || []);
+        const pick = found.length === 1 ? found : found.filter(f => active.has(f.workOrderId));
+        if (pick.length === 1) {
+            chosenOrders = orders.filter(o => o.Work_Order_ID === pick[0].workOrderId);
+        } else if (found.length > 1) {
+            return {
+                ok: false, error: `„${input.process.trim()}" čeka na više naloga — korisnik bira.`,
+                choice: { kind: 'order', said: input.process.trim(), options: (pick.length ? pick : found).slice(0, 4).map(f => ({ label: f.items[0].workOrderName, value: f.workOrderId })) },
+            };
+        } else {
+            return { ok: false, error: `Nijedan otvoren nalog nema proces „${input.process.trim()}" na čekanju — pitaj na kojem nalogu.` };
+        }
+    }
     if (!chosenOrders.length) return { ok: false, error: 'Nijedan od tih naloga nije otvoren.' };
     const items = (await getItemsForWorkOrders(orgId, chosenOrders.map(o => o.Work_Order_ID))).filter(i => i.Item_Type !== 'custom');
     const catalog = catalogSnap.docs.map(d => d.data() as ProcessCatalogItem);
     const catalogRank = new Map(catalog.map(c => [foldText(c.Name).trim(), c.Order]));
     const catalogOrder = (name: string) => catalogRank.get(foldText(name).trim());
+    const worker = (workers as { Worker_ID: string; Name: string }[]).find(w => input.workerIds?.includes(w.Worker_ID));
 
     let process: string | undefined;
     if (input.process?.trim()) {
@@ -605,8 +755,21 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
             ...chosenOrders.flatMap(o => (o.Process_Graph?.nodes || []).map(n => n.name)),
         ].filter(n => n && foldText(n) !== 'rad')));
         const preferred = chosenOrders.flatMap(o => planProcessNames(o.Process_Graph, items.filter(i => i.Work_Order_ID === o.Work_Order_ID)));
-        process = matchProcess(input.process, vocabulary, preferred) || undefined;
+        process = input.exactProcess
+            ? vocabulary.find(v => foldText(v) === foldText(input.process!)) || input.process.trim()
+            : matchProcess(input.process, vocabulary, preferred) || undefined;
         if (!process) return { ok: false, error: `Proces „${input.process.trim()}" nije u katalogu procesa — pitaj koji je, ili neka ga doda u ERP-u (Procesi → ⚙).` };
+        // Djelimično rečen proces koji bi preskočio bar dva nezapočeta koraka → korisnik bira.
+        if (!input.exactProcess && !processFullySaid(input.process, process)) {
+            const p = process;
+            const skipped = unsaidTrack(input.process, p, Array.from(new Set(items.flatMap(i => unstartedUpstream(chosenOrders.find(o => o.Work_Order_ID === i.Work_Order_ID)?.Process_Graph, i.ID, p, i.Processes)))));
+            if (skipped.length >= 2) {
+                return {
+                    ok: false, error: `„${input.process.trim()}" nije jednoznačan proces — korisnik bira.`,
+                    choice: { kind: 'process', said: input.process.trim(), options: processCandidates(input.process, vocabulary, preferred).map(v => ({ label: v, value: v })) },
+                };
+            }
+        }
     }
 
     const out: ProgressOrder[] = [];
@@ -648,7 +811,7 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
             const day = input.date || (input.state === 'done' ? lastDay.get(i.ID) : null) || input.today;
             const res = ensureGraphNode(graph, i.ID, process, uuidv4, catalogOrder);
             graph = res.graph;
-            const marked = markItemProcess(i.Processes, process, input.state === 'done', { id: '', name: '' }, `${day}T15:00:00.000Z`);
+            const marked = markItemProcess(i.Processes, process, input.state === 'done', { id: worker?.Worker_ID || '', name: worker?.Name || '' }, `${day}T15:00:00.000Z`);
             // Stanje bez radnika: prazno ime radnika se ne upisuje.
             let processes = marked.processes.map(p => {
                 if (p.Worker_ID !== '') return p;
@@ -687,7 +850,7 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
     for (const [day, ids] of Array.from(finishByDate.entries())) {
         finished += (await finishItems(orgId, ids, `${day}T15:00:00.000Z`, track)).items;
     }
-    return { ok: true, ...(process ? { process } : {}), state: input.state, orders: out, finished };
+    return { ok: true, ...(process ? { process } : {}), state: input.state, orders: out, finished, ...(worker ? { workers: [worker.Name] } : {}) };
 }
 
 export interface EmptyDaysResult {

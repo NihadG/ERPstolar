@@ -416,6 +416,8 @@ export interface Order {
     Status: string;
     /** Kad je narudžba poslana dobavljaču — početak roka isporuke (lib/materialGates.supplierLeadDays). */
     Sent_At?: string;
+    /** Datum slanja nije poznat (nacrt primljen porukom „stiglo je…") — ne uči rok isporuke dok ga korisnik ne kaže. */
+    Sent_At_Assumed?: boolean;
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;

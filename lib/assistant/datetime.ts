@@ -95,6 +95,8 @@ export interface TimeMention {
     /** „za 2 sata", „za pola sata" — računa se od SADA, ne od dana. */
     relativeMinutes?: number;
     phrase: string;
+    /** Gdje u (presavijenom) tekstu stoji — kad poruka ima više sati, bira se onaj uz „napomeni me". */
+    index?: number;
 }
 
 const HOUR_WORDS: Record<string, number> = {
@@ -102,9 +104,17 @@ const HOUR_WORDS: Record<string, number> = {
     devet: 9, deset: 10, jedanaest: 11, dvanaest: 12,
 };
 const HOUR_WORD = Object.keys(HOUR_WORDS).join('|');
+/** Minute iza sata: „u dva i petnaest", „u osam i po". */
+const MINUTE_WORDS: Record<string, number> = {
+    pet: 5, deset: 10, petnaest: 15, dvadeset: 20, 'dvadeset pet': 25, trideset: 30, 'trideset pet': 35,
+    cetrdeset: 40, 'cetrdeset pet': 45, pedeset: 50, 'pedeset pet': 55, po: 30, pol: 30,
+};
+const MINUTE_WORD = Object.keys(MINUTE_WORDS).sort((a, b) => b.length - a.length).join('|');
 const PM = /^(?:popodne|poslije podne|poslijepodne|po podne|navecer|uvece|uvecer|nocu|veceras)$/;
 const AM = /^(?:ujutro|ujutru|jutros|izjutra)$/;
 const DAYPART = '(?:ujutro|ujutru|jutros|izjutra|popodne|poslije podne|poslijepodne|po podne|navecer|uvece|uvecer|nocu|veceras)';
+/** Dio dana ispred sata: „večeras u osam", „sutra ujutro u 7". */
+const DAYPART_BEFORE = /(?:^|\s)(ujutro|ujutru|jutros|izjutra|popodne|poslijepodne|navecer|uvece|uvecer|nocu|veceras)\s+(?:\S+\s+)?$/;
 /**
  * Riječi koje smiju stajati iza golog „u 7": veznici, zamjenice i glagoli
  * kojima se diktat nastavlja („u 3 kaži radniku"). Imenice ne smiju, pa
@@ -118,6 +128,11 @@ const BARE_HOUR_FOLLOW = new Set([
 
 function hourOf(raw: string): number {
     return /^\d+$/.test(raw) ? parseInt(raw, 10) : HOUR_WORDS[raw];
+}
+
+function minuteOf(raw: string | undefined): number {
+    if (!raw) return 0;
+    return /^\d+$/.test(raw) ? parseInt(raw, 10) : MINUTE_WORDS[raw] ?? NaN;
 }
 
 function withDaypart(hour: number, part: string | undefined): number {
@@ -134,61 +149,117 @@ function valid(h: number, m: number): boolean {
 
 /** Prvi izraz sata u tekstu ili null. Ne dira datume („26.10.") ni brojeve stanova („u 304"). */
 export function findTimeMention(text: string): TimeMention | null {
-    // foldText briše dvotačku, pa „15:30" prije toga postaje „15h30".
-    const t = ` ${foldText((text || '').replace(/(\d{1,2}):(\d{2})/g, '$1h$2'))} `;
-    let m: RegExpMatchArray | null;
+    return findTimeMentions(text)[0] || null;
+}
+
+/** Tekst kako ga čitaju parseri sata: presavijen, „15:30" → „15h30" (foldText briše dvotačku). */
+function timeText(text: string): string {
+    return ` ${foldText((text || '').replace(/(\d{1,2}):(\d{2})/g, '$1h$2'))} `;
+}
+
+/**
+ * Svi izrazi sata u tekstu, redom prednosti (relativno, „u 15:30", „15h", samo dio
+ * dana), svaki s položajem. „Večeras u osam" je JEDAN izraz (20:00), ne dva.
+ */
+export function findTimeMentions(text: string): TimeMention[] {
+    const t = timeText(text);
+    const out: TimeMention[] = [];
+    const taken: [number, number][] = [];
+    const add = (start: number, end: number, mention: Omit<TimeMention, 'index'>): void => {
+        if (taken.some(([a, b]) => start < b && end > a)) return;
+        taken.push([start, end]);
+        out.push({ ...mention, index: start });
+    };
+    const each = (re: RegExp, fn: (m: RegExpMatchArray, start: number, end: number) => void) => {
+        for (const m of Array.from(t.matchAll(re))) fn(m, m.index || 0, (m.index || 0) + m[0].length);
+    };
 
     // Relativno: „za pola sata", „za sat", „za 2 sata", „za 20 minuta".
-    if ((m = t.match(/\bza pola sata\b/))) return { hour: 0, minute: 0, relativeMinutes: 30, phrase: m[0].trim() };
-    if ((m = t.match(/\bza (?:jedan )?sat(?: vremena)?\b(?! i)/))) return { hour: 0, minute: 0, relativeMinutes: 60, phrase: m[0].trim() };
-    if ((m = t.match(new RegExp(`\\bza (\\d{1,2}|${HOUR_WORD}|dva|dvije) sat(?:a|i)?\\b`)))) {
+    each(/\bza pola sata\b/g, (m, a, b) => add(a, b, { hour: 0, minute: 0, relativeMinutes: 30, phrase: m[0].trim() }));
+    each(/\bza (?:jedan )?sat(?: vremena)?\b(?! i)/g, (m, a, b) => add(a, b, { hour: 0, minute: 0, relativeMinutes: 60, phrase: m[0].trim() }));
+    each(new RegExp(`\\bza (\\d{1,2}|${HOUR_WORD}|dva|dvije) sat(?:a|i)?\\b`, 'g'), (m, a, b) => {
         const n = m[1] === 'dvije' ? 2 : hourOf(m[1]);
-        if (n) return { hour: 0, minute: 0, relativeMinutes: n * 60, phrase: m[0].trim() };
-    }
-    if ((m = t.match(/\bza (\d{1,3}) min(?:uta|ute|utu)?\b/))) {
-        return { hour: 0, minute: 0, relativeMinutes: parseInt(m[1], 10), phrase: m[0].trim() };
-    }
+        if (n) add(a, b, { hour: 0, minute: 0, relativeMinutes: n * 60, phrase: m[0].trim() });
+    });
+    each(/\bza (\d{1,3}) min(?:uta|ute|utu)?\b/g, (m, a, b) => add(a, b, { hour: 0, minute: 0, relativeMinutes: parseInt(m[1], 10), phrase: m[0].trim() }));
 
     // „u podne"
-    if ((m = t.match(/\bu podne\b/))) return { hour: 12, minute: 0, phrase: m[0].trim() };
+    each(/\bu podne\b/g, (m, a, b) => add(a, b, { hour: 12, minute: 0, phrase: m[0].trim() }));
 
-    // „u 15:30", „u 7.15", „u 8h", „u 8 sati", „u 3 popodne", „u osam ujutro".
-    // Golo „u 7" vrijedi samo kad iza ne stoji imenica: „u 2 kombija",
-    // „od 1 m", „do 5 komada" nisu sati.
+    // „u pola tri" = 14:30 (pola sata PRIJE tri).
+    each(new RegExp(`\\b(?:u|oko|do|od) pola (\\d{1,2}|${HOUR_WORD})(?:\\s(${DAYPART}))?(?=[\\s.!?])`, 'g'), (m, a, b) => {
+        const before = DAYPART_BEFORE.exec(t.slice(0, a));
+        const h = withDaypart(hourOf(m[1]) - 1, m[2] || before?.[1]);
+        if (valid(h, 30)) add(before ? before.index : a, b, { hour: h, minute: 30, phrase: t.slice(before ? before.index : a, b).trim() });
+    });
+
+    // „u 15:30", „u 7.15", „u 8h", „u 8 sati", „u 3 popodne", „u osam ujutro", „u dva i petnaest",
+    // „večeras u osam". Golo „u 7" / „u osam" vrijedi samo kad iza ne stoji imenica:
+    // „u 2 kombija", „od 1 m", „do 5 komada" nisu sati.
     const explicit = new RegExp(
-        `\\b(u|oko|do|od|prije|poslije) (\\d{1,2}|${HOUR_WORD})(?:[h.](\\d{2}))?(?:\\s?(h|sati|sat|casova))?(?:\\s(${DAYPART}))?(?=[\\s,.!?])`,
+        `\\b(u|oko|do|od|prije|poslije) (\\d{1,2}|${HOUR_WORD})(?:[h.](\\d{2})| i (\\d{2}|${MINUTE_WORD}))?(?:\\s?(h|sati|sat|casova))?(?:\\s(${DAYPART}))?(?=[\\s.!?])`,
         'g'
     );
-    for (const mm of Array.from(t.matchAll(explicit))) {
-        const [, prep, num, mins, suffix, part] = mm;
+    each(explicit, (mm, a, b) => {
+        const [, prep, num, mins, minWords, suffix, part] = mm;
         if (!(mins || suffix || part)) {
-            if (!/^\d+$/.test(num) || (prep !== 'u' && prep !== 'oko')) continue;
-            const after = t.slice((mm.index || 0) + mm[0].length).replace(/^[\s,.!?]+/, '').split(' ')[0] || '';
-            if (after && !BARE_HOUR_FOLLOW.has(after)) continue;
+            if (prep !== 'u' && prep !== 'oko') return;
+            const after = t.slice(b).replace(/^[\s.!?]+/, '').split(' ')[0] || '';
+            if (after && !BARE_HOUR_FOLLOW.has(after)) return;
         }
-        const h = withDaypart(hourOf(num), part);
-        const min = mins ? parseInt(mins, 10) : 0;
-        if (valid(h, min)) return { hour: h, minute: min, phrase: mm[0].trim() };
-    }
+        const before = part ? null : DAYPART_BEFORE.exec(t.slice(0, a));
+        const h = withDaypart(hourOf(num), part || before?.[1]);
+        const min = mins ? parseInt(mins, 10) : minuteOf(minWords);
+        const start = before ? before.index : a;
+        if (valid(h, min)) add(start, b, { hour: h, minute: min, phrase: t.slice(start, b).trim() });
+    });
 
     // Bez prijedloga: „15:30", „15h", „8 sati ujutro".
-    if ((m = t.match(new RegExp(`\\b(\\d{1,2})h(\\d{2})(?:\\s?h)?(?:\\s(${DAYPART}))?(?=[\\s,])`)))) {
+    each(new RegExp(`\\b(\\d{1,2})h(\\d{2})(?:\\s?h)?(?:\\s(${DAYPART}))?(?=[\\s])`, 'g'), (m, a, b) => {
         const h = withDaypart(parseInt(m[1], 10), m[3] || 'x');
         const min = parseInt(m[2], 10);
-        if (valid(h, min)) return { hour: h, minute: min, phrase: m[0].trim() };
-    }
-    if ((m = t.match(new RegExp(`\\b(\\d{1,2})\\s?(?:h|sati|casova)(?:\\s(${DAYPART}))?(?=[\\s,])`)))) {
+        if (valid(h, min)) add(a, b, { hour: h, minute: min, phrase: m[0].trim() });
+    });
+    each(new RegExp(`\\b(\\d{1,2})\\s?(?:h|sati|casova)(?:\\s(${DAYPART}))?(?=[\\s])`, 'g'), (m, a, b) => {
         const h = withDaypart(parseInt(m[1], 10), m[2]);
-        if (valid(h, 0)) return { hour: h, minute: 0, phrase: m[0].trim() };
-    }
+        if (valid(h, 0)) add(a, b, { hour: h, minute: 0, phrase: m[0].trim() });
+    });
 
     // Samo dio dana.
-    if ((m = t.match(/\b(?:ujutro|ujutru|izjutra)\b/))) return { hour: 8, minute: 0, phrase: m[0].trim() };
-    if ((m = t.match(/\b(?:prijepodne|prije podne)\b/))) return { hour: 10, minute: 0, phrase: m[0].trim() };
-    if ((m = t.match(/\b(?:popodne|poslije podne|poslijepodne|po podne)\b/))) return { hour: 15, minute: 0, phrase: m[0].trim() };
-    if ((m = t.match(/\b(?:navecer|uvece|uvecer|veceras)\b/))) return { hour: 19, minute: 0, phrase: m[0].trim() };
+    each(/\b(?:ujutro|ujutru|izjutra)\b/g, (m, a, b) => add(a, b, { hour: 8, minute: 0, phrase: m[0].trim() }));
+    each(/\b(?:prijepodne|prije podne)\b/g, (m, a, b) => add(a, b, { hour: 10, minute: 0, phrase: m[0].trim() }));
+    each(/\b(?:popodne|poslije podne|poslijepodne|po podne)\b/g, (m, a, b) => add(a, b, { hour: 15, minute: 0, phrase: m[0].trim() }));
+    each(/\b(?:navecer|uvece|uvecer|veceras)\b/g, (m, a, b) => add(a, b, { hour: 19, minute: 0, phrase: m[0].trim() }));
 
-    return null;
+    return out;
+}
+
+/** „Napomeni me", „podsjeti me" — riječ uz koju stoji vrijeme podsjetnika. */
+const REMINDER_VERB = /\b(napomen\w*|podsjet\w*|javi mi|napisi mi|posalji mi|ne zaboravi|zapamti)\b/g;
+
+/**
+ * Kad poruka ima više vremena („reci Mansi da okuje večeras u osam, a mene napomeni
+ * u dva i petnaest"), podsjetnik je ono uz „napomeni me": prvo u istoj rečenici
+ * (granica: tačka ili „a / pa / ali"), pa najbliže. Bez takve riječi → prvo po redu.
+ */
+export function reminderMention<T extends { index?: number }>(text: string, mentions: T[]): T | undefined {
+    if (mentions.length <= 1) return mentions[0];
+    const t = timeText(text);
+    const verbs = Array.from(t.matchAll(REMINDER_VERB)).map(m => ({ a: m.index || 0, b: (m.index || 0) + m[0].length }));
+    if (!verbs.length) return mentions[0];
+    const clauseOf = (i: number) => {
+        let start = 0;
+        for (const m of Array.from(t.matchAll(/[.!?]\s|\s(?:a|pa|ali)\s/g))) {
+            if ((m.index || 0) < i) start = (m.index || 0) + 1;
+        }
+        return start;
+    };
+    const dist = (x: T) => Math.min(...verbs.map(v => {
+        const i = x.index ?? 0;
+        return i >= v.b ? i - v.b : Math.max(0, v.a - i);
+    }));
+    const sameClause = mentions.filter(x => verbs.some(v => clauseOf(x.index ?? 0) === clauseOf(v.a)));
+    return [...(sameClause.length ? sameClause : mentions)].sort((x, y) => dist(x) - dist(y))[0];
 }
 
 // ─── Konačni trenutak podsjetnika ─────────────────────────────────────
@@ -234,18 +305,23 @@ export function resolveReminderAt(opts: {
         return { iso: new Date(ms).toISOString(), date: z.date, time: z.time };
     };
 
-    const tm = findTimeMention(text);
-    if (tm?.relativeMinutes) return finish(nowMs + tm.relativeMinutes * 60000);
-
     const model = parseLocalDateTime(opts.modelLocal);
     const modelHasTime = typeof opts.modelLocal === 'string' && /T\d{1,2}:\d{2}/.test(opts.modelLocal);
+    // Više vremena u poruci (vrijeme posla + vrijeme podsjetnika): model je izabrao jedno
+    // od rečenih → to; inače ono uz „napomeni me". Tekst nikad ne pregazi tačan izbor modela.
+    const times = findTimeMentions(text);
+    const tm = times.length > 1 && model && modelHasTime
+        ? times.find(x => !x.relativeMinutes && x.hour === model.hour && x.minute === model.minute) || reminderMention(text, times)
+        : reminderMention(text, times);
+    if (tm?.relativeMinutes) return finish(nowMs + tm.relativeMinutes * 60000);
+
     const mentions = findDateMentions(text, today);
 
     let date: IsoDate | null = null;
     let explicitDate = false;
     if (mentions.length) {
         explicitDate = true;
-        date = model && mentions.some(m => m.date === model.date) ? model.date : mentions[0].date;
+        date = model && mentions.some(m => m.date === model.date) ? model.date : reminderMention(text, mentions)!.date;
     } else if (model && model.date >= today && (Date.parse(model.date) - Date.parse(today)) / 86_400_000 <= MAX_AHEAD_DAYS) {
         date = model.date;
     }

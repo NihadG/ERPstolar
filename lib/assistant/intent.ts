@@ -12,16 +12,18 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { foldText } from '@/lib/voice/text';
-import { workerMentioned, mentionsEveryone, type GroundRef } from './grounding';
+import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
 
-export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'presence' | 'order' | 'question';
+export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'presence' | 'order' | 'arrival' | 'question';
 
 export interface MessageIntent {
     kinds: MessageKind[];
     /** Poruka traži upis (nije samo pitanje). */
     expectsWrite: boolean;
-    /** Rečeni radnici (ID). „Svi" se ovdje ne širi. */
+    /** Rečeni radnici (ID) — ime, prezime ili naučeni nadimak. „Svi" se ovdje ne širi. */
     workerIds: string[];
+    /** Riječi koje su vjerovatno nadimak radnika („Kemo" → Kemal); više ID-jeva = nejasno. */
+    nicknames: { token: string; ids: string[] }[];
     /** Rečena vremena: „00:01", „7:00", „ujutro". */
     times: string[];
 }
@@ -44,16 +46,21 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     }
 
     const workerIds = workers.filter(w => workerMentioned(text, w)).map(w => w.id);
+    // Nadimak („Kemo") samo kao napomena modelu — u pokrivenost ulaze rečena imena.
+    const nicknames = workerNicknames(text, workers);
+    const anyWorker = workerIds.length > 0 || nicknames.length > 0;
     const question = /\?\s*$/.test(text.trim()) || QUESTION_START.test(t);
 
     if (/\b(napomeni|podsjeti|podsjetnik|javi mi|napisi mi|napiši mi|posalji mi poruku|pošalji mi poruku|ne zaboravi|zapamti da)\b/.test(t)
         || (times.length && /\b(trebam|moram|treba|javiti|nazvati|zvati|naruciti|naručiti|platiti|otici|otići|pitati)\b/.test(t))) kinds.add('reminder');
     if (/\b(neka|reci|recite|kazi|kaži|javi)\b/.test(t) && workerIds.length) kinds.add('task');
     if (/\b(naruci|naruči|narucio|naručio|narudzb|narudžb)\w*/.test(t) && !question) kinds.add('order');
+    if (/\b(stig|dosa|dosl|dostav|isporuc)\w*/.test(t) && !question && !anyWorker) kinds.add('arrival');
     if (/\b(prisut|bolovanj|odmor|na terenu|nije dosao|nije došao|nisu dosli|nisu došli|odsut)\w*/.test(t) && (workerIds.length || mentionsEveryone(text))) kinds.add('presence');
     if ((facts.locations.length && (facts.dims.length || facts.widths.length || /\b(fali|fale|nije postavljen|nisam postavio|pogresno|pogrešno|ima|imam|stoji|u stanu|na hodniku)\b/.test(t)))
         || /\b(u kombiju|na hodniku|u stanu)\b/.test(t)) kinds.add('notebook');
-    if (workerIds.length && /\b(radio|radili|radila|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|furnir|presov)\w*/.test(t) && !kinds.has('task')) kinds.add('work');
+    if (anyWorker && !kinds.has('task')
+        && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
     if (question) kinds.add('question');
 
     const writeKinds = Array.from(kinds).filter(k => k !== 'question');
@@ -62,23 +69,29 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         // Pitanje može i upisati („…, šta još fali?"), ali tad ne tjeramo upis.
         expectsWrite: writeKinds.length > 0 && !question,
         workerIds,
+        nicknames,
         times: Array.from(new Set(times)),
     };
 }
 
 const KIND_LABEL: Record<MessageKind, string> = {
     reminder: 'podsjetnik (create_task s reminder_at)', task: 'zadatak za radnika (create_task s worker)',
-    notebook: 'bilježnica (remember / update_memory)', work: 'rad (log_work)', presence: 'prisustvo (set_presence)',
-    order: 'narudžba (create_order / manage_order)', question: 'pitanje (odgovor, bez upisa)',
+    notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)', presence: 'prisustvo (set_presence)',
+    order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)', question: 'pitanje (odgovor, bez upisa)',
 };
 
-/** Dio napomene za model: vrsta poruke, rečeni radnici i vrijeme. */
+/** Dio napomene za model: vrsta poruke, rečeni radnici (i nadimci) i vrijeme. */
 export function intentNote(intent: MessageIntent, workerLabel: (id: string) => string): string[] {
     const parts: string[] = [];
     // Samo pitanje ne treba napomenu — model ionako odgovara.
     const kinds = intent.kinds.filter(k => k !== 'question');
     if (kinds.length) parts.push(`vrsta: ${kinds.map(k => KIND_LABEL[k]).join(' + ')}`);
     if (intent.workerIds.length) parts.push(`radnici: ${intent.workerIds.map(workerLabel).join(', ')}`);
+    for (const n of intent.nicknames) {
+        parts.push(n.ids.length === 1
+            ? `„${n.token}" je nadimak: ${workerLabel(n.ids[0])}`
+            : `„${n.token}" može biti: ${n.ids.map(workerLabel).join(' ili ')} — pitaj ask_user`);
+    }
     if (intent.times.length) parts.push(`vrijeme: ${intent.times.join(', ')}`);
     return parts;
 }

@@ -30,8 +30,10 @@ function people(names: string[]): string {
 }
 
 export function diarySummary(result: Extract<DiaryResult, { ok: true }>, dayName: string): string {
+    // Procesi iz upisa, i kad Knjiga rada nije dirana (dan već knjižen) — s imenom ko je radio.
+    const processRows = result.processRows || result.rows.filter(r => r.process).map(r => ({ ...r, process: r.process!, workers: [r.worker] }));
     const processLines = Array.from(new Set([
-        ...result.rows.filter(r => r.process).map(r => `• ${r.process} ${r.done ? 'završeno' : 'u toku'} · ${r.workOrderName}${r.products.length ? ` (${r.products.join(', ')})` : ''}${r.graphAdded ? ' · novo u toku naloga' : ''}`),
+        ...processRows.map(r => `• ${r.process} ${r.done ? 'završeno' : 'u toku'} · ${r.workOrderName}${r.products.length ? ` (${r.products.join(', ')})` : ''}${r.graphAdded ? ' · novo u toku naloga' : ''} — ${people(r.workers)}`),
         ...result.planned.map(n => `📋 Plan ${n.source === 'rules' ? 'iz pravila materijala' : n.source === 'template' ? 'po vrsti proizvoda' : 's kartice proizvoda'} · ${noteWhere(n)}: ${n.processes.join(' → ')}`),
         ...result.assumedDone.map(n => `☑️ Pretpostavljeno završeno${n.date ? ` ${day(n.date)} (zadnji rad)` : ''} · ${noteWhere(n)}: ${n.processes.join(', ')}`),
         ...(result.finished || []).map(n => `✔ Proizvod završen · ${noteWhere(n)}`),
@@ -42,6 +44,7 @@ export function diarySummary(result: Extract<DiaryResult, { ok: true }>, dayName
     const present = (result.presenceSet || []).filter(n => result.rows.some(r => r.worker === n));
     return [
         ...(rows.length ? [`📒 Knjiga rada, ${dayName}:`, ...rows] : []),
+        ...(result.bookedBefore?.length ? [`📒 Knjiga rada — ${dayName} već knjiženo, nije dirano: ${people(result.bookedBefore)}`] : []),
         ...(result.absences.length ? [`🗓 Prisustvo, ${dayName}:`, ...result.absences.map(x => `• ${x.worker} — ${x.status}`)] : []),
         ...(present.length ? [`🗓 Prisutan ${dayName}: ${people(present)}`] : []),
         ...(processLines.length ? ['⚙️ Procesi:', ...processLines] : []),
@@ -69,7 +72,7 @@ export function presenceSummary(rows: PresenceRow[], status: string, dayName: st
 
 export function progressSummary(res: Extract<ProgressResult, { ok: true }>, fmt: (date: string) => string): string {
     const head = res.process
-        ? `⚙️ Procesi — ${res.process} ${res.state === 'done' ? 'završeno' : 'u toku'}${res.state === 'done' ? ' (dan zadnjeg rada iz Knjige rada)' : ''}:`
+        ? `⚙️ Procesi — ${res.process} ${res.state === 'done' ? 'završeno' : 'u toku'}${res.workers?.length ? ` — ${people(res.workers)}` : ''}${res.state === 'done' ? ' (dan zadnjeg rada iz Knjige rada)' : ''}:`
         : '⚙️ Procesi — proizvodi završeni (dan zadnjeg rada iz Knjige rada):';
     const lines = [head];
     for (const o of res.orders) {

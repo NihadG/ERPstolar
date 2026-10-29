@@ -16,7 +16,7 @@ import { adminDb } from '@/lib/server/firebaseAdmin';
 import { attachItems, getItemsForWorkOrders, getOpenWorkOrders, processGraphOf } from '@/lib/server/fieldRepo';
 import { createTask } from '@/lib/server/fieldWrites';
 import {
-    createDraftOrder, loadProductMaterials, loadProjectMaterials, receiveOrderItems, type BeforeHook, type DraftLine,
+    createDraftOrder, loadProductMaterials, loadProjectMaterials, receiveOrderItems, sendOrder, type BeforeHook, type DraftLine,
 } from '@/lib/server/orderWrites';
 import { orderItemAllocations } from '@/lib/orderMaterialAllocation';
 import { materialGroupKey, roundQty } from '@/lib/orderItemGroups';
@@ -106,9 +106,10 @@ export async function loadLeadDays(orgId: string): Promise<Map<string, number>> 
         db.collection('order_items').where('Organization_ID', '==', orgId).where('Status', '==', 'Primljeno').get(),
     ]);
     const byId = new Map(orders.docs.map(d => d.data() as Order).map(o => [o.Order_ID, o]));
+    // Narudžba kojoj datum slanja nije poznat (nacrt primljen porukom) ne uči rok isporuke.
     const value = supplierLeadDays(items.docs.map(d => d.data() as OrderItem).flatMap(i => {
         const o = byId.get(i.Order_ID);
-        return o && i.Received_Date ? [{ supplier: o.Supplier_Name, orderedAt: o.Sent_At || o.Order_Date, receivedAt: i.Received_Date }] : [];
+        return o && i.Received_Date && !o.Sent_At_Assumed ? [{ supplier: o.Supplier_Name, orderedAt: o.Sent_At || o.Order_Date, receivedAt: i.Received_Date }] : [];
     }));
     leadCache.set(orgId, { at: Date.now(), value });
     return value;
@@ -487,6 +488,125 @@ export async function materialDigest(orgId: string, today: string): Promise<stri
 }
 
 // ─── „Stiglo je …" porukom ────────────────────────────────────────────
+
+export interface ArrivalOutcome {
+    ok: boolean;
+    /** Red za potvrdu („📦 Stiglo: …"). */
+    line?: string;
+    error?: string;
+    /** Više različitih materijala pristaje rečenom nazivu — korisnik bira dugmetom. */
+    candidates?: string[];
+    /** Narudžbe kojima ERP ne zna kad su naručene (bile nacrt ili su sad napravljene). */
+    assumed?: { orderId: string; orderNumber: string }[];
+    /** Ništa nije promijenjeno (sve je već bilo primljeno). */
+    unchanged?: boolean;
+}
+
+/**
+ * „Stigao Kerrock za Budnju": ERP nađe materijal u SASTAVNICI projekta (ne samo u
+ * kapijama naloga u toku) i njegovu narudžbu, pa je završi po pravilu korisnika:
+ *   • poslana narudžba → primi stavke;
+ *   • nacrt → označi poslanim (datum narudžbe nepoznat — ne ulazi u rok isporuke) i primi;
+ *   • narudžbe nema → napravi je iz sastavnice, označi poslanom i primi.
+ * Rečena količina manja od ostatka = djelimičan prijem. Više različitih materijala
+ * istog naziva („kerrock" → ploča i ljepilo) → izbor; `all` = svi.
+ */
+export async function receiveArrival(
+    orgId: string,
+    input: { projectIds: string[]; name: string; quantity?: number; exact?: boolean; all?: boolean; orderName?: string },
+    before: BeforeHook,
+    onCreated: (path: string) => void,
+): Promise<ArrivalOutcome> {
+    const rows = await loadProjectMaterials(orgId, input.projectIds);
+    const scored = rows
+        .map(r => ({ r, s: input.exact ? (foldText(r.name) === foldText(input.name) ? 1 : 0) : matchScore(input.name, [r.name]) }))
+        .filter(x => x.s >= 0.7);
+    if (!scored.length) return { ok: false, error: `„${input.name}" nije u sastavnici tih projekata.` };
+    const best = Math.max(...scored.map(x => x.s));
+    const top = scored.filter(x => x.s >= best - 0.05).map(x => x.r);
+    const names = Array.from(new Map(top.map(r => [materialGroupKey(r.name, r.unit), r.name])).values());
+    if (names.length > 1 && !input.all) {
+        return { ok: false, error: `„${input.name}" odgovara za više materijala.`, candidates: names.slice(0, 5) };
+    }
+    const label = names.length === 1 ? names[0] : names.join(', ');
+    const open = top.filter(r => roundQty(r.received + r.onStock) < roundQty(r.needed) || r.needed === 0);
+    if (!open.length) return { ok: true, unchanged: true, line: `✔ ${label} — već je bilo primljeno, ništa nije mijenjano.` };
+    const ids = new Set(open.map(r => r.materialId));
+
+    const db = adminDb();
+    const [ordersSnap, itemsSnap] = await Promise.all([
+        db.collection('orders').where('Organization_ID', '==', orgId).get(),
+        db.collection('order_items').where('Organization_ID', '==', orgId).get(),
+    ]);
+    const orders = new Map(ordersSnap.docs.map(d => d.data() as Order).map(o => [o.Order_ID, o]));
+    const hits = itemsSnap.docs.map(d => d.data() as OrderItem)
+        .filter(i => i.Status !== 'Primljeno' && Object.keys(orderItemAllocations(i)).some(id => ids.has(id)))
+        .filter(i => ['Poslano', 'Nacrt'].includes(orders.get(i.Order_ID)?.Status || ''));
+    const covered = new Set(hits.flatMap(i => Object.keys(orderItemAllocations(i))));
+
+    let left = input.quantity;
+    const parts: string[] = [];
+    const assumed: { orderId: string; orderNumber: string }[] = [];
+    // Rečena količina se troši redom po stavkama; bez nje stiže sve što je ostalo.
+    const receive = async (orderId: string, items: OrderItem[]) => {
+        const qty: Record<string, number> = {};
+        for (const i of items) {
+            const rest = Math.max(0, roundQty((i.Quantity || 0) - (i.Received_Quantity || 0)));
+            const take = left === undefined ? rest : Math.min(rest, left);
+            if (take <= 0) continue;
+            qty[i.ID] = take;
+            if (left !== undefined) left = roundQty(left - take);
+        }
+        if (!Object.keys(qty).length) return null;
+        return receiveOrderItems(orgId, orderId, Object.keys(qty), before, qty);
+    };
+
+    for (const orderId of Array.from(new Set(hits.map(i => i.Order_ID)))) {
+        const order = orders.get(orderId)!;
+        const mine = hits.filter(i => i.Order_ID === orderId);
+        const draft = order.Status === 'Nacrt';
+        if (draft) {
+            const sent = await sendOrder(orgId, orderId, before, { assumed: true });
+            if (!sent.ok) { parts.push(sent.error); continue; }
+            assumed.push({ orderId, orderNumber: order.Order_Number });
+        }
+        const res = await receive(orderId, mine);
+        if (res?.ok) parts.push(`${draft ? 'nacrt' : 'narudžba'} ${order.Order_Number} (${order.Supplier_Name})${draft ? ' → poslano i primljeno' : ' primljena'}${res.detail && !/cijela/.test(res.detail) ? ` (${res.detail})` : ''}`);
+    }
+
+    // Narudžbe nije bilo: napravi je iz sastavnice (po dobavljaču), pa poslano + primljeno.
+    const missing = open.filter(r => !covered.has(r.materialId));
+    if (missing.length && (left === undefined || left > 0)) {
+        const created = await draftOrdersFor(orgId, Array.from(new Set(missing.map(r => r.projectId))), missing.map(r => r.materialId),
+            input.orderName || label, 'Napravljeno pri prijemu (Telegram) — narudžbe u ERP-u nije bilo.', async path => onCreated(path));
+        for (const d of created) {
+            const sent = await sendOrder(orgId, d.orderId, before, { assumed: true });
+            if (!sent.ok) { parts.push(sent.error); continue; }
+            assumed.push({ orderId: d.orderId, orderNumber: d.orderNumber });
+            const items = await byIds<OrderItem>(orgId, 'order_items', 'Order_ID', [d.orderId]);
+            const res = await receive(d.orderId, items);
+            if (res?.ok) parts.push(`narudžbe nije bilo — napravljena ${d.orderNumber} (${d.supplier}) i primljena`);
+        }
+        // Ništa za naručiti (interni dobavljač, već vođeno kao naručeno) → samo „na stanju".
+        if (!created.length && await markMaterialsHere(orgId, missing.map(r => r.materialId), before)) parts.push('upisano kao na stanju');
+    }
+    if (!parts.length) return { ok: false, error: `„${label}": nema ničega za primiti.` };
+    const q = input.quantity !== undefined ? `${input.quantity} ` : '';
+    return { ok: true, line: `📦 Stiglo: ${q}${label} — ${parts.join('; ')}`, assumed };
+}
+
+/**
+ * Odgovor na „Kad je naručeno?" (dugme uz prijem nacrta): datum slanja prije `days` dana
+ * u 9 h — od sad narudžba uči rok isporuke dobavljača. false = narudžba ne postoji.
+ */
+export async function setOrderSentDaysAgo(orgId: string, orderId: string, days: number, tz: string, now = new Date()): Promise<boolean> {
+    const snap = await adminDb().collection('orders').where('Organization_ID', '==', orgId).where('Order_ID', '==', orderId).limit(1).get();
+    if (snap.empty) return false;
+    const day = addDays(toZoned(now, tz).date, -days);
+    await snap.docs[0].ref.update({ Sent_At: new Date(zonedToUtcMs(day, 9, 0, tz)).toISOString(), Sent_At_Assumed: false });
+    leadCache.delete(orgId);
+    return true;
+}
 
 export type ArrivalResult =
     | { ok: true; line: string }
