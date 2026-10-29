@@ -65,6 +65,35 @@ function seed() {
     });
     log('h1', 'amer', '2026-10-22', 'c1', 'ck'); log('h2', 'amer', '2026-09-28', 'c2', 'co');
     log('h3', 'bego', '2026-10-25', 'c3', 'cv'); log('h4', 'kerim', '2026-10-23', 's1', 'si');
+
+    // PDF 29.10.: Budnja (podkonstrukcije od jele i OSB-a, iveral na podkonstrukciji) i Švicarska (umivaonici).
+    const names = ['Priprema masive', 'Izrada podkonstrukcije od jele/smreke', 'Krojenje OSB-a', 'Izrada podkonstrukcije od OSB-a', 'Krojenje iverala', 'Kantiranje iverala', 'Sklapanje kutija', 'Okivanje'];
+    const covers: Record<string, string[]> = { 'Priprema masive': ['b1', 'b2'], 'Izrada podkonstrukcije od jele/smreke': ['b1', 'b2'], 'Krojenje OSB-a': ['b1', 'b2'], 'Izrada podkonstrukcije od OSB-a': ['b1', 'b2'] };
+    const node = (n: string) => ({ id: `b-${n}`, name: n, itemIds: covers[n] || ['b1', 'b2', 'b3'] });
+    const edge = (a: string, b: string) => ({ id: `${a}>${b}`, source: `b-${a}`, target: `b-${b}` });
+    names.forEach((n, i) => store.set(`process_catalog/B${i}`, { ID: `B${i}`, Organization_ID: ORG, Name: n, Order: 20 + i }));
+    store.set('projects/pb', { Project_ID: 'pb', Organization_ID: ORG, Client_Name: 'Budnjo', Name: 'Hoteli Budnjo', Status: 'U proizvodnji', Created_Date: '2026-09-01' });
+    store.set('work_orders/wb', {
+        Work_Order_ID: 'wb', Organization_ID: ORG, Name: 'Budnjo Svedski stolovi', Status: 'U toku', Work_Order_Type: 'Proizvodnja', Started_At: '2026-10-01', Created_Date: '2026-10-01',
+        Process_Graph: {
+            nodes: names.map(node),
+            edges: [edge('Priprema masive', 'Izrada podkonstrukcije od jele/smreke'), edge('Izrada podkonstrukcije od jele/smreke', 'Sklapanje kutija'),
+                edge('Krojenje OSB-a', 'Izrada podkonstrukcije od OSB-a'), edge('Izrada podkonstrukcije od OSB-a', 'Sklapanje kutija'),
+                edge('Krojenje iverala', 'Kantiranje iverala'), edge('Kantiranje iverala', 'Sklapanje kutija'), edge('Sklapanje kutija', 'Okivanje')],
+        },
+    });
+    for (const id of ['b1', 'b2', 'b3']) {
+        store.set(`work_order_items/${id}`, {
+            ID: id, Organization_ID: ORG, Work_Order_ID: 'wb', Product_ID: `p-${id}`, Product_Name: `Poz ${id.slice(1)} - Svedski sto`, Project_ID: 'pb', Status: 'U toku',
+            Processes: names.filter(n => node(n).itemIds.includes(id)).map(n => ({ Process_Name: n, Status: 'Na čekanju' })),
+        });
+    }
+    store.set('projects/psv', { Project_ID: 'psv', Organization_ID: ORG, Client_Name: 'Švicarska', Name: 'Švicarska', Status: 'U proizvodnji', Created_Date: '2026-09-01' });
+    store.set('work_orders/wu', { Work_Order_ID: 'wu', Organization_ID: ORG, Name: 'Umivaonici, 1. faza', Status: 'U toku', Work_Order_Type: 'Proizvodnja', Started_At: '2026-10-01', Created_Date: '2026-10-01' });
+    store.set('work_order_items/u1', { ID: 'u1', Organization_ID: ORG, Work_Order_ID: 'wu', Product_ID: 'p-u1', Product_Name: 'WHG 0.1 Waschtisch Bad', Project_ID: 'psv', Status: 'U toku' });
+    store.set('products/p-u1', { Product_ID: 'p-u1', Organization_ID: ORG, Project_ID: 'psv', Name: 'WHG 0.1 Waschtisch Bad', Quantity: 1 });
+    store.set('product_materials/um1', { ID: 'um1', Organization_ID: ORG, Product_ID: 'p-u1', Material_Name: 'Iveral / U960 ST9 Onyx siva', Quantity: 0.4, Unit: 'Kom', Unit_Price: 0, Total_Price: 0, Status: 'Na stanju', Supplier: 'Elgrad' });
+    store.set('product_materials/um2', { ID: 'um2', Organization_ID: ORG, Product_ID: 'p-u1', Material_Name: 'KT / U960 ST9 23/2', Quantity: 24.5, Unit: 'm', Unit_Price: 0, Total_Price: 0, Status: 'Nije naručeno', Supplier: 'Elgrad' });
 }
 
 async function say(text: string) {
@@ -129,6 +158,27 @@ run('stvarne rečenice → pravi sloj (pravi model)', () => {
         expect(all.map(c => c.name)).toContain('order_status');
         expect(all.every(c => !['log_work', 'set_progress', 'set_presence', 'fill_work_days'].includes(c.name))).toBe(true);
         expect(out.reply).toMatch(/25\.10\.|22\.10\./);
+    });
+
+    it('PDF 29.10. Budnja: podkonstrukcije gotove, iveral skrojen, u toku montaža iverala → procesi kroz graf', async () => {
+        const { calls, out } = await say('Za budnju su napravljene sve podkonstrukcije od jele smreke, i sve podkonstrukcije od osb, skrojen sav iveral i u toku je montaza iverala na podkonstrukcije');
+        expect(calls.map(c => c.name)).toContain('set_progress');
+        const st = (id: string, p: string) => item(id).Processes?.find((x: any) => x.Process_Name === p)?.Status;
+        expect(st('b1', 'Izrada podkonstrukcije od jele/smreke')).toBe('Završeno');
+        expect(st('b1', 'Izrada podkonstrukcije od OSB-a')).toBe('Završeno');
+        expect(st('b1', 'Krojenje iverala')).toBe('Završeno');
+        expect(st('b3', 'Kantiranje iverala')).toBe('Završeno');
+        expect(st('b1', 'Sklapanje kutija')).toBe('U toku');
+        expect(item('b3').Processes.map((p: any) => p.Process_Name)).not.toContain('Izrada podkonstrukcije od OSB-a');
+        expect(logsToday()).toEqual([]);
+        expect(out.reply).not.toMatch(/nije u katalogu|Ako želiš/i);
+    });
+
+    it('PDF 29.10. Švicarska: „Koji iveral smo koristili (koji dekor)" → dekor iz sastavnice, ne „nemam zapisano"', async () => {
+        const { all, out } = await say('Koji iveral smo koristili za švicarsku umivaonike (koji dekor)');
+        expect(all.map(c => c.name)).toContain('product_materials');
+        expect(out.reply).toMatch(/U960/);
+        expect(out.reply).not.toMatch(/nemam zapisan/i);
     });
 
     it('„Amer i Kerim krojili iveral za kuhinju Čorluka" → Knjiga rada za oba', async () => {

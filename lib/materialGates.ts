@@ -75,12 +75,12 @@ const OKIVANJE = ['Okivanje', 'Završno sklapanje'];
 /** Tip → procesi u kojima se troši (prvi koji stavka ima u planu). */
 const NEED_BY: Record<string, string[]> = {
     masiv: ['Priprema masive', 'Izrada rešetke baze'],
-    jela: ['Priprema masive', 'Izrada cokla', 'Izrada rešetke baze'],
+    jela: ['Priprema masive', 'Izrada podkonstrukcije od jele/smreke', 'Izrada cokla', 'Izrada rešetke baze'],
     iveral: ['Krojenje iverala'],
     mdf: ['Krojenje MDF-a'],
     sper: ['Krojenje šperploče', 'Izrada zaobljenih dijelova'],
     oblikovna: ['Izrada zaobljenih dijelova', 'Krojenje šperploče'],
-    osb: ['Krojenje OSB-a', 'Izrada podkonstrukcije'],
+    osb: ['Krojenje OSB-a', 'Izrada podkonstrukcije od OSB-a'],
     hpl: ['Krojenje HPL-a', 'Presovanje HPL-a'],
     furnir: ['Priprema furnira', 'Furniranje'],
     kerrock: ['Krojenje Kerrocka'],

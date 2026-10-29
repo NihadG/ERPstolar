@@ -213,7 +213,23 @@ describe('ispravke: krevet, kuhinja, komoda, HPL, OSB, Kerrock/Corian', () => {
     });
 
     it('OSB: krojenje OSB-a pa izrada podkonstrukcije', () => {
-        expect(Array.from(plan('Zidna obloga', M('OSB 18')).edges)).toEqual(['Krojenje OSB-a > Izrada podkonstrukcije']);
+        expect(Array.from(plan('Zidna obloga', M('OSB 18')).edges)).toEqual(['Krojenje OSB-a > Izrada podkonstrukcije od OSB-a']);
+    });
+
+    // PDF 29.10.: Budnja — švedski stolovi od iverala na podkonstrukciji od OSB-a i jele/smreke.
+    it('podkonstrukcije (OSB, jela/smreka) su odvojeni koraci prije sklapanja kutija', () => {
+        const stol = plan('Poz 1 - Svedski stol', M('Iveral / Bijeli', 'KT / Bijeli', 'OSB 18', 'J / s masiv', 'Baglama ravna@Okovi'));
+        ['Krojenje OSB-a > Izrada podkonstrukcije od OSB-a', 'Izrada podkonstrukcije od OSB-a > Sklapanje kutija',
+            'Priprema masive > Izrada podkonstrukcije od jele/smreke', 'Izrada podkonstrukcije od jele/smreke > Sklapanje kutija',
+            'Kantiranje iverala > Sklapanje kutija', 'Sklapanje kutija > Okivanje'].forEach(e => expect(stol.edges).toContain(e));
+        expect(stol.phase('Sklapanje kutija')).toBeGreaterThan(stol.phase('Izrada podkonstrukcije od OSB-a'));
+    });
+
+    it('podkonstrukcija od jele/smreke: ne kod ormara (cokl) ni kreveta (rešetka baze)', () => {
+        expect(plan('Garderober', M('Iveral / Bijeli', 'J / s masiv')).nodes).not.toContain('Izrada podkonstrukcije od jele/smreke');
+        expect(plan('Krevet', M('Iveral / Bijeli', 'J / s masiv')).nodes).not.toContain('Izrada podkonstrukcije od jele/smreke');
+        expect(plan('Krevet', M('Iveral / Bijeli', 'OSB 18')).edges).not.toContain('Izrada podkonstrukcije od OSB-a > Sklapanje kutija');
+        expect(plan('Stol', M('J / s masiv')).nodes).toEqual(['Priprema masive', 'Izrada podkonstrukcije od jele/smreke']);
     });
 
     it('Kerrock i Corian: krojenje, lijepljenje, brušenje, montaža', () => {
@@ -257,6 +273,7 @@ describe('verzija standarda i stari nazivi', () => {
         expect(canonicalProcessName('Kantiranje fronti')).toBe('Kantiranje furnira');
         expect(canonicalProcessName('kantiranje')).toBe('Kantiranje iverala');
         expect(canonicalProcessName('Brušenje')).toBe('Brušenje');
+        expect(canonicalProcessName('Izrada podkonstrukcije')).toBe('Izrada podkonstrukcije od OSB-a');
     });
 
     it('svaki proces iz pravila je u katalogu', () => {

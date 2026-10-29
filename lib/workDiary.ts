@@ -16,6 +16,7 @@ import { foldText, stem, tokens } from './voice/text';
 import { tokenSimilarity } from './voice/match';
 import { nodeMatchesProcess } from './productProcesses';
 import { STANDARD_RENAMES } from './processStandard';
+import { standardAliases, type ProcessAlias } from './processVocabulary';
 import type { ItemProcessStatus, ProcessGraph, ProcessNode, WorkOrder } from './types';
 
 // ─── Poslovi na koje se može upisati rad ──────────────────────────────
@@ -136,13 +137,48 @@ function processCoverage(query: string, haystack: string): number {
  * Kad pristaje više procesa („kantiranje" → iverala ili furnira), prednost ima proces iz
  * plana stavki (`preferred`, redom: nezavršeni prvo) — tačan naziv procesa uvijek pobjeđuje.
  */
-export function matchProcess(name: string, vocabulary: string[], preferred: string[] = []): string | null {
+export function matchProcess(name: string, vocabulary: string[], preferred: string[] = [], aliases: ProcessAlias[] = STANDARD_ALIASES_LIST): string | null {
+    const exact = vocabulary.find(v => foldText(v) === foldText(name));
+    if (exact) return exact;
+    // Kako korisnik zove proces („montaža iverala na podkonstrukcije" = Sklapanje kutija).
+    const said = aliasMatch(name, aliases, vocabulary, preferred);
+    if (said) return said;
     // Glagol kako se kaže („pakuje", „zapakovao", „izbrusio") → isti proces kao imenica.
     for (const variant of processQueryVariants(name)) {
         const hit = matchProcessExact(variant, vocabulary, preferred);
         if (hit) return hit;
     }
     return null;
+}
+
+const STANDARD_ALIASES_LIST = standardAliases();
+
+/** Sve riječi aliasa su u rečenoj frazi (u nekom obliku: padež, glagol → imenica). */
+function aliasCovered(alias: ProcessAlias, said: string): boolean {
+    const aw = tokens(foldText(alias.phrase)).filter(w => w.length > 1);
+    if (!aw.length) return false;
+    // Jedna riječ je alias samo kad je to cijela fraza („kutije"); inače bi hvatao svaku rečenicu s njom.
+    if (aw.length === 1) return foldText(alias.phrase).trim() === foldText(said).trim();
+    return processQueryVariants(said).some(v => processCoverage(alias.phrase, v) >= 1);
+}
+
+/**
+ * Proces po aliasu: najduži (najodređeniji) alias koji je cijeli u frazi. Isti broj riječi a
+ * različiti procesi → proces iz plana stavki, inače ništa (nije jednoznačno).
+ */
+function aliasMatch(said: string, aliases: ProcessAlias[], vocabulary: string[], preferred: string[]): string | null {
+    const hits: { process: string; n: number }[] = [];
+    for (const a of aliases) {
+        const process = vocabulary.find(v => foldText(v) === foldText(a.process));
+        if (!process || !aliasCovered(a, said)) continue;
+        hits.push({ process, n: tokens(foldText(a.phrase)).filter(w => w.length > 1).length });
+    }
+    if (!hits.length) return null;
+    const top = Math.max(...hits.map(h => h.n));
+    const best = Array.from(new Set(hits.filter(h => h.n === top).map(h => h.process)));
+    if (best.length === 1) return best[0];
+    const inPlan = best.filter(p => preferred.some(x => foldText(x) === foldText(p)));
+    return inPlan.length === 1 ? inPlan[0] : null;
 }
 
 /** Oblici rečenog procesa: kako je rečeno, sadašnje vrijeme -uje → -ovanje, bez svršenog prefiksa (za-, iz-, o-…). */
@@ -194,7 +230,8 @@ function matchProcessExact(name: string, vocabulary: string[], preferred: string
  * Rečeni naziv pokriva SVE riječi procesa: „izrada podkonstrukcije" → Izrada podkonstrukcije,
  * „pakuje" → Pakovanje. „montaža" → Montaža Kerrocka nije (Kerrock nije rečen).
  */
-export function processFullySaid(said: string, process: string): boolean {
+export function processFullySaid(said: string, process: string, aliases: ProcessAlias[] = STANDARD_ALIASES_LIST): boolean {
+    if (aliases.some(a => foldText(a.process) === foldText(process) && aliasCovered(a, said))) return true;
     return processQueryVariants(said).some(v => foldText(v) === foldText(process) || processCoverage(process, v) >= 1);
 }
 

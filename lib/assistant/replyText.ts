@@ -24,7 +24,7 @@ const CLAIM_WORDS = new RegExp([
 /** Rečenica koja kaže šta NIJE urađeno nije potvrda. */
 const NEGATION = /\b(nije|nisu|nisam|nismo|nece|ne mogu|nisam mogao|nije uspio|nije uspjelo|nije proslo|nije prosao|bez upisa)\b/;
 /** Ponude i pitanja-ponude na kraju odgovora — korisnik ih ne želi. */
-const OFFER = /^(ako zelis|ako hoces|ako trebas|ako ti treba|ako je potrebno|ako je potreban|zelis li|hoces li da|da li zelis|da li hoces|mogu ti|mogu i |mogu jos|mogu pogledati|mogu provjeriti|javi ako|javi mi ako|reci ako|reci mi ako|slobodno|ceka li|treba li ti|trebas li jos|ima li jos nesto)/;
+const OFFER = /^(ako mi (?:kazes|javis|das|posaljes|napises)|ako (?:kazes|javis)|ako zelis|ako hoces|ako trebas|ako ti treba|ako je potrebno|ako je potreban|zelis li|hoces li da|da li zelis|da li hoces|mogu ti|mogu i |mogu jos|mogu pogledati|mogu provjeriti|javi ako|javi mi ako|reci ako|reci mi ako|slobodno|ceka li|treba li ti|trebas li jos|ima li jos nesto)/;
 
 function sentences(line: string): string[] {
     return line.split(/(?<=[.!?])\s+(?=\S)/).map(s => s.trim()).filter(Boolean);

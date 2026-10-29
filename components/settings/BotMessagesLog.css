@@ -41,3 +41,10 @@
     .bml-item { grid-template-columns: 1fr; }
     .bml-retry { grid-row: auto; grid-column: 1; justify-self: start; }
 }
+
+.bml-calls { margin-top: 6px; font-size: 12px; }
+.bml-calls ul { margin: 4px 0 0; padding-left: 16px; }
+.bml-calls li { margin: 2px 0; word-break: break-word; }
+.bml-calls li.bad { color: #b42318; }
+.bml-calls code { font-weight: 600; }
+.bml-args { color: #667085; font-family: ui-monospace, monospace; }

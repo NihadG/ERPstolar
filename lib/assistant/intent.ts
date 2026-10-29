@@ -14,7 +14,7 @@
 import { foldText } from '@/lib/voice/text';
 import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
 
-export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'presence' | 'order' | 'arrival' | 'question';
+export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'question';
 
 export interface MessageIntent {
     kinds: MessageKind[];
@@ -61,6 +61,9 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         || /\b(u kombiju|na hodniku|u stanu)\b/.test(t)) kinds.add('notebook');
     if (anyWorker && !kinds.has('task')
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
+    // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
+    if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')
+        && /\b(gotov|zavrs|napravljen|skrojen|srezan|kantiran|sklopljen|izbrusen|polakiran|zapakovan|montiran|ofarban|furniran|u toku|na (brusenj|lakiranj|kantiranj|krojenj|sklapanj|okivanj|montaz|furniranj|pakovanj|presovanj)|krenul|zapoce|zavrseno)\w*/.test(t)) kinds.add('progress');
     if (question) kinds.add('question');
 
     const writeKinds = Array.from(kinds).filter(k => k !== 'question');
@@ -76,7 +79,8 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
 
 const KIND_LABEL: Record<MessageKind, string> = {
     reminder: 'podsjetnik (create_task s reminder_at)', task: 'zadatak za radnika (create_task s worker)',
-    notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)', presence: 'prisustvo (set_presence)',
+    notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)',
+    progress: 'stanje procesa bez radnika (set_progress; nazive procesa uzmi iz TOK NALOGA)', presence: 'prisustvo (set_presence)',
     order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)', question: 'pitanje (odgovor, bez upisa)',
 };
 
