@@ -2,7 +2,7 @@ import type { Contact } from '../types';
 import {
     contactCountBySupplier, contactFullName, duplicateOf, emailDomain, filterContacts, formatAddress,
     groupContacts, importCandidates, isSharedMailDomain, isValidEmail, looksLikeCompany, matchSender,
-    normalizeEmail, resolveRecipient, singleDefaults, splitEmails, splitName, staleDefaults,
+    normalizeEmail, resolveRecipient, searchContacts, singleDefaults, splitEmails, splitName, staleDefaults,
 } from '../contacts';
 
 const person = (id: string, email: string, extra: Partial<Contact> = {}): Contact => ({
@@ -266,5 +266,34 @@ describe('uvoz iz više izvora', () => {
         ];
         const out = singleDefaults(drafts, [person('e', 'e@y.example', { Supplier_ID: 's2', Is_Default: true })]);
         expect(out.map(d => !!d.Is_Default)).toEqual([true, false, false, true]);
+    });
+});
+
+describe('traženje osobe po imenu', () => {
+    const names = (id: string) => ({ s1: 'Staklo Demo' } as Record<string, string>)[id];
+    const list = [
+        person('1', 'amra.delic@staklo-demo.example', { First_Name: 'Amra', Last_Name: 'Delić', Supplier_ID: 's1' }),
+        person('2', 'selma@projekt-demo.example', { First_Name: 'Selma', Last_Name: 'Ribić', Kind: 'site', Company: 'Projekt Demo' }),
+        person('3', 'racuni@staklo-demo.example', { Supplier_ID: 's1', Receive_Only: true }),
+        person('4', 'emir@ploce-demo.example', { First_Name: 'Emir', Last_Name: 'Hadžić' }),
+    ];
+    const ids = (q: string) => searchContacts(list, q, names).map(c => c.Contact_ID);
+
+    it('ime, prezime, firma i adresa', () => {
+        expect(ids('Amra')).toEqual(['1']);
+        expect(ids('Selma Projekt')).toEqual(['2']);
+        expect(ids('Staklo Demo')).toEqual(['1']);   // adresa za račune nije primalac
+        expect(ids('EMIR@ploce-demo.example')).toEqual(['4']);
+    });
+
+    it('padeži: „Amri", „Selmi", „Hadžiću"', () => {
+        expect(ids('Amri')).toEqual(['1']);
+        expect(ids('Selmi')).toEqual(['2']);
+        expect(ids('Hadžiću')).toEqual(['4']);
+    });
+
+    it('nepoznato → prazno', () => {
+        expect(ids('Nepoznati')).toEqual([]);
+        expect(ids('neko@nigdje.example')).toEqual([]);
     });
 });

@@ -341,3 +341,32 @@ export function singleDefaults<T extends Pick<Contact, 'Supplier_ID' | 'Is_Defau
         return d;
     });
 }
+
+// ── Traženje osobe po imenu (bot: „pošalji Amri", „mail Lejli iz Projekta") ──
+
+/**
+ * Kontakti koji odgovaraju upitu: tačna adresa; inače svi tokeni u imenu, firmi,
+ * ulozi ili adresi; ako ništa, isto preko osnove riječi („Lejli" → lejl…).
+ * Adrese koje samo šalju (računi) nikad nisu primaoci.
+ */
+export function searchContacts(contacts: Contact[], query: string, supplierName?: SupplierNameFn): Contact[] {
+    const people = contacts.filter(c => !c.Receive_Only && isValidEmail(c.Email));
+    const q = normalizeEmail(query);
+    if (isValidEmail(q)) return people.filter(c => normalizeEmail(c.Email) === q);
+    const exact = filterContacts(people, { query, supplierName });
+    if (exact.length || !queryTokens(query).length) return exact;
+    const stems = queryTokens(query).map(stemOf);
+    return people.filter(c => {
+        const words = fold([c.First_Name, c.Last_Name, c.Role, contactCompany(c, supplierName), c.Email.split('@')[0]].join(' ')).split(' ').map(stemOf);
+        return stems.every(s => words.some(w => w.startsWith(s) || s.startsWith(w) && w.length >= 3));
+    });
+}
+
+/** Osnova riječi za padeže (Amri → amr, Lejli → lejl, Hadžiću → hadzic). */
+function stemOf(word: string): string {
+    const w = word.toLowerCase();
+    for (const suf of ['ovima', 'evima', 'ima', 'ama', 'om', 'em', 'u', 'i', 'a', 'e', 'o']) {
+        if (w.length - suf.length >= 3 && w.endsWith(suf)) return w.slice(0, -suf.length);
+    }
+    return w;
+}

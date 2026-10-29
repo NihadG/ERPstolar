@@ -548,7 +548,11 @@ export interface EmailDraft {
     Candidates?: EmailDraftAddress[];
     Subject: string;
     Body: string;
+    /** Dijelovi teksta — izmjena teksta ili primaoca mijenja samo svoj dio (pozdrav prati primaoca). */
+    Parts?: { greeting: string; text: string; signature: string; /** Tekst je složio ERP (prati ti/vi primaoca). */ auto?: boolean; extra?: string } | null;
     Attachments: { kind: 'order'; id: string; filename: string }[];
+    /** Telegram: korisnik je kliknuo „Izmijeni tekst" — sljedeća poruka je novi tekst maila. */
+    Awaiting_Text_Since?: string | null;
     Status: EmailDraftStatus;
     Source: 'app' | 'telegram';
     Created_At: string;
