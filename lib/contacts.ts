@@ -93,6 +93,8 @@ export interface ImportCandidate {
     draft: ContactDraft;
     /** Odakle dolazi, za prikaz: „Dobavljač: Frischeis". */
     source: string;
+    /** false = u listi uvoza nije unaprijed štikliran (npr. jedan mail nepoznatoj adresi). */
+    preselect?: boolean;
 }
 
 export type ProjectContactSource = Pick<Project, 'Project_ID' | 'Client_Name' | 'Client_Email' | 'Client_Phone'> & Partial<Pick<Project, 'Name' | 'Hidden'>>;
@@ -324,4 +326,18 @@ export function matchSender(contacts: Contact[], email: string): SenderMatch {
 export function staleDefaults(contacts: Contact[], saved: Pick<Contact, 'Contact_ID' | 'Supplier_ID' | 'Is_Default'>): Contact[] {
     if (!saved.Is_Default || !saved.Supplier_ID) return [];
     return contacts.filter(c => c.Supplier_ID === saved.Supplier_ID && c.Is_Default && c.Contact_ID !== saved.Contact_ID);
+}
+
+/**
+ * Pri uvozu iz više izvora (polja ERP-a + pošta) isti dobavljač može dobiti ★
+ * dvaput: ostaje prva, a nijedna ako dobavljač već ima glavnog kontakta.
+ */
+export function singleDefaults<T extends Pick<Contact, 'Supplier_ID' | 'Is_Default'>>(drafts: T[], existing: Contact[]): T[] {
+    const taken = new Set(existing.filter(c => c.Is_Default && c.Supplier_ID).map(c => c.Supplier_ID!));
+    return drafts.map(d => {
+        if (!d.Is_Default || !d.Supplier_ID) return d;
+        if (taken.has(d.Supplier_ID)) return { ...d, Is_Default: undefined };
+        taken.add(d.Supplier_ID);
+        return d;
+    });
 }

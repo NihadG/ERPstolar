@@ -294,6 +294,14 @@ service cloud.firestore {
     }
 
     // ============================================
+    // EMAIL_ACCOUNTS — Gmail veza (šifrovan token). Samo server (Admin SDK).
+    // ============================================
+
+    match /email_accounts/{uid} {
+      allow read, write: if false;
+    }
+
+    // ============================================
     // WORKERS (Multi-tenancy enabled)
     // ============================================
     
