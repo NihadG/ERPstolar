@@ -89,6 +89,9 @@ export { getWorkers, saveWorker, deleteWorker } from './resource/workerService';
 // Supplier
 export { getSuppliers, saveSupplier, deleteSupplier } from './resource/supplierService';
 
+// Kontakti
+export { getContacts, saveContact, saveContacts, deleteContact, getProjectContactSources } from './resource/contactService';
+
 // Material Catalog
 export { getMaterialsCatalog, saveMaterial, deleteMaterial, deleteDuplicateMaterials } from './resource/materialCatalogService';
 export { getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate, applyMaterialTemplate } from './resource/materialCatalogService';

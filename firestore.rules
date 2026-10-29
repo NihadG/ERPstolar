@@ -284,6 +284,16 @@ service cloud.firestore {
     }
     
     // ============================================
+    // CONTACTS — ljudi iza dobavljača/klijenata (Multi-tenancy enabled)
+    // ============================================
+
+    match /contacts/{contactId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    // ============================================
     // WORKERS (Multi-tenancy enabled)
     // ============================================
     

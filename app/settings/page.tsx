@@ -15,6 +15,7 @@ import SystemReadiness from '@/components/settings/SystemReadiness';
 import NameClassificationReview from '@/components/settings/NameClassificationReview';
 import TeamSection from '@/components/settings/TeamSection';
 import TelegramSection from '@/components/settings/TelegramSection';
+import ContactsSection from '@/components/settings/ContactsSection';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
     free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
@@ -325,7 +326,7 @@ export default function SettingsPage() {
     // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije i Korisnici
     // se čuvaju odmah po akciji (Poveži/Kreiraj nalog/Deaktiviraj), pa tu prikazujemo
     // napomenu umjesto dugmeta — glavno dugme bi tamo bilo prazno obećanje.
-    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici' && activeSection !== 'telegram';
+    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici' && activeSection !== 'telegram' && activeSection !== 'kontakti';
 
     return (
         <div className="settings-page">
@@ -400,6 +401,14 @@ export default function SettingsPage() {
                             {!hasModule('team') && <span className="nav-pro-badge">PRO</span>}
                         </button>
 
+                        <button
+                            className={`sidebar-item ${activeSection === 'kontakti' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('kontakti')}
+                        >
+                            <span className="material-icons-round">contacts</span>
+                            <span className="sidebar-item-label">Kontakti</span>
+                        </button>
+
                         <span className="nav-eyebrow">Integracije</span>
                         <button
                             className={`sidebar-item ${activeSection === 'integracije' ? 'active' : ''}`}
@@ -439,6 +448,10 @@ export default function SettingsPage() {
 
                     {activeSection === 'telegram' && (
                         <TelegramSection showMessage={showMessage} />
+                    )}
+
+                    {activeSection === 'kontakti' && (
+                        <ContactsSection showMessage={showMessage} />
                     )}
 
                     {activeSection === 'company' && (
