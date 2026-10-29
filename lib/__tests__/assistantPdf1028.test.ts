@@ -18,6 +18,7 @@ import { workerMentioned, workerNicknames } from '@/lib/assistant/grounding';
 import { messageIntent } from '@/lib/assistant/intent';
 import { claimsWrite, sanitizeModelText } from '@/lib/assistant/replyText';
 import { filterNotebook, notebookListText } from '@/lib/assistant/memoryRules';
+import { arrivalDay } from '@/lib/assistant/materialAlerts';
 import { buildProjectHistory, projectHistoryLines } from '@/lib/projectHistory';
 import type { MemoryItem } from '@/lib/types';
 
@@ -258,8 +259,32 @@ describe('4. „Danas nam je došao Kerrock za Budnju, kao i iveral Cleaf"', () 
         expect(docs('product_materials').filter(m => m.Organization_ID === ORG).map(m => `${m.ID}:${m.Status}`).sort()).toEqual(['cl:Primljeno', 'kr:Primljeno']);
         expect(e.summaries[0]).toMatch(/📦 Stiglo: Kerrock 12mm bijeli — nacrt N-2026-10\/K7 \(Kerrock d\.o\.o\.\) → poslano i primljeno/);
         expect(e.summaries[0]).toMatch(/📦 Stiglo: Iveral Cleaf 18 — narudžbe nije bilo — napravljena .* \(Frischeis\) i primljena/);
-        // „Kad je naručeno?" — dugmad koja ne čekaju odgovor.
+        // „Kad je naručeno?" — dugmad koja ne čekaju odgovor; „danas" je rečeno, pa nema „kad je stiglo?".
         expect(e.followUp![0][0]).toEqual({ text: 'K7: danas', data: 'ordd:o1:0' });
+        expect(e.followUp!.flat().some(b => b.data.startsWith('rcvd:'))).toBe(false);
+    });
+
+    it('dan prijema iz poruke; kad nije rečen → upis danas + dugme „kad je stiglo?"', async () => {
+        expect(arrivalDay('jučer su stigle šarke', TODAY)).toBe('2026-10-26');
+        expect(arrivalDay('prekjučer je došao kant', TODAY)).toBe('2026-10-25');
+        expect(arrivalDay('danas nam je dosao kerrock', TODAY)).toBe(TODAY);
+        expect(arrivalDay('stigle su šarke za Budnju', TODAY)).toBeNull();
+
+        store.set('product_materials/sa', { ID: 'sa', Organization_ID: ORG, Product_ID: 'p-s1', Material_Name: 'Šarke Blum', Quantity: 8, Unit: 'kom', Unit_Price: 2, Status: 'Naručeno', Ordered_Quantity: 8, Supplier: 'Blum' });
+        store.set('product_materials/ru', { ID: 'ru', Organization_ID: ORG, Product_ID: 'p-s1', Material_Name: 'Ručke inox', Quantity: 8, Unit: 'kom', Unit_Price: 3, Status: 'Naručeno', Ordered_Quantity: 8, Supplier: 'Blum' });
+        store.set('orders/o3', { Order_ID: 'o3', Organization_ID: ORG, Order_Number: 'N-2026-10/K9', Supplier_Name: 'Blum', Status: 'Poslano', Order_Date: '2026-10-21T08:00:00Z', Sent_At: '2026-10-21T08:00:00Z' });
+        store.set('order_items/oi3', { ID: 'oi3', Organization_ID: ORG, Order_ID: 'o3', Product_Material_ID: 'sa', Product_Material_Quantities: { sa: 8 }, Material_Name: 'Šarke Blum', Quantity: 8, Unit: 'kom', Status: 'Naručeno', Received_Quantity: 0, Project_ID: 'pb', Product_ID: 'p-s1' });
+        store.set('order_items/oi4', { ID: 'oi4', Organization_ID: ORG, Order_ID: 'o3', Product_Material_ID: 'ru', Product_Material_Quantities: { ru: 8 }, Material_Name: 'Ručke inox', Quantity: 8, Unit: 'kom', Status: 'Naručeno', Received_Quantity: 0, Project_ID: 'pb', Product_ID: 'p-s1' });
+
+        const yesterday = env('jucer su stigle sarke za budnju');
+        expect(await runTool(yesterday, 'material_arrived', { items: [{ material: 'šarke' }], project: 'P1' })).toMatchObject({ ok: true });
+        expect(docs('order_items').find(i => i.ID === 'oi3')).toMatchObject({ Status: 'Primljeno', Received_Date: '2026-10-26T09:00:00.000Z' });
+        expect(yesterday.followUp).toBeUndefined();
+
+        const unsaid = env('stigle rucke za budnju');
+        expect(await runTool(unsaid, 'material_arrived', { items: [{ material: 'ručke' }], project: 'P1' })).toMatchObject({ ok: true });
+        expect(unsaid.summaries[0]).toMatch(/📅 Kad je stiglo K9\? Upisano je danas/);
+        expect(unsaid.followUp![0][0]).toEqual({ text: 'K9 stiglo: jučer', data: 'rcvd:o3:1' });
     });
 });
 

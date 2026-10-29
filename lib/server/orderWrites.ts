@@ -462,7 +462,7 @@ export async function revertOrderToDraft(orgId: string, orderId: string, before?
  * `quantities` (ID stavke → stiglo sad) = djelimičan prijem: stavka ostaje
  * naručena dok ne stigne sve, a materijalima se dodaje srazmjeran dio.
  */
-export async function receiveOrderItems(orgId: string, orderId: string, itemIds: string[] | 'all', before?: BeforeHook, quantities?: Record<string, number>): Promise<OrderActionResult> {
+export async function receiveOrderItems(orgId: string, orderId: string, itemIds: string[] | 'all', before?: BeforeHook, quantities?: Record<string, number>, receivedAt?: string): Promise<OrderActionResult> {
     const docs = await orderDocs(orgId, orderId);
     if (!docs) return { ok: false, error: 'Narudžba više ne postoji.' };
     const order = docs.order.data() as Order;
@@ -471,7 +471,8 @@ export async function receiveOrderItems(orgId: string, orderId: string, itemIds:
 
     const wanted = itemIds === 'all' ? null : new Set(itemIds);
     const deltas = new Map<string, { ordered: number; received: number }>();
-    const nowIso = new Date().toISOString();
+    // Rečen dan prijema („jučer je stiglo"); inače sada.
+    const nowIso = receivedAt || new Date().toISOString();
     const batch = adminDb().batch();
     let changed = 0;
     let completed = 0;
