@@ -50,9 +50,10 @@ export function caseFlags(c: ReplayCase, tools: { read: Set<string>; write: Set<
     if (c.prod.outcome) {
         if (FAILED.has(c.prod.outcome) && !FAILED.has(n.outcome)) flags.push('popravljeno');
         if (!FAILED.has(c.prod.outcome) && FAILED.has(n.outcome)) flags.push('pogoršano');
+        // Alati su u dnevniku od 27.10.; stariji unosi ih nemaju — tad se upis ne poredi.
         const pw = c.prod.tools.filter(t => tools.write.has(t));
         const nw = n.tools.filter(t => tools.write.has(t));
-        if ((pw.length || nw.length) && !sameSet(pw, nw)) flags.push('drugi upis');
+        if (c.prod.tools.length && (pw.length || nw.length) && !sameSet(pw, nw)) flags.push('drugi upis');
     }
     if (n.tools.includes(ALL_TOOLS)) flags.push('all_tools');
     return flags;

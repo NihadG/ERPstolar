@@ -104,3 +104,29 @@ describe('model odbija i predloženi tip (greška 30.10.)', () => {
         expect(f.sent).toHaveLength(3);
     });
 });
+
+// Ponavljanje stvarnih poruka (30.10.): čuvar traži tool_choice: any, a Haiku 5.5
+// (razmišljanje se ne gasi) to odbija → „AI se ne javlja". Sad: bez prisile, zapamćeno.
+describe('obavezan alat po modelu', () => {
+    const forcedParams = (model: string) => ({ model, max_tokens: 10, messages: [{ role: 'user' as const, content: 'x' }], tool_choice: { type: 'any' as const } });
+
+    it('tool_choice odbijen → isti zahtjev bez prisile; sljedeći put odmah bez nje', async () => {
+        const { createTurn } = await import('../assistant/brain');
+        const sent: any[] = [];
+        let fail = true;
+        const client = { messages: { create: async (p: any) => {
+            sent.push(p);
+            if (fail && p.tool_choice) { fail = false; throw apiError(400, 'tool_choice: type "tool" and "any" are not supported for this model.'); }
+            return { content: [], stop_reason: 'end_turn', usage: {} };
+        } } } as any;
+        await createTurn(client, forcedParams('model-t'));
+        expect(sent.map(p => p.tool_choice?.type ?? 'bez')).toEqual(['any', 'bez']);
+        expect(sent[1].thinking).toEqual(sent[0].thinking);   // razmišljanje se ne mijenja zbog ove greške
+        sent.length = 0;
+        await createTurn(client, forcedParams('model-t'));
+        expect(sent.map(p => p.tool_choice?.type ?? 'bez')).toEqual(['bez']);
+        sent.length = 0;
+        await createTurn(client, forcedParams('drugi-model'));
+        expect(sent.map(p => p.tool_choice?.type ?? 'bez')).toEqual(['any']);   // drugi model i dalje prisiljen
+    });
+});
