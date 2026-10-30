@@ -63,16 +63,26 @@ function model(): string {
 
 // ── Isključeno razmišljanje, po modelu ──────────────────────────────
 //
-// Haiku 5.5 više ne prima `thinking: disabled` — razmišljanje se gasi s
-// `between_tools`. Kad API odbije `thinking` i u grešci kaže koji tip traži,
-// to se zapamti za taj model i zahtjev se ponovi jednom (bot se sam oporavi
-// umjesto da svaka poruka padne).
+// Modeli različito primaju „bez razmišljanja": Haiku 5.5 traži `between_tools`
+// (odbija `disabled`), a drugi model (npr. jači) odbija `between_tools`. Zato
+// svaki model ima redoslijed pokušaja: zapamćeno/predloženo → between_tools →
+// disabled → bez polja `thinking` (zadano ponašanje modela). Ono što prođe
+// pamti se za taj model, pa sljedeće poruke idu iz prve.
 
 type ThinkingOff = 'disabled' | 'between_tools';
-const thinkingOff = new Map<string, ThinkingOff>([['claude-haiku-5-5', 'between_tools']]);
+type ThinkingChoice = ThinkingOff | 'omit';
+const thinkingOff = new Map<string, ThinkingChoice>([['claude-haiku-5-5', 'between_tools']]);
 
-export function thinkingFor(modelId: string): { type: ThinkingOff } {
-    return { type: thinkingOff.get(modelId) || 'disabled' };
+export function thinkingFor(modelId: string): { type: ThinkingOff } | undefined {
+    const choice = thinkingOff.get(modelId) || 'disabled';
+    return choice === 'omit' ? undefined : { type: choice };
+}
+
+/** Greška je o `thinking` polju (400) — vrijedi probati drugu vrijednost. */
+function thinkingRejected(err: unknown): boolean {
+    const status = (err as { status?: number })?.status;
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    return status === 400 && /thinking/i.test(message);
 }
 
 /** Iz greške „To turn thinking off on this model, send "thinking": {"type": "between_tools"}" → between_tools. */
@@ -84,16 +94,32 @@ export function suggestedThinking(err: unknown): ThinkingOff | null {
     return m ? (m[1] as ThinkingOff) : null;
 }
 
-/** messages.create s isključenim razmišljanjem; jedan ponovni pokušaj kad API predloži drugi tip. */
+/**
+ * messages.create bez razmišljanja. Kad API odbije `thinking`, probaju se
+ * ostale vrijednosti (prvo ona iz poruke greške); prva koja prođe se pamti.
+ */
 export async function createTurn(client: Anthropic, params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'thinking'>): Promise<Anthropic.Message> {
-    try {
-        return await client.messages.create({ ...params, thinking: thinkingFor(params.model) });
-    } catch (e) {
-        const next = suggestedThinking(e);
-        if (!next || next === thinkingFor(params.model).type) throw e;
-        console.warn(`[assistant] ${params.model}: razmišljanje se gasi s „${next}" — pamtim i ponavljam`);
-        thinkingOff.set(params.model, next);
-        return client.messages.create({ ...params, thinking: { type: next } });
+    const send = (choice: ThinkingChoice) => client.messages.create(
+        choice === 'omit' ? { ...params } : { ...params, thinking: { type: choice } });
+    const first = thinkingOff.get(params.model) || 'disabled';
+    const tried = new Set<ThinkingChoice>();
+    let choice: ThinkingChoice = first;
+    for (;;) {
+        tried.add(choice);
+        try {
+            const res = await send(choice);
+            if (choice !== first) {
+                console.warn(`[assistant] ${params.model}: razmišljanje se gasi s „${choice}" — pamtim`);
+                thinkingOff.set(params.model, choice);
+            }
+            return res;
+        } catch (e) {
+            if (!thinkingRejected(e)) throw e;
+            const suggested = suggestedThinking(e);
+            const next = [suggested, 'between_tools', 'disabled', 'omit'].find(c => c && !tried.has(c as ThinkingChoice)) as ThinkingChoice | undefined;
+            if (!next) throw e;
+            choice = next;
+        }
     }
 }
 
