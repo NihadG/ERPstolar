@@ -39,9 +39,10 @@ import { projectLabel } from '@/lib/voice/extract';
 import { claimsWrite, composeReply, sanitizeModelText } from './replyText';
 import { DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, type ErpQuestion, type ToolEnv } from './tools';
 import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, SessionTurn } from './store';
-import type { AssistantOutcome, MemoryItem, ToolCallLog } from '@/lib/types';
+import type { AssistantOutcome, AssistantUsage, MemoryItem, ToolCallLog } from '@/lib/types';
 import { toolCallLog } from './toolLog';
 import { READ_FIRST_NOTE, shouldReadFirst } from './readGuard';
+import { addUsage, emptyUsage } from './usage';
 
 export { claimsWrite } from './replyText';
 
@@ -153,6 +154,8 @@ export interface AssistantTurnOutput {
     changes?: string[];
     /** Pozivi alata (argumenti i ishod) za dnevnik. */
     toolCalls?: ToolCallLog[];
+    /** Potrošnja modela za ovu poruku (svi krugovi). */
+    usage?: AssistantUsage;
     degraded?: boolean;
 }
 
@@ -255,12 +258,14 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     let turnEnv: ToolEnv | null = null;
     let nextFocus: SessionFocus | null = null;
     const toolCalls: ToolCallLog[] = [];
+    const usage = emptyUsage();
 
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
         buttons,
         created: { taskIds: [], memoryIds: [] },
         toolCalls,
+        ...(usage.calls ? { usage } : {}),
         ...extra,
         session: {
             // Model u istoriji vidi i šta znače oznake koje je ova poruka dala (korisnik ih ne vidi).
@@ -427,6 +432,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             forceTool = false;
             readFirst = false;
             const u = res.usage;
+            addUsage(usage, u, strong ? strongModel() : model(), Date.now() - started);
             console.log(`[assistant] korak ${step + 1}${strong ? ' (jači model)' : ''}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
 
             if (res.stop_reason === 'refusal') {

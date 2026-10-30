@@ -37,7 +37,7 @@ export async function GET(req: Request) {
             .sort((a, b) => b.Created_At.localeCompare(a.Created_At))
             .map(e => ({
                 id: e.Entry_ID, at: e.Created_At, kind: e.Kind, text: e.Raw_Text, from: e.Forward_From || null,
-                outcome: outcomeOf(e), reply: e.Reply_Text || null, changes: e.Changes || [], toolCalls: e.Tool_Calls || [], attempts: e.Attempts || 0,
+                outcome: outcomeOf(e), reply: e.Reply_Text || null, changes: e.Changes || [], toolCalls: e.Tool_Calls || [], attempts: e.Attempts || 0, usage: e.Usage || null,
             }));
         return NextResponse.json({ entries }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (e) {

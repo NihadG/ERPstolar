@@ -894,6 +894,21 @@ export interface AssistantEntry {
     Processed_At?: string;
     /** Koliko puta je poruka obrađena (ponovna obrada iz ERP-a ili dugmetom). */
     Attempts?: number;
+    /** Potrošnja modela za ovu poruku (lib/assistant/usage.ts). */
+    Usage?: AssistantUsage;
+}
+
+/** Zbir svih krugova modela za jednu poruku botu. */
+export interface AssistantUsage {
+    calls: number;
+    input: number;
+    cacheRead: number;
+    cacheWrite5m: number;
+    cacheWrite1h: number;
+    output: number;
+    models: string[];
+    /** Ukupno čekanje na model (ms). */
+    ms: number;
 }
 
 export interface ToolCallLog {
