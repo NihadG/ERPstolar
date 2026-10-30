@@ -30,7 +30,7 @@ const link = { uid: UID, orgId: ORG, chatId: 77, telegramUserId: 1, telegramName
 
 // ── Lažni Gmail ──────────────────────────────────────────────────────
 
-interface FakeMsg { id: string; threadId: string; from: string; subject: string; snippet: string; labels?: string[]; rfc?: string; body?: string }
+interface FakeMsg { id: string; threadId: string; from: string; subject: string; snippet: string; labels?: string[]; rfc?: string; body?: string; to?: string; cc?: string; at?: string }
 let gmail: { historyId: string; added: string[]; messages: Map<string, FakeMsg>; historyStatus?: number; sent: any[] };
 
 const res = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
@@ -52,11 +52,15 @@ const fetchMock = jest.fn(async (url: string, init?: { body?: string; method?: s
     if (m) {
         const msg = gmail.messages.get(decodeURIComponent(m[1]));
         if (!msg) return res(404, { error: { message: 'Not Found' } });
-        const headers = [{ name: 'From', value: msg.from }, { name: 'Subject', value: msg.subject }, ...(msg.rfc ? [{ name: 'Message-ID', value: msg.rfc }] : [])];
+        const headers = [
+            { name: 'From', value: msg.from }, { name: 'Subject', value: msg.subject },
+            { name: 'To', value: msg.to ?? 'ja@luxco-demo.example' }, ...(msg.cc ? [{ name: 'Cc', value: msg.cc }] : []),
+            ...(msg.rfc ? [{ name: 'Message-ID', value: msg.rfc }] : []),
+        ];
         const payload = u.searchParams.get('format') === 'full'
             ? { mimeType: 'text/plain', headers, body: { data: Buffer.from(msg.body || msg.snippet).toString('base64url') } }
             : { headers };
-        return res(200, { id: msg.id, threadId: msg.threadId, snippet: msg.snippet, internalDate: String(Date.parse('2026-10-30T08:00:00Z')), labelIds: msg.labels || ['INBOX'], payload });
+        return res(200, { id: msg.id, threadId: msg.threadId, snippet: msg.snippet, internalDate: String(Date.parse(msg.at || '2026-10-30T08:00:00Z')), labelIds: msg.labels || ['INBOX'], payload });
     }
     return res(404, { error: { message: `nepoznato ${path}` } });
 });
@@ -139,10 +143,49 @@ describe('sinhronizacija', () => {
 
     it('običan mail poznatog se pamti, ali bot ne javlja', async () => {
         await syncMailbox(await account());
-        deliver({ id: 'c1', threadId: 'tq', from: 'selma@projekt-demo.example', subject: 'Pozdrav', snippet: 'Kako ste?' });
+        deliver({ id: 'c1', threadId: 'tq', from: 'selma@projekt-demo.example', subject: 'Pozdrav', snippet: 'Šaljem fotografije sa sastanka.' });
         expect(await syncMailbox(await account())).toBe(0);
         expect(item('c1')!.Kind).toBe('contact');
+        expect(item('c1')!.Follow).toBeUndefined();
         expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('mail poznatog koji pita: javi odmah i prati odgovor; tvoj odgovor u niti ga zatvara', async () => {
+        await syncMailbox(await account());
+        deliver({ id: 'q1', threadId: 'tq1', from: 'Selma <selma@projekt-demo.example>', subject: 'Montaža', snippet: 'Možete li doći u utorak umjesto srijede?' });
+        expect(await syncMailbox(await account())).toBe(1);
+        expect(item('q1')).toMatchObject({ Follow: 'reply', Follow_Count: 0, Next_Follow_At: '2026-10-31T08:00:00.000Z' });
+        expect(lastSent()[1]).toContain('↩️ Čeka tvoj odgovor — Selma');
+        expect(lastSent()[2].flat().map((b: { data: string }) => b.data)).toEqual(['mf:q1:d', 'mf:q1:s', 'mf:q1:x']);
+        // Moj odgovor u istoj niti.
+        deliver({ id: 'q2', threadId: 'tq1', from: 'ja@luxco-demo.example', subject: 'Re: Montaža', snippet: 'Može utorak.', labels: ['SENT'], at: '2026-10-30T10:00:00Z' });
+        await syncMailbox(await account());
+        expect(item('q1')).toMatchObject({ Done_How: 'replied', Done_At: '2026-10-30T10:00:00.000Z', Next_Follow_At: null });
+        expect(item('q2')).toBeUndefined();
+    });
+
+    it('masovni mail gradilišta bez imena firme ne prati se; s imenom firme postaje zadatak', async () => {
+        await syncMailbox(await account());
+        const many = Array.from({ length: 12 }, (_, i) => `izvodjac${i}@x.example`).join(', ');
+        deliver(
+            { id: 'w1', threadId: 'tw1', from: 'selma@projekt-demo.example', subject: 'Dinamika', snippet: 'Molim sve da završe do petka?', to: many },
+            { id: 'w2', threadId: 'tw2', from: 'selma@projekt-demo.example', subject: 'Dinamika', snippet: 'Luxco treba ugraditi ogledala — molim potvrdu.', to: many },
+        );
+        store.set('org_settings/org1', { companyInfo: { name: 'Lux-co d.o.o.' } });
+        await syncMailbox(await account());
+        expect(item('w1')!.Follow).toBeUndefined();
+        expect(item('w2')!.Follow).toBe('task');   // nadzor traži ugradnju od firme = zadatak s gradilišta
+    });
+
+    it('spremno prati preuzimanje, predračun prati potvrdu', async () => {
+        await syncMailbox(await account());
+        deliver(
+            { id: 'f1', threadId: 'th-o1', from: 'amra@staklo-demo.example', subject: 'Re', snippet: '3 kom spremna za preuzimanje' },
+            { id: 'f2', threadId: 'tx', from: 'referent@ploce-demo.example', subject: 'PLOCE Predracun 330999', snippet: 'u prilogu' },
+        );
+        await syncMailbox(await account());
+        expect(item('f1')).toMatchObject({ Follow: 'pickup', Next_Follow_At: '2026-10-31T08:00:00.000Z' });
+        expect(item('f2')!.Follow).toBe('reply');
     });
 
     it('istorija prestara (404): kreće se od sada, bez greške', async () => {

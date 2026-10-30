@@ -22,6 +22,7 @@ import {
 import { sendOrderPdf } from './orderDocuments';
 import { consumeDraftText, handleEmailButton, sendDraftToChat } from './emailButtons';
 import { handleMailButton } from './mailButtons';
+import { handleFollowButton, openMailFor } from '@/lib/server/mailFollow';
 import { handleMaterialButton, sendMaterialAlerts, setOrderReceivedDaysAgo, setOrderSentDaysAgo } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
@@ -59,7 +60,7 @@ const HELP =
     '• „Dokle je kuhinja Čorluka?" → stanje naloga\n' +
     '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Radnim danom u 16:30 stiže prijedlog rada za taj dan — potvrdiš ga jednim klikom.\n\n' +
-    'Komande: /danas · /otvoreno · /prijedlog · /pomoc';
+    'Komande: /danas · /otvoreno · /prijedlog · /posta · /pomoc';
 
 type MessageIncoming = Extract<Incoming, { type: 'message' }>;
 type CallbackIncoming = Extract<Incoming, { type: 'callback' }>;
@@ -105,6 +106,12 @@ async function handleCommand(inc: MessageIncoming, link: AssistantLink): Promise
         case 'danas': {
             const digest = await buildTodayDigest(link.orgId, new Date(), tz);
             await sendMessage(inc.chatId, digest || 'Za danas nema podsjetnika ni zadataka, a ništa ne kasni. 👍');
+            return;
+        }
+        case 'posta':
+        case 'pošta': {
+            const list = await openMailFor(link.uid, link.orgId);
+            await sendMessage(inc.chatId, list.text, list.buttons.length ? list.buttons : undefined);
             return;
         }
         case 'otvoreno':
@@ -314,6 +321,11 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await answerCallbackQuery(inc.callbackId);
         const msg = await createProposalMessage(link, arg, today);
         await sendMessage(inc.chatId, msg?.text || `Za ${shortDate(arg)} nema prijedloga — nijedan radnik nema raniji upis. Izdiktiraj taj dan porukom.`, msg?.buttons);
+        return;
+    }
+
+    if (kind === 'mf') {
+        await handleFollowButton(inc, link, arg, extra || '');
         return;
     }
 
