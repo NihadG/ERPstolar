@@ -43,6 +43,8 @@ import type { AssistantOutcome, AssistantUsage, MemoryItem, ToolCallLog } from '
 import { toolCallLog } from './toolLog';
 import { READ_FIRST_NOTE, shouldReadFirst } from './readGuard';
 import { addUsage, emptyUsage } from './usage';
+import { mentionNote } from './mentions';
+import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
 
 export { claimsWrite } from './replyText';
 
@@ -297,8 +299,13 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const intent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
     const workerOf = (id: string) => ctx.workers.find(w => w.value.id === id);
     const focusOrder = focus?.order && now.getTime() - Date.parse(focus.order.at) <= ORDER_FOCUS_MINUTES * 60_000 ? focus.order : undefined;
+    // Projekti i nalozi koje poruka spominje (imena, klijenti, naučeni nadimci) — ERP ih nađe, model ne pogađa.
+    const projectGround = ctx.projects.map(p => ({ id: p.value.id, alias: p.alias, name: projectLabel(p.value), aliases: aliasesOf(ctx.vocab || [], 'project', p.value.id) }));
+    const orderGround = (ctx.orders || []).map(o => ({ id: o.value.id, alias: o.alias, name: o.value.name, aliases: aliasesOf(ctx.vocab || [], 'order', o.value.id) }));
+    const recentUserText = history.filter(t => t.role === 'user').slice(-2).map(t => t.text).join('\n');
     const note = factsNote(pre.facts, focusLocation, [
         ...intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }),
+        ...mentionNote({ text: pre.text, recent: recentUserText, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question') }),
         ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
     ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
@@ -362,14 +369,12 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     // Bilježnica u promptu: stavke o kojima ova (i prethodne dvije) poruke govore.
     const promptFocus = [...history.filter(t => t.role === 'user').slice(-2).map(t => t.text), pre.text].join('\n');
     // Tok naloga o kojima poruka govori: model bira tačne nazive procesa iz karte, ne pogađa riječi.
-    const orderGround = (ctx.orders || []).map(o => ({ id: o.value.id, name: o.value.name, aliases: aliasesOf(ctx.vocab || [], 'order', o.value.id) }));
     const wantsFlow = intent.kinds.length === 0 || intent.kinds.some(k => k === 'work' || k === 'progress' || k === 'question');
     const flowOrders = wantsFlow ? (ctx.orders || []).filter(o => orderMentioned(promptFocus, orderGround.find(g => g.id === o.value.id)!, orderGround)).slice(0, 3) : [];
     const flow = flowOrders.length
         ? await loadFlowMaps(input.orgId, flowOrders.map(o => ({ alias: o.alias, id: o.value.id, name: o.value.name }))).catch(e => { console.warn('[assistant] tok naloga:', e); return ''; })
         : '';
     // Pitanje o podacima u ERP-u (projekat ili nalog spomenut): jači model, a „nemam zapisano" tek poslije čitanja.
-    const projectGround = ctx.projects.map(p => ({ id: p.value.id, name: projectLabel(p.value), aliases: aliasesOf(ctx.vocab || [], 'project', p.value.id) }));
     const erpQuestion = intent.kinds.includes('question')
         && (flowOrders.length > 0 || projectGround.some(p => orderMentioned(promptFocus, p, projectGround)));
     if (erpQuestion) strong = true;
@@ -415,14 +420,19 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     let readAsked = false;
     let readUsed = false;       // model je čitao ERP — tekst bez upisa je odgovor iz podataka
     const isQuestion = intent.kinds.includes('question');
+    // Manji skup alata kad ERP zna šta poruka traži (lib/assistant/toolRouting); all_tools ga proširi.
+    let toolSet: ToolSet = toolSetFor(intent.kinds, { answeringQuestion: !!input.session.pending });
+    usage.toolSet = TOOL_SET_LABEL[toolSet];
     try {
         for (let step = 0; step < MAX_STEPS; step++) {
             const started = Date.now();
+            // „Prvo čitaj“ = isti skup kao pitanje → isti keš.
+            const set: ToolSet = readFirst ? 'question' : toolSet;
             const res = await createTurn(client, {
                 model: strong ? strongModel() : model(),
                 max_tokens: MAX_TOKENS,
                 system,
-                tools: readFirst ? TOOLS.filter(t => READ_TOOLS.has(t.name) || t.name === 'ask_user') : TOOLS,
+                tools: toolsFor(set, TOOLS, READ_TOOLS),
                 messages,
                 // Automatski keš za rastući rep (razgovor + rezultati alata).
                 cache_control: { type: 'ephemeral' },
@@ -433,7 +443,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             readFirst = false;
             const u = res.usage;
             addUsage(usage, u, strong ? strongModel() : model(), Date.now() - started);
-            console.log(`[assistant] korak ${step + 1}${strong ? ' (jači model)' : ''}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}`);
+            console.log(`[assistant] korak ${step + 1}${strong ? ' (jači model)' : ''}: ${Date.now() - started} ms, ulaz ${u.input_tokens}, keš čitanje ${u.cache_read_input_tokens ?? 0}, keš upis ${u.cache_creation_input_tokens ?? 0}, izlaz ${u.output_tokens}, alati ${TOOL_SET_LABEL[set]}`);
 
             if (res.stop_reason === 'refusal') {
                 modelText = 'Ovu poruku ne mogu obraditi. Probaj je reći drugačije.';
@@ -486,6 +496,13 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             let allOk = true;
             // Redom, ne paralelno: drugi alat može zavisiti od prvog (kreiraj → izmijeni).
             for (const use of uses) {
+                if (use.name === ALL_TOOLS) {
+                    toolSet = 'full';
+                    usage.toolSet = `${usage.toolSet} → ${TOOL_SET_LABEL.full}`;
+                    toolCalls.push(toolCallLog(use.name, use.input, { ok: true }));
+                    results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify({ ok: true, note: 'Sad imaš sve alate — pozovi onaj koji treba.' }) });
+                    continue;
+                }
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
                 const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
