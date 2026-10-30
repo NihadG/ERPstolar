@@ -95,7 +95,7 @@ describe('alat search_mail', () => {
 
     it('nepoznata osoba → ime u zaglavljima Od/Za (Gmail traži ime), ne u tekstu', async () => {
         await runTool(env(), 'search_mail', { who: 'Zoran' });
-        expect(list.mock.calls[0][1]).toMatch(/^{from:zoran to:zoran} newer_than:120d/);
+        expect(list.mock.calls[0][1]).toMatch(/^\{from:zoran to:zoran\} newer_than:120d/);
     });
 
     it('prazni Kontakti, firma iz dobavljača → adresa i DOMEN firme (odgovor stiže kao nova nit, s druge adrese)', async () => {

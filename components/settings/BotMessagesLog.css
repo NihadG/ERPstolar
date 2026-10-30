@@ -57,3 +57,30 @@
     font-size: 12.5px;
     color: var(--text-secondary);
 }
+
+/* Signali i napomena uz poruku */
+.bml-signals { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.bml-signal { font-size: 10.5px; color: var(--text-secondary); background: var(--surface); border-radius: 999px; padding: 1px 7px; }
+.bml-signal.warn { color: var(--warning); background: var(--warning-bg); }
+.bml-signal.note { color: var(--accent); background: var(--accent-light); }
+.bml-feedback { background: var(--accent-light); border-radius: var(--radius-sm); padding: 6px 8px; }
+
+/* Dnevnik unapređenja */
+.bml-journal { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
+.bml-journal h3 { font-size: 16px; margin: 4px 0 8px; }
+.bml-journal h4 { font-size: 14px; margin: 16px 0 6px; }
+.bml-journal p, .bml-journal ul { margin: 0 0 8px; }
+.bml-journal ul { padding-left: 18px; }
+.bml-journal code { font-size: 12px; background: var(--surface); border-radius: 4px; padding: 0 4px; }
+.bml-journal blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-secondary); }
+.bml-table-wrap { overflow-x: auto; margin: 0 0 10px; }
+.bml-journal table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.bml-journal th, .bml-journal td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.bml-journal th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+@media (max-width: 600px) {
+    .bml-journal table, .bml-journal tbody, .bml-journal tr, .bml-journal td { display: block; width: 100%; }
+    .bml-journal thead { display: none; }
+    .bml-journal tr { border-bottom: 1px solid var(--border); padding: 6px 0; }
+    .bml-journal td { border: 0; padding: 2px 0; }
+    .bml-journal td::before { content: attr(data-label) ': '; color: var(--text-tertiary); font-size: 11px; }
+}

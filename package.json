@@ -11,7 +11,10 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "eval:assistant": "jest lib/__tests__/assistantEval.real.test.ts --testTimeout=120000"
+    "eval:assistant": "jest lib/__tests__/assistantEval.real.test.ts --testTimeout=120000",
+    "bot:export": "node scripts/bot-review/export.cjs",
+    "bot:triage": "cross-env BOT_REVIEW=latest jest lib/__tests__/botReview.real.test.ts",
+    "bot:replay": "cross-env ASSISTANT_REPLAY=latest jest lib/__tests__/assistantReplay.real.test.ts"
   },
   "_comment_overrides": "jose@6 je SAMO ESM (type: module, bez `require` uslova u exports). jwks-rsa@4 je CJS i radi require('jose'), pa svaka ruta koja uvuce firebase-admin pukne na Vercelu s ERR_REQUIRE_ESM jos pri ucitavanju modula (HTTP 500 prije ijedne linije naseg koda). Lokalno se ne vidi jer Node 22.12+ podrzava require(esm). jose@5 ima CJS izlaz, a jwks-rsa iz njega koristi samo importJWK/exportSPKI/decodeJwt/decodeProtectedHeader — sve nepromijenjeno izmedju v5 i v6.",
   "overrides": {
