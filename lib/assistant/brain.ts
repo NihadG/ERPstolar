@@ -41,6 +41,7 @@ import { DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, t
 import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, SessionTurn } from './store';
 import type { AssistantOutcome, MemoryItem, ToolCallLog } from '@/lib/types';
 import { toolCallLog } from './toolLog';
+import { READ_FIRST_NOTE, shouldReadFirst } from './readGuard';
 
 export { claimsWrite } from './replyText';
 
@@ -435,8 +436,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
             if (!uses.length) {
                 const text = plainText(textOf(res));
-                // „Nemam zapisano" bez ijednog čitanja ERP-a: podaci (materijal, tok, rad) su u ERP-u, ne u bilježnici.
-                if (erpQuestion && !readUsed && !readAsked && !env.changes.length && NO_DATA.test(foldText(text))) {
+                // Pitanje o podacima ili „nemam / ne vidim" bez ijednog čitanja ERP-a → prvo čitaj (lib/assistant/readGuard).
+                if (shouldReadFirst({ isQuestion, readUsed, readAsked, changed: env.changes.length > 0, question: pre.text, answer: textOf(res) })) {
                     readAsked = true;
                     forceTool = true;
                     readFirst = true;
@@ -633,9 +634,6 @@ export async function runPendingAction(input: {
     };
 }
 
-/** Odgovor „nemam podatak" — izgovara se prije nego što je išta pročitano. */
-const NO_DATA = /\b(nemam|ne znam|nije zapisan\w*|nisam nasao|ne vidim|nema podatak\w*)\b/;
-const READ_FIRST_NOTE = 'ERP: pitanje je o podacima u ERP-u (materijal proizvoda, tok naloga, ko je radio, narudžbe) — ne o bilježnici. Pozovi alat za čitanje (product_materials s project ili orders i material=vrsta, order_status, project_history, work_report, list_orders) pa odgovori iz rezultata. „Nemam" reci tek ako alat vrati prazno.';
 
 const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
 

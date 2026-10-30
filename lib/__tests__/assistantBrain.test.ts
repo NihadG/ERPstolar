@@ -621,3 +621,29 @@ describe('failureReason', () => {
         expect(failureReason(apiError(400, 'tools.0: bad schema'))).toBe('400: tools.0: bad schema');
     });
 });
+
+describe('nema odgovora bez čitanja (30.10.)', () => {
+    it('„nemam zapisan dekor" bez čitanja → ERP traži krug samo s alatima za čitanje, odgovor ide iz alata', async () => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        const out = await say('Koji iveral smo koristili (koji dekor)', [
+            { text: 'Nemam zapisan dekor iverala za taj projekat.' },
+            { calls: [{ name: 'list_orders', args: {} }] },
+            { text: 'Korišten je iveral U702.' },
+        ]);
+        expect(mockSent).toHaveLength(3);
+        expect(mockSent[1].tool_choice).toEqual({ type: 'any' });
+        const readOnly = mockSent[1].tools.map((t: any) => t.name);
+        expect(readOnly).toContain('product_materials');
+        expect(readOnly).not.toContain('create_order');
+        expect(mockSent[1].messages.at(-1).content).toContain('nisi ništa pročitao');
+        expect(out.reply).toBe('Korišten je iveral U702.');
+    });
+
+    it('pitanje o zadacima iz prompta se ne tjera na čitanje', async () => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        await say('Šta imam sutra?', [{ text: 'Sutra nemaš zadataka.' }]);
+        expect(mockSent).toHaveLength(1);
+    });
+});
