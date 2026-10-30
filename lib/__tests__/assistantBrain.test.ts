@@ -90,6 +90,7 @@ describe('asistent od poruke do baze', () => {
             Source: 'telegram', Created_By_UID: 'u1', Status: 'pending',
         });
         expect(mockSent).toHaveLength(1); // potvrdu je složio sistem
+        expect(out.usage).toMatchObject({ calls: 1, input: 100, output: 20, models: ['claude-haiku-5-5'] });   // potrošnja ide u dnevnik
         expect(out.reply).toBe('✅ Naručiti 10 baglama — pon 26.10. u 08:00');
         expect(out.created.taskIds).toEqual([task.Task_ID]);
         firstUndo = out.buttons[0][0].data;

@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '@/lib/apiClient';
+import { billedTokens, summarizeUsage } from '@/lib/assistant/usage';
+import type { AssistantUsage } from '@/lib/types';
 import './BotMessagesLog.css';
 
 export interface BotEntry {
@@ -24,6 +26,8 @@ export interface BotEntry {
     /** Šta je model poslao alatima (skraćeno) i šta je ERP vratio. */
     toolCalls?: { name: string; args: string; ok: boolean; error?: string }[];
     attempts: number;
+    /** Potrošnja modela (krugovi, tokeni) — od 30.10.2026. */
+    usage?: AssistantUsage | null;
 }
 
 const OUTCOME: Record<BotEntry['outcome'], { label: string; tone: string }> = {
@@ -37,6 +41,15 @@ const OUTCOME: Record<BotEntry['outcome'], { label: string; tone: string }> = {
 
 /** Poruke koje traže pažnju: ništa nije upisano (ili se ne zna). */
 const needsLook = (e: BotEntry) => e.outcome === 'failed' || e.outcome === 'degraded' || e.outcome === 'unknown';
+
+const num = (n: number) => n.toLocaleString('bs-BA');
+
+/** Npr. 2 kruga · ulaz 15.300 (keš 13.900) · izlaz 210 · ≈ 2.850 obračunskih · 3,1 s */
+function usageLine(u: AssistantUsage): string {
+    const input = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
+    const krug = u.calls === 1 ? 'krug' : u.calls < 5 ? 'kruga' : 'krugova';
+    return `${u.calls} ${krug} · ulaz ${num(input)} (keš ${num(u.cacheRead)}) · izlaz ${num(u.output)} · ≈ ${num(billedTokens(u))} obračunskih · ${(u.ms / 1000).toFixed(1)} s`;
+}
 
 function when(iso: string): string {
     const d = new Date(iso);
@@ -56,6 +69,7 @@ export function BotMessagesView({ entries, busyId, onReprocess }: {
         written: entries.filter(e => e.outcome === 'written').length,
     }), [entries]);
     const shown = filter === 'look' ? entries.filter(needsLook) : entries;
+    const spend = useMemo(() => summarizeUsage(entries.map(e => ({ at: e.at, usage: e.usage }))), [entries]);
 
     return (
         <div className="bml">
@@ -70,6 +84,11 @@ export function BotMessagesView({ entries, busyId, onReprocess }: {
                 </div>
                 <span className="bml-sum">{counts.written} od {counts.all} upisano</span>
             </div>
+            {spend.messages > 0 && (
+                <p className="bml-spend" title="Obračunski tokeni: sve svedeno na cijenu ulaznog tokena (keš ×0,1, upis keša ×1,25–2, izlaz ×5)">
+                    🧮 Potrošnja ({spend.messages} poruka s mjerenjem): prosjek {String(spend.avgCalls).replace('.', ',')} kruga i ≈ {num(spend.avgBilled)} obračunskih tokena po poruci · iz keša {Math.round(spend.cacheShare * 100)}% ulaza · ukupno ≈ {num(spend.billed)}
+                </p>
+            )}
             {shown.length === 0 ? (
                 <p className="bml-empty">{filter === 'look' ? 'Nema poruka bez upisa. 👍' : 'Nema poruka u ovom periodu.'}</p>
             ) : (
@@ -102,6 +121,7 @@ export function BotMessagesView({ entries, busyId, onReprocess }: {
                                                 </ul>
                                             </div>
                                         )}
+                                        {e.usage && e.usage.calls > 0 && <p className="bml-muted">🧮 {usageLine(e.usage)}</p>}
                                         {e.attempts > 1 && <p className="bml-muted">Obrađeno {e.attempts} puta.</p>}
                                     </div>
                                 )}
