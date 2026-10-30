@@ -35,6 +35,13 @@ describe('Gmail upit', () => {
             .toBe('{from:n@tact-demo.example "Crni Vrh"} -in:sent newer_than:120d -category:promotions -category:social');
     });
 
+    it('domen firme pokriva adrese istog domena; ime bez adrese ide u Od/Za', () => {
+        expect(gmailQuery({ addresses: ['m@staklo-rez.example', 'x@druga.example'], domains: ['staklo-rez.example'], direction: 'in' }))
+            .toBe('{from:x@druga.example from:staklo-rez.example} -in:sent newer_than:120d -category:promotions -category:social');
+        expect(gmailQuery({ names: ['Merima Demo'], words: 'ogledala' })).toBe('ogledala {from:merima to:merima} newer_than:120d -category:promotions -category:social');
+        expect(gmailQuery({ domains: ['nije domen}', 'a'] })).toBe('');
+    });
+
     it('korisnikov tekst ne postaje Gmail operator', () => {
         expect(gmailQuery({ words: 'from:x@y.example OR (spam) "a"', days: 9999 })).toBe('from x@y.example spam a newer_than:730d -category:promotions -category:social');
         expect(gmailQuery({ addresses: ['nije adresa', 'x} OR {y@z.example'] })).toBe('');
@@ -86,9 +93,25 @@ describe('alat search_mail', () => {
         expect(list.mock.calls[0][1]).toBe('{from:nina@tact-demo.example "Crni Vrh"} -in:sent newer_than:120d -category:promotions -category:social');
     });
 
-    it('nepoznata osoba → ime ide u riječi (Gmail ga traži u zaglavljima)', async () => {
+    it('nepoznata osoba → ime u zaglavljima Od/Za (Gmail traži ime), ne u tekstu', async () => {
         await runTool(env(), 'search_mail', { who: 'Zoran' });
-        expect(list.mock.calls[0][1]).toMatch(/^Zoran newer_than:120d/);
+        expect(list.mock.calls[0][1]).toMatch(/^{from:zoran to:zoran} newer_than:120d/);
+    });
+
+    it('prazni Kontakti, firma iz dobavljača → adresa i DOMEN firme (odgovor stiže kao nova nit, s druge adrese)', async () => {
+        store.delete('contacts/c1');
+        store.set('suppliers/s1', { Supplier_ID: 's1', Organization_ID: 'org1', Name: 'Staklorez', Email: 'info@staklo-rez.example' });
+        await runTool(env(), 'search_mail', { who: 'Stakloreza' });
+        expect(list.mock.calls[0][1]).toBe('{from:staklo-rez.example to:staklo-rez.example cc:staklo-rez.example} newer_than:120d -category:promotions -category:social');
+    });
+
+    it('osoba + riječi nađu manje od 2 → ERP proširi na svu poštu te osobe i kaže to', async () => {
+        list.mockResolvedValueOnce([]).mockResolvedValueOnce(['a1', 'b2']);
+        const res = await runTool(env(), 'search_mail', { who: 'Merima', words: 'ogledala potvrda' });
+        expect(list.mock.calls[1][1]).not.toContain('ogledala');
+        expect(res.mails).toHaveLength(2);
+        expect(String(res.note)).toContain('ERP je pokazao svu poštu te osobe/firme');
+        expect(String(res.note)).toContain('NOVIM mailom');
     });
 
     it('ništa nađeno → savjet da proba šire', async () => {

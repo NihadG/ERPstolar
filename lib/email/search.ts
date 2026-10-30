@@ -18,6 +18,10 @@ export interface MailSearch {
     words?: string;
     /** Adrese osoba (od njih ili njima). */
     addresses?: string[];
+    /** Domeni firmi („rama-glas.com") — svi ljudi iz firme, i nove niti. */
+    domains?: string[];
+    /** Ime bez adrese („merima") — Gmail ga traži u zaglavljima Od/Za. */
+    names?: string[];
     /** Fraza koja može stajati umjesto adresa (naziv projekta). */
     phrase?: string;
     /** Koliko dana unazad. */
@@ -39,20 +43,27 @@ function terms(text: string): string[] {
 }
 
 const email = (a: string) => /^[^\s@{}()"<>:]+@[^\s@{}()"<>:]+\.[a-z]{2,}$/i.test(a) ? a.toLowerCase() : '';
+const domain = (d: string) => /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i.test(d) ? d.toLowerCase() : '';
+const name = (n: string) => cleanTerm(n).split(/\s+/)[0].toLowerCase();
 
 /** Gmail upit; prazan string znači da nema po čemu tražiti. */
 export function gmailQuery(s: MailSearch): string {
     const parts: string[] = [];
     const words = terms(s.words || '');
     const addresses = Array.from(new Set((s.addresses || []).map(email).filter(Boolean))).slice(0, 12);
+    // Adresa iz domena već pokrivenog domenom ne treba posebno.
+    const domains = Array.from(new Set((s.domains || []).map(domain).filter(Boolean))).slice(0, 4);
+    const people = [...addresses.filter(a => !domains.includes(a.slice(a.indexOf('@') + 1))), ...domains];
+    const names = Array.from(new Set((s.names || []).map(name).filter(n => n.length >= 3))).slice(0, 3);
     const phrase = terms(s.phrase || '').join(' ');
-    if (!words.length && !addresses.length && !phrase) return '';
+    if (!words.length && !people.length && !names.length && !phrase) return '';
 
     parts.push(...words);
     const who: string[] = [];
-    if (addresses.length) {
-        if (s.direction !== 'out') who.push(...addresses.map(a => `from:${a}`));
-        if (s.direction !== 'in') who.push(...addresses.map(a => `to:${a}`), ...addresses.map(a => `cc:${a}`));
+    const sides = [...people, ...names];
+    if (sides.length) {
+        if (s.direction !== 'out') who.push(...sides.map(a => `from:${a}`));
+        if (s.direction !== 'in') who.push(...sides.map(a => `to:${a}`), ...people.map(a => `cc:${a}`));
     }
     if (phrase) who.push(`"${phrase}"`);
     if (who.length === 1) parts.push(who[0]);

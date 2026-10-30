@@ -690,3 +690,37 @@ describe('alati po vrsti poruke i prepoznat projekat (30.10.)', () => {
         expect(out.usage?.toolSet).toBe('svi');
     });
 });
+
+describe('pošta prije „ne" za stanje kod dobavljača (PDF 30.10.)', () => {
+    beforeAll(() => {
+        mockStore.set('suppliers/sr', { Supplier_ID: 's-rez', Organization_ID: 'org1', Name: 'Staklorez', Email: 'info@staklo-rez.example' });
+    });
+    afterAll(() => { mockStore.delete('suppliers/sr'); mockStore.delete('email_accounts/u1'); });
+
+    const ask = 'Jesu li spremna ogledala iz Stakloreza, ova za Grbavicu?';
+    const steps = [
+        { calls: [{ name: 'list_orders', args: {} }] },
+        { text: 'Ne mogu potvrditi da su spremna. U ERP-u nema nijedne narudžbe ogledala kod Stakloreza.' },
+    ];
+
+    it('ERP nema traga, Gmail povezan → još jedan krug: search_mail za tu firmu; firma s domenom je u napomeni', async () => {
+        mockStore.set('email_accounts/u1', { UID: 'u1', Organization_ID: 'org1', Email: 'ja@luxco-demo.example', Status: 'ok', Scopes: [], Refresh_Token_Enc: 'x', Connected_At: '', Updated_At: '' });
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        const out = await say(ask, [...steps, { calls: [{ name: 'list_orders', args: {} }] }, { text: 'Staklorez je 3.9. javio da su ogledala gotova.' }]);
+        expect(mockSent[0].messages.at(-1).content).toContain('dobavljač: Staklorez (pošta: staklo-rez.example)');
+        expect(mockSent[0].messages.at(-1).content).toContain('stanje kod dobavljača → i search_mail who="Staklorez"');
+        expect(mockSent[2].tool_choice).toEqual({ type: 'any' });
+        expect(mockSent[2].messages.at(-1).content).toContain('search_mail s who=„Staklorez"');
+        expect(mockSent[2].tools.map((t: any) => t.name)).toContain('search_mail');
+        expect(out.reply).toBe('Staklorez je 3.9. javio da su ogledala gotova.');
+    });
+
+    it('Gmail nije povezan → bez dodatnog kruga', async () => {
+        mockStore.delete('email_accounts/u1');
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        await say(ask, steps);
+        expect(mockSent).toHaveLength(2);
+    });
+});

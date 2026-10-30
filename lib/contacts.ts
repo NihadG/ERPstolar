@@ -362,6 +362,39 @@ export function searchContacts(contacts: Contact[], query: string, supplierName?
     });
 }
 
+// ── Firma po imenu („Ramaglasa", „Rama glas", rama-glas.com) ─────────
+
+/** Ime bez razmaka, crtica i kvačica: „RAMA GLAS d.o.o." → ramaglasdoo. */
+export function compactName(s: string): string {
+    return fold(s).replace(/[^a-z0-9]/g, '');
+}
+
+/** Domen firme iz adresa (bez gmail.com i sličnih). */
+export function firmDomains(emails: string[]): string[] {
+    return Array.from(new Set(emails.filter(e => isValidEmail(e) && !isSharedMailDomain(e)).map(emailDomain)));
+}
+
+/**
+ * Firme koje tekst spominje: riječ (u padežu) ili dvije susjedne riječi
+ * zajedno su početak imena firme ili domena njene adrese. Riječi kraće od
+ * 4 slova ne znače ništa („iz", „za", „ova").
+ */
+export function searchFirms<T extends { Name: string; Email?: string }>(firms: T[], text: string): T[] {
+    const tokens = queryTokens(text).map(t => t.replace(/[^a-z0-9]/g, '')).filter(Boolean);
+    const variants = new Set<string>();
+    tokens.forEach((t, i) => {
+        if (t.length >= 4) { variants.add(t); variants.add(stemOf(t)); }
+        if (i + 1 < tokens.length && t.length >= 3 && tokens[i + 1].length >= 3) variants.add(stemOf(t + tokens[i + 1]));
+    });
+    const vs = Array.from(variants).filter(v => v.length >= 4);
+    if (!vs.length) return [];
+    return firms.filter(f => {
+        const keys = [compactName(f.Name), ...splitEmails(f.Email || '').filter(e => !isSharedMailDomain(e)).map(e => compactName(emailDomain(e).split('.')[0]))]
+            .filter(k => k.length >= 4);
+        return keys.some(k => vs.some(v => k.startsWith(v) || v.startsWith(k)));
+    });
+}
+
 /** Osnova riječi za padeže (Amri → amr, Lejli → lejl, Hadžiću → hadzic). */
 function stemOf(word: string): string {
     const w = word.toLowerCase();

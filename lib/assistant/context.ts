@@ -46,6 +46,8 @@ export interface AssistantContext {
     /** Naučene riječi koje sada važe (projekat/nalog aktivan, lokacija nije istekla). */
     vocab?: VocabEntry[];
     suppliers: string[];
+    /** Dobavljači s domenom adrese (rama-glas.com) — prepoznavanje firme u poruci i pošta. */
+    firms?: { name: string; email?: string }[];
     memory: Aliased<MemoryItem>[];
     tasks: Aliased<Task>[];
     /** Imena za prompt transkripcije glasovne poruke. */
@@ -72,9 +74,15 @@ async function loadProjects(orgId: string): Promise<Project[]> {
     return snap.docs.map(d => d.data() as Project).filter(p => !p.Hidden);
 }
 
-async function loadSuppliers(orgId: string): Promise<string[]> {
+async function loadSupplierDocs(orgId: string): Promise<Supplier[]> {
     const snap = await adminDb().collection('suppliers').where('Organization_ID', '==', orgId).get();
-    return snap.docs.map(d => (d.data() as Supplier).Name).filter(Boolean).sort((a, b) => a.localeCompare(b, 'bs'));
+    return snap.docs.map(d => d.data() as Supplier).filter(s => !!s.Name);
+}
+
+const supplierNames = (list: Supplier[]) => list.map(s => s.Name).sort((a, b) => a.localeCompare(b, 'bs'));
+
+async function loadSuppliers(orgId: string): Promise<string[]> {
+    return supplierNames(await loadSupplierDocs(orgId));
 }
 
 /** Aktivni projekti + nedavno zatvoreni; stari zatvoreni ne troše tokene. */
@@ -113,7 +121,7 @@ export async function loadContext(orgId: string, uid: string, now: Date = new Da
     const [projects, workers, suppliers, memory, tasks, orders, vocab] = await Promise.all([
         loadProjects(orgId),
         getActiveWorkers(orgId),
-        loadSuppliers(orgId),
+        loadSupplierDocs(orgId),
         listMemory(orgId, uid),
         getAllTasks(orgId),
         getOpenWorkOrders(orgId),
@@ -130,10 +138,11 @@ export async function loadContext(orgId: string, uid: string, now: Date = new Da
             projectIds: new Set((voice.projects || []).map(p => p.id)),
             orderIds: new Set(orders.map(o => o.Work_Order_ID)),
         }, now.toISOString()),
-        suppliers,
+        suppliers: supplierNames(suppliers),
+        firms: suppliers.map(s => ({ name: s.Name, ...(s.Email ? { email: s.Email } : {}) })),
         memory: memory.slice(-MAX_MEMORY).map((m, i) => ({ alias: `M${i + 1}`, value: m })),
         tasks: relevantTasks(tasks, uid, now).map((t, i) => ({ alias: `T${i + 1}`, value: t })),
-        names: contextNames({ ...voice, suppliers }),
+        names: contextNames({ ...voice, suppliers: supplierNames(suppliers) }),
     };
 }
 
