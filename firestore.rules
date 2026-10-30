@@ -311,6 +311,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Imenik pošte (ljudi kojima si pisao) — samo server.
+    match /mail_people/{uid} {
+      allow read, write: if false;
+    }
+
     // ============================================
     // WORKERS (Multi-tenancy enabled)
     // ============================================

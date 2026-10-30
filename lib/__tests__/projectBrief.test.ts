@@ -6,6 +6,7 @@ jest.mock('@/lib/server/firebaseAdmin', () => require('@/lib/testing/fakeFiresto
 import { fakeStore as store } from '@/lib/testing/fakeFirestore';
 import { buildProjectBrief, groupMaterials, productMatches, type BriefInput } from '@/lib/assistant/projectBrief';
 import { runTool, type ToolEnv } from '@/lib/assistant/tools';
+import { clearProjectBriefCache } from '@/lib/server/projectBrief';
 
 const row = (name: string, productName: string, needed: number, extra: Partial<BriefInput['materials'][number]> = {}) => ({
     name, unit: 'ploča', supplier: 'Ploče Demo', productName, needed, ordered: 0, received: 0, onStock: 0, ...extra,
@@ -65,6 +66,18 @@ describe('kartica projekta — sastav', () => {
         expect(t).not.toContain('N2026-09/03');
     });
 
+    it('pošta o projektu: i kad narudžbe nema u ERP-u (mail mimo ERP-a), najnovije prvo', () => {
+        const t = buildProjectBrief({ ...input, mail: [
+            { at: '2026-09-30T06:00:00Z', from: 'Mia Demo (Staklo Demo)', kind: 'supplier_doc', docNo: '330421', subject: 'Predracun 330421 - Narudzba ogledala', snippet: 'U prilogu predračun, molim potvrdu.' },
+            { at: '2026-09-03T10:00:00Z', from: 'Mia Demo (Staklo Demo)', kind: 'ready', subject: 'nalog Kuća', snippet: 'Gotova su ogledala za Kuću.' },
+        ] });
+        expect(t).toContain('POŠTA o projektu (2; i narudžbe poslane mailom mimo ERP-a):');
+        expect(t).toContain('• 30.9. · Mia Demo (Staklo Demo) · predračun / ponuda 330421 · „Predracun 330421 - Narudzba ogledala" — U prilogu predračun, molim potvrdu.');
+        expect(t).toContain('• 3.9. · Mia Demo (Staklo Demo) · gotovo / spremno · „nalog Kuća" — Gotova su ogledala za Kuću.');
+        expect(buildProjectBrief({ ...input, mail: [] })).toContain('— u ulaznoj pošti nema ništa o ovom projektu');
+        expect(buildProjectBrief(input)).not.toContain('POŠTA');   // Gmail nije povezan
+    });
+
     it('prazan projekat', () => {
         const t = buildProjectBrief({ label: 'Novi', products: [], materials: [], orders: [], history: null, notebook: [], tasks: [], people: [] });
         expect(t).toContain('— u sastavnici nema materijala');
@@ -82,6 +95,7 @@ describe('alat project_brief', () => {
 
     beforeEach(() => {
         store.clear();
+        clearProjectBriefCache();
         store.set('projects/p1', { Project_ID: 'p1', Organization_ID: 'org1', Client_Name: 'Adnan Kovač', Name: 'Kuća faza 2', Status: 'U proizvodnji' });
         store.set('products/a', { Product_ID: 'pa', Organization_ID: 'org1', Project_ID: 'p1', Name: 'Ormar spavaća', Quantity: 1, Status: 'U izradi' });
         store.set('product_materials/m1', { ID: 'm1', Organization_ID: 'org1', Product_ID: 'pa', Material_Name: 'Iveral F416 Textil Bež 18mm', Quantity: 3, Unit: 'ploča', Status: 'Primljeno', Supplier: 'Ploče Demo', Order_ID: '', Received_Quantity: 3, Ordered_Quantity: 3 });
@@ -93,6 +107,15 @@ describe('alat project_brief', () => {
         expect(res.ok).toBe(true);
         expect(String(res.brief)).toContain('Iveral F416 Textil Bež 18mm');
         expect(String(res.brief)).toContain('• Selma Ribić — Nadzor <selma@projekt-demo.example>');
+    });
+
+    it('Gmail povezan → POŠTA: mail koji spominje projekat ili njegovu narudžbu', async () => {
+        store.set('email_accounts/u1', { UID: 'u1', Organization_ID: 'org1', Email: 'ja@luxco-demo.example', Status: 'ok', Scopes: [] });
+        store.set('mail_inbox/u1_r1', { Owner_UID: 'u1', Organization_ID: 'org1', Message_ID: 'r1', Received_At: '2026-09-03T10:00:00Z', Kind: 'ready', From_Name: 'Mia Demo', Supplier_Name: 'Ploče Demo', Subject: 'nalog Kuća', Snippet: 'Gotovo.', Order_IDs: [], Project_IDs: ['p1'] });
+        store.set('mail_inbox/u1_r2', { Owner_UID: 'u1', Organization_ID: 'org1', Message_ID: 'r2', Received_At: '2026-09-04T10:00:00Z', Kind: 'contact', From_Name: 'Neko', Subject: 'Drugi projekat', Snippet: 'x', Order_IDs: [], Project_IDs: ['p9'] });
+        const res = await runTool(env(), 'project_brief', { project: 'P1' });
+        expect(String(res.brief)).toContain('• 3.9. · Mia Demo (Ploče Demo) · gotovo / spremno · „nalog Kuća" — Gotovo.');
+        expect(String(res.brief)).not.toContain('Drugi projekat');
     });
 
     it('nepoznat projekat je greška', async () => {

@@ -13,6 +13,7 @@
 import { fold } from '../command/search';
 import { emailDomain, isSharedMailDomain, matchSender, normalizeEmail, splitEmails } from '../contacts';
 import { parseMailbox } from './addresses';
+import { orderMentioned, type GroundRef } from '../assistant/grounding';
 import type { Contact, MailKind } from '../types';
 
 export interface IncomingMail {
@@ -39,6 +40,10 @@ export interface MailContext {
     /** Niti koje je ERP započeo: nit → narudžba (ako je mail bio narudžba). */
     threads: Map<string, { orderId?: string }>;
     orders: MailOrderRef[];
+    /** Imenik pošte: ljudi kojima si pisao (lib/email/directory.ts) — poznati i bez Kontakata. */
+    people?: Set<string>;
+    /** Projekti (klijent · naziv) — mail koji ih spominje veže se za projekat i bez narudžbe u ERP-u. */
+    projects?: GroundRef[];
 }
 
 export interface MailClass {
@@ -51,6 +56,8 @@ export interface MailClass {
     contact?: Contact;
     fromEmail: string;
     fromName: string;
+    /** Projekti koje naslov ili tekst spominju („nalog Crni Vrh"). */
+    projectIds?: string[];
 }
 
 const IGNORED_LABELS = ['SENT', 'DRAFT', 'SPAM', 'TRASH', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL'];
@@ -86,11 +93,17 @@ export function classifyMail(mail: IncomingMail, ctx: MailContext): MailClass {
         const domain = emailDomain(sender.email);
         supplierId = ctx.suppliers.find(s => splitEmails(s.Email || '').some(e => emailDomain(e) === domain))?.Supplier_ID;
     }
-    if (!thread && !contact && !match.viaDomain && !supplierId) return base;   // nepoznat — ne diramo
+    const known = !!ctx.people?.has(sender.email);
+    if (!thread && !contact && !match.viaDomain && !supplierId && !known) return base;   // nepoznat — ne diramo
 
     const text = fold(`${mail.subject} ${mail.snippet}`);
     const subject = fold(mail.subject);
-    const out: MailClass = { ...base, contact, supplierId, supplierName: ctx.suppliers.find(s => s.Supplier_ID === supplierId)?.Name };
+    const projects = ctx.projects || [];
+    const projectIds = projects.filter(p => orderMentioned(`${mail.subject} ${mail.snippet}`, p, projects)).slice(0, 3).map(p => p.id);
+    const out: MailClass = {
+        ...base, contact, supplierId, supplierName: ctx.suppliers.find(s => s.Supplier_ID === supplierId)?.Name,
+        ...(projectIds.length ? { projectIds } : {}),
+    };
 
     if (supplierId) {
         const open = (statuses: string[]) => threadOrder ? [threadOrder.Order_ID] : ctx.orders
