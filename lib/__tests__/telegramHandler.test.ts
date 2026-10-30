@@ -9,8 +9,9 @@
 jest.mock('@/lib/server/firebaseAdmin', () => require('@/lib/testing/fakeFirestore').firebaseAdminMock);
 
 const mockSent: { method: string; args: any[] }[] = [];
+let mockMsgId = 1000;
 jest.mock('@/lib/telegram/api', () => {
-    const rec = (method: string) => async (...args: any[]) => { mockSent.push({ method, args }); return { message_id: 1 }; };
+    const rec = (method: string) => async (...args: any[]) => { mockSent.push({ method, args }); return { message_id: ++mockMsgId }; };
     return {
         sendMessage: rec('sendMessage'),
         editMessageText: rec('editMessageText'),
@@ -155,5 +156,64 @@ describe('Telegram webhook', () => {
             callback_query: { id: 'cb', from: USER, data: 'done:t-3', message: { message_id: 9, date: 1, chat: CHAT, text: 'x' } },
         });
         expect(fakeStore.get('tasks/d3')!.Status).toBe('pending');
+    });
+});
+
+// PDF 30.10.: greške se javljaju PDF-om — sad odgovorom na poruku bota, i automatski.
+describe('signali i napomena za reviziju', () => {
+    const entryOf = (text: string) => fakeDocs('assistant_entries').find(e => e.Raw_Text === text)!;
+    const bot = { id: 1, is_bot: true, first_name: 'Luxbot' };
+
+    it('odgovor bota pamti svoj message_id i signale obrade', async () => {
+        mockRun.mockImplementationOnce(async (input: any) => ({
+            reply: 'Nemam zapisano.', buttons: [], created: { taskIds: [], memoryIds: [] }, outcome: 'answer',
+            signals: ['read_guard', 'nemam'], session: { history: [{ role: 'user', text: input.text, at: 'x' }], pending: null },
+        }));
+        await handleTelegramUpdate(msg({ text: 'Jesu li spremna ogledala iz Stakloreza?' }));
+        const e = entryOf('Jesu li spremna ogledala iz Stakloreza?');
+        expect(e.Signals).toEqual(['read_guard', 'nemam']);
+        expect(e.Reply_Message_ID).toBe(mockMsgId);
+    });
+
+    it('„loše: …" kao odgovor na poruku bota → napomena uz tu poruku; mozak se ne zove', async () => {
+        const target = entryOf('Jesu li spremna ogledala iz Stakloreza?');
+        await handleTelegramUpdate(msg({ text: 'loše: trebao si pogledati mail', reply_to_message: { message_id: target.Reply_Message_ID, from: bot } }));
+        expect(mockRun).not.toHaveBeenCalled();
+        expect(lastText()).toBe('📝 Zabilježeno za reviziju — ovo ne izvršavam kao naredbu.');
+        const e = entryOf('Jesu li spremna ogledala iz Stakloreza?');
+        expect(e.Signals).toEqual(['read_guard', 'nemam', 'feedback']);
+        expect(e.Feedback).toEqual([expect.objectContaining({ Kind: 'lose', Text: 'trebao si pogledati mail' })]);
+        expect(fakeDocs('assistant_entries').some(x => x.Raw_Text === 'loše: trebao si pogledati mail')).toBe(false);
+    });
+
+    it('ispravka odmah poslije → „corrected" na prethodnoj; nova poruka se obrađuje normalno', async () => {
+        await handleTelegramUpdate(msg({ text: 'Je li stigao predračun od Stakloreza?' }));
+        await handleTelegramUpdate(msg({ text: 'ne, pogledaj u mailu' }));
+        expect(entryOf('Je li stigao predračun od Stakloreza?').Signals).toContain('corrected');
+        expect(mockRun).toHaveBeenCalledTimes(2);
+        expect(entryOf('ne, pogledaj u mailu').Signals || []).not.toContain('corrected');
+    });
+
+    it('/lose tekst → napomena na zadnju poruku', async () => {
+        await handleTelegramUpdate(msg({ text: 'Šta fali za Grbavicu?' }));
+        await handleTelegramUpdate(msg({ text: '/lose zaboravio si okove' }));
+        expect(entryOf('Šta fali za Grbavicu?').Feedback).toEqual([expect.objectContaining({ Kind: 'lose', Text: 'zaboravio si okove' })]);
+    });
+
+    it('„dobro, može" je obična poruka, ne napomena', async () => {
+        await handleTelegramUpdate(msg({ text: 'dobro, može' }));
+        expect(mockRun).toHaveBeenCalledTimes(1);
+    });
+
+    it('↩️ Poništi → „undone" na poruci', async () => {
+        await handleTelegramUpdate(msg({ text: 'Upiši Amera danas' }));
+        const e = entryOf('Upiši Amera danas');
+        fakeStore.set('assistant_ops/op1', { turnId: 'turn-x', uid: 'u1', orgId: 'org1', path: 'tasks/t-undo', before: null, label: 'Zadatak', at: '2026-10-30T10:00:00Z' });
+        fakeStore.set('tasks/t-undo', { Task_ID: 't-undo', Organization_ID: 'org1', Title: 'x' });
+        await handleTelegramUpdate({
+            update_id: ++updateId,
+            callback_query: { id: 'cb1', from: USER, data: 'undo:turn-x', message: { message_id: e.Reply_Message_ID, date: 1, chat: CHAT, text: 'OK' } },
+        } as any);
+        expect(entryOf('Upiši Amera danas').Signals).toContain('undone');
     });
 });

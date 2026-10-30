@@ -20,6 +20,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import { capToolCalls } from './toolLog';
+import { mergeSignals, type Signal } from './signals';
 import type { AssistantEntry, AssistantOutcome, AssistantUsage, MemoryItem, ToolCallLog } from '@/lib/types';
 
 const LINK_CODE_TTL_MS = 10 * 60_000;
@@ -186,12 +187,17 @@ export interface AssistantSession {
     pending?: PendingQuestion | null;
     refs?: SessionRefs | null;
     focus?: SessionFocus | null;
+    /** Zadnja obrađena poruka (dnevnik) — ispravka u sljedećoj i /lose idu na nju. */
+    lastEntry?: { id: string; at: string; text: string } | null;
 }
 
 export async function getSession(chatId: number): Promise<AssistantSession> {
     const snap = await adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId)).get();
     const data = snap.data() as Partial<AssistantSession> | undefined;
-    return { history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null, focus: data?.focus || null };
+    return {
+        history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null, focus: data?.focus || null,
+        lastEntry: data?.lastEntry || null,
+    };
 }
 
 export async function saveSession(chatId: number, session: AssistantSession): Promise<void> {
@@ -201,6 +207,7 @@ export async function saveSession(chatId: number, session: AssistantSession): Pr
         pending: session.pending ? JSON.parse(JSON.stringify(session.pending)) : null,
         refs: session.refs ? JSON.parse(JSON.stringify(session.refs)) : null,
         focus: session.focus || null,
+        lastEntry: session.lastEntry || null,
         updatedAt: new Date().toISOString(),
     });
 }
@@ -219,6 +226,10 @@ export async function addEntry(input: Omit<AssistantEntry, 'Entry_ID' | 'Created
 export async function recordEntryOutcome(entryId: string, input: {
     outcome: AssistantOutcome; reply: string; changes: string[]; taskIds: string[]; memoryIds: string[]; turnId?: string; toolCalls?: ToolCallLog[];
     usage?: AssistantUsage;
+    /** Signali obrade (lib/assistant/signals.ts); naknadni (Poništi, napomena…) ostaju. */
+    signals?: string[];
+    /** Telegram message_id odgovora bota. */
+    replyMessageId?: number;
 }): Promise<void> {
     try {
         const ref = adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(entryId);
@@ -230,6 +241,8 @@ export async function recordEntryOutcome(entryId: string, input: {
             Changes: input.changes.slice(0, 40),
             ...(input.toolCalls?.length ? { Tool_Calls: capToolCalls(input.toolCalls) } : {}),
             ...(input.usage ? { Usage: input.usage } : {}),
+            Signals: mergeSignals(prev.Signals, input.signals || []),
+            ...(input.replyMessageId ? { Reply_Message_ID: input.replyMessageId } : {}),
             Processed_At: new Date().toISOString(),
             Attempts: (prev.Attempts || 0) + 1,
             ...(input.turnId ? { Turn_ID: input.turnId } : {}),
@@ -238,6 +251,30 @@ export async function recordEntryOutcome(entryId: string, input: {
         });
     } catch (e) {
         console.warn('[assistant] ishod unosa nije zapisan:', entryId, e);
+    }
+}
+
+/** Unos čiji je odgovor bota ova Telegram poruka (napomena odgovorom, ↩️ Poništi). */
+export async function findEntryByReply(uid: string, messageId: number): Promise<AssistantEntry | null> {
+    const snap = await adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).where('Reply_Message_ID', '==', messageId).get();
+    return snap.docs.map(d => d.data() as AssistantEntry).find(e => e.Owner_UID === uid) || null;
+}
+
+/** Naknadni signal ili tvoja napomena uz unos. Greška ne ruši odgovor. */
+export async function markEntry(entryId: string, uid: string, patch: { signal?: Signal; feedback?: { kind: string; text: string } }): Promise<boolean> {
+    try {
+        const ref = adminDb().collection(COLLECTIONS.ASSISTANT_ENTRIES).doc(entryId);
+        const prev = (await ref.get()).data() as AssistantEntry | undefined;
+        if (!prev || prev.Owner_UID !== uid) return false;
+        const signals = Array.from(new Set([...(prev.Signals || []), ...(patch.signal ? [patch.signal] : []), ...(patch.feedback ? ['feedback'] : [])]));
+        await ref.update({
+            Signals: signals,
+            ...(patch.feedback ? { Feedback: [...(prev.Feedback || []), { At: new Date().toISOString(), Kind: patch.feedback.kind, Text: patch.feedback.text.slice(0, 1000) }] } : {}),
+        });
+        return true;
+    } catch (e) {
+        console.warn('[assistant] oznaka unosa nije zapisana:', entryId, e);
+        return false;
     }
 }
 

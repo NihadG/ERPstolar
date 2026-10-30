@@ -47,6 +47,7 @@ import { getEmailAccount } from '@/lib/server/gmail';
 import { addUsage, emptyUsage } from './usage';
 import { mentionNote } from './mentions';
 import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
+import { turnSignals } from './signals';
 
 export { claimsWrite } from './replyText';
 
@@ -160,6 +161,8 @@ export interface AssistantTurnOutput {
     toolCalls?: ToolCallLog[];
     /** Potrošnja modela za ovu poruku (svi krugovi). */
     usage?: AssistantUsage;
+    /** Šta je ERP morao ispravljati u ovoj poruci (lib/assistant/signals.ts) — za dnevnik i reviziju. */
+    signals?: string[];
     degraded?: boolean;
 }
 
@@ -264,12 +267,19 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const toolCalls: ToolCallLog[] = [];
     const usage = emptyUsage();
 
+    // Šta je ERP morao ispravljati (čuvari) — postavlja se u petlji, čita u finish.
+    const sig = { readGuard: false, mailGuard: false, writeGuard: false, coverage: false };
+
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
         buttons,
         created: { taskIds: [], memoryIds: [] },
         toolCalls,
         ...(usage.calls ? { usage } : {}),
+        signals: turnSignals({
+            ...sig, allTools: toolCalls.some(t => t.name === ALL_TOOLS), toolErrors: toolCalls.some(t => !t.ok),
+            outcome: extra.outcome, reply, ms: usage.ms,
+        }),
         ...extra,
         session: {
             // Model u istoriji vidi i šta znače oznake koje je ova poruka dala (korisnik ih ne vidi).
@@ -463,6 +473,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 // Pitanje o podacima ili „nemam / ne vidim" bez ijednog čitanja ERP-a → prvo čitaj (lib/assistant/readGuard).
                 if (shouldReadFirst({ isQuestion, readUsed, readAsked, changed: env.changes.length > 0, question: pre.text, answer: textOf(res) })) {
                     readAsked = true;
+                    sig.readGuard = true;
                     forceTool = true;
                     readFirst = true;
                     messages.push({ role: 'assistant', content: res.content });
@@ -473,6 +484,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 if (shouldCheckMail({ isQuestion, asked: mailAsked, mailSearched, firmMentioned: firmHits.length > 0, question: pre.text, answer: textOf(res) })
                     && await mailConnected()) {
                     mailAsked = true;
+                    sig.mailGuard = true;
                     forceTool = true;
                     readFirst = true;
                     messages.push({ role: 'assistant', content: res.content });
@@ -482,6 +494,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 // Model je „potvrdio" tekstom, a ništa nije upisano → još jednom, uz obavezan alat.
                 if (!env.changes.length && !guarded && !isQuestion && claimsWrite(text)) {
                     guarded = true;
+                    sig.writeGuard = true;
                     forceTool = true;
                     strong = true;
                     messages.push({ role: 'assistant', content: res.content });
@@ -491,6 +504,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 // Poruka traži upis (podsjetnik, zadatak, bilješka…), a model je samo odgovorio.
                 if (!env.changes.length && !guarded && !writeAttempted && intent.expectsWrite && !asksBack(text)) {
                     guarded = true;
+                    sig.writeGuard = true;
                     forceTool = true;
                     strong = true;
                     messages.push({ role: 'assistant', content: res.content });
@@ -500,6 +514,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 const m = missing();
                 if (hasMissing(m) && !coverageAsked) {
                     coverageAsked = true;
+                    sig.coverage = true;
                     strong = true;
                     messages.push({ role: 'assistant', content: res.content });
                     messages.push({ role: 'user', content: coverageNote(missingText(m)) });
@@ -539,6 +554,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 const m = missing();
                 if (hasMissing(m) && !coverageAsked) {
                     coverageAsked = true;
+                    sig.coverage = true;
                     strong = true;
                     messages.push({ role: 'user', content: [...results, { type: 'text', text: coverageNote(missingText(m)) }] });
                     continue;

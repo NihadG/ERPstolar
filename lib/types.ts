@@ -900,6 +900,12 @@ export interface AssistantEntry {
     Attempts?: number;
     /** Potrošnja modela za ovu poruku (lib/assistant/usage.ts). */
     Usage?: AssistantUsage;
+    /** Šta je trebalo ispravljati i šta korisnik misli (lib/assistant/signals.ts) — revizija kreće odavde. */
+    Signals?: string[];
+    /** Tvoje napomene odgovorom na poruku bota („loše: trebao si pogledati mail"). */
+    Feedback?: { At: string; Kind: string; Text: string }[];
+    /** Poruka bota s odgovorom (Telegram message_id) — napomena odgovorom i ↩️ Poništi nalaze unos. */
+    Reply_Message_ID?: number;
 }
 
 /** Zbir svih krugova modela za jednu poruku botu. */

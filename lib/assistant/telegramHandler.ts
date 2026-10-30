@@ -37,7 +37,7 @@ import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
 import {
     addEntry, claimUpdate, consumeLinkCode, getEntry, getLinkByTelegramId,
-    getSession, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
+    findEntryByReply, getSession, markEntry, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
 } from './store';
 import type { Task } from '@/lib/types';
 
@@ -46,6 +46,13 @@ const HOW_TO_LINK =
     'Da ga povežeš s nalogom: u aplikaciji otvori Postavke → Telegram asistent → „Poveži", ' +
     'pa pošalji ovdje kod koji dobiješ (ili klikni link).';
 
+import { isCorrection, parseFeedback } from './signals';
+
+/** Ispravka se veže za prethodnu poruku samo ako je stigla u ovom roku. */
+const CORRECTION_MINUTES = 10;
+/** Napomena bez odgovora (reply) ide na zadnju poruku samo ako je svježa. */
+const FEEDBACK_HOURS = 24;
+const FEEDBACK_SAVED = '📝 Zabilježeno za reviziju — ovo ne izvršavam kao naredbu.';
 const HELP =
     'Šta mi možeš poslati (glasom ili tekstom):\n' +
     '• „U ponedjeljak naručiti 10 baglama" → podsjetnik u ponedjeljak u 8:00\n' +
@@ -60,7 +67,8 @@ const HELP =
     '• „Dokle je kuhinja Čorluka?" → stanje naloga\n' +
     '• „Pošalji mi PDF zadnje narudžbe za Begovića"\n\n' +
     'Radnim danom u 16:30 stiže prijedlog rada za taj dan — potvrdiš ga jednim klikom.\n\n' +
-    'Komande: /danas · /otvoreno · /prijedlog · /posta · /pomoc';
+    'Nešto nije bilo dobro? Odgovori (reply) na moju poruku sa „loše: …" — bilježi se za reviziju bota.\n\n' +
+    'Komande: /danas · /otvoreno · /prijedlog · /posta · /lose · /pomoc';
 
 type MessageIncoming = Extract<Incoming, { type: 'message' }>;
 type CallbackIncoming = Extract<Incoming, { type: 'callback' }>;
@@ -123,9 +131,40 @@ async function handleCommand(inc: MessageIncoming, link: AssistantLink): Promise
             await sendMessage(inc.chatId, msg?.text || 'Nema prijedloga za danas — svi su upisani ili nema ranijeg upisa. Izdiktiraj dan porukom.', msg?.buttons);
             return;
         }
+        case 'lose':
+        case 'napomena': {
+            const session = await getSession(inc.chatId);
+            const text = inc.command?.arg?.trim() || '';
+            if (!text) {
+                await sendMessage(inc.chatId, 'Napiši šta nije bilo dobro: „/lose trebao si pogledati mail". Ili odgovori (reply) na moju poruku sa „loše: …".');
+                return;
+            }
+            await saveFeedback(inc.chatId, link, session, { kind: inc.command?.name === 'lose' ? 'lose' : 'napomena', text });
+            return;
+        }
         default:
             await sendMessage(inc.chatId, HELP);
     }
+}
+
+/**
+ * Tvoja napomena ide uz poruku bota na koju si odgovorio (reply), inače uz
+ * zadnju obrađenu poruku iz zadnja 24 sata; bez ijedne — kao zaseban unos.
+ * Nikad se ne izvršava kao naredba.
+ */
+async function saveFeedback(chatId: number, link: AssistantLink, session: AssistantSession, fb: { kind: string; text: string }, replyTo?: number): Promise<void> {
+    const fresh = session.lastEntry && Date.now() - Date.parse(session.lastEntry.at) <= FEEDBACK_HOURS * 3_600_000;
+    const targetId = replyTo
+        ? (await findEntryByReply(link.uid, replyTo))?.Entry_ID
+        : fresh ? session.lastEntry!.id : undefined;
+    const saved = targetId ? await markEntry(targetId, link.uid, { feedback: fb }) : false;
+    if (!saved) {
+        await addEntry({
+            Organization_ID: link.orgId, Owner_UID: link.uid, Channel: 'telegram', Kind: 'text', Raw_Text: fb.text,
+            Signals: ['feedback'], Feedback: [{ At: new Date().toISOString(), Kind: fb.kind, Text: fb.text.slice(0, 1000) }],
+        });
+    }
+    await sendMessage(chatId, FEEDBACK_SAVED);
 }
 
 async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise<void> {
@@ -147,7 +186,20 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
 
     if (await consumeDraftText(inc.chatId, link, text)) return;
 
-    const [entryId, session] = await Promise.all([
+    const session = await getSession(inc.chatId);
+    // „loše: …" kao odgovor na poruku bota (ili samo s tom riječi) = napomena za reviziju, ne naredba.
+    const fb = parseFeedback(text);
+    if (fb && !inc.voice) {
+        await saveFeedback(inc.chatId, link, session, fb, inc.replyTo?.fromBot ? inc.replyTo.messageId : undefined);
+        return;
+    }
+    // Sljedeća poruka odmah ispravlja prethodnu („ne, nije tako", isto pitanje opet) → signal na prethodnoj.
+    const last = session.lastEntry;
+    if (last && Date.now() - Date.parse(last.at) <= CORRECTION_MINUTES * 60_000 && isCorrection(text, last.text)) {
+        await markEntry(last.id, link.uid, { signal: 'corrected' });
+    }
+
+    const [entryId] = await Promise.all([
         addEntry({
             Organization_ID: link.orgId,
             Owner_UID: link.uid,
@@ -158,7 +210,6 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
             Forward_Date: inc.forward?.date,
             Telegram_File_ID: inc.voice?.fileId,
         }),
-        getSession(inc.chatId),
     ]);
 
     await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session });
@@ -182,20 +233,22 @@ async function converse(
     });
     // Prvo odgovor korisniku, pa spremanje — sesija i dnevnik ne trebaju da ga čekaju.
     const prefix = input.heard ? `🎙 „${input.heard}"\n\n` : '';
-    await deliver(link, chatId, out, input.entryId, prefix);
+    await deliver(link, chatId, out, input.entryId, prefix, input.text);
     console.log(`[assistant] odgovor za ${Date.now() - started} ms`);
     return out;
 }
 
 /** Odgovor u Telegram, pa sesija, dnevnik, PDF-ovi i kapije materijala — isto za poruku i za dugme. */
-async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOutput, entryId: string | undefined, prefix = ''): Promise<void> {
-    await sendMessage(chatId, prefix + out.reply, out.buttons);
+async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOutput, entryId: string | undefined, prefix = '', userText = ''): Promise<void> {
+    const sent = await sendMessage(chatId, prefix + out.reply, out.buttons);
     await Promise.all([
-        saveSession(chatId, out.session),
+        // Zadnja poruka u sesiji: ispravka u sljedećoj i /lose idu na nju.
+        saveSession(chatId, entryId ? { ...out.session, lastEntry: { id: entryId, at: new Date().toISOString(), text: userText.slice(0, 500) } } : out.session),
         entryId
             ? recordEntryOutcome(entryId, {
                 outcome: out.outcome || (out.changed ? 'written' : 'answer'), reply: out.reply, changes: out.changes || [],
                 taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)), toolCalls: out.toolCalls, usage: out.usage,
+                signals: out.signals, replyMessageId: sent?.message_id,
             })
             : Promise.resolve(),
         ...(out.emailDrafts || []).map(async draftId => {
@@ -301,6 +354,10 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
     if (kind === 'undo') {
         const undone = await undoTurn(arg, link.uid);
         await answerCallbackQuery(inc.callbackId, undone.length ? 'Poništeno' : 'Već poništeno');
+        if (undone.length) {
+            const entry = await findEntryByReply(link.uid, inc.messageId);
+            if (entry) await markEntry(entry.Entry_ID, link.uid, { signal: 'undone' });
+        }
         if (undone.length) await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n\n↩️ Poništeno: ${undone.join(', ')}`);
         return;
     }
@@ -415,6 +472,7 @@ export async function reprocessEntry(link: AssistantLink, entryId: string): Prom
     const entry = await getEntry(entryId);
     if (!entry || entry.Owner_UID !== link.uid || entry.Organization_ID !== link.orgId) return { ok: false, error: 'Poruka ne postoji.' };
     if (entry.Outcome === 'written') return { ok: false, error: 'Ova poruka je već upisana.' };
+    await markEntry(entry.Entry_ID, link.uid, { signal: 'reprocessed' });
     const out = await converse(link, link.chatId, {
         text: entry.Raw_Text, entryId: entry.Entry_ID, now: new Date(entry.Created_At),
         ...(entry.Forward_From && entry.Forward_Date ? { forward: { from: entry.Forward_From, date: entry.Forward_Date } } : {}),

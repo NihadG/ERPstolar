@@ -23,6 +23,8 @@ interface TgFile {
 
 export interface TgMessage {
     message_id: number;
+    /** Poruka na koju je ovo odgovor (reply). */
+    reply_to_message?: { message_id: number; from?: TgUser; text?: string };
     date: number;
     chat: { id: number; type: string; title?: string };
     from?: TgUser;
@@ -76,6 +78,8 @@ export type Incoming =
         /** Proslijeđena poruka: od koga i kad je izvorno poslana. */
         forward?: { from: string; date: string };
         command?: { name: string; arg: string };
+        /** Odgovor (reply) na poruku — za napomenu uz odgovor bota. */
+        replyTo?: { messageId: number; fromBot: boolean };
     }
     | {
         type: 'callback';
@@ -164,6 +168,7 @@ export function normalizeUpdate(u: TgUpdate): Incoming {
             },
         } : {}),
         ...(forward ? { forward } : {}),
+        ...(m.reply_to_message ? { replyTo: { messageId: m.reply_to_message.message_id, fromBot: !!m.reply_to_message.from?.is_bot } } : {}),
         // Proslijeđeni tekst koji počinje kosom crtom nije komanda za bota.
         ...(!forward && text.startsWith('/') ? { command: parseCommand(text) } : {}),
     };
