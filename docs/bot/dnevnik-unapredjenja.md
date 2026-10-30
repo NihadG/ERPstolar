@@ -27,6 +27,8 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | Revizija | Poruka | Upisano | Odgovor | Pitanje | Nije upisano | AI nije radio | Sa signalom | Napomena | Tokena/poruka |
 |---|---|---|---|---|---|---|---|---|---|
 | 30.10.2026 (osnova, prije signala) | 45 | 23 | 15 | 1 | 0 | 6 | — | — | nema mjerenja |
+| 30.10.2026 ponavljanje istih 45 kroz novog bota (#38–#46) | 45 | 24 | 12 | 3 | 0 | 6 | — | — | 12.292 |
+| 30.10.2026 ponavljanje 12 palih i susjednih poslije P-008 | 12 | 6 | 3 | 2 | 1 | 0 | — | — | — |
 
 ## Otvorene potrebe
 
@@ -39,6 +41,9 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | P-005 | Gmail povezan, Kontakti uvezeni | bez toga pošta radi samo preko domena dobavljača i imenika | podatak | **čeka tebe**: Postavke → Kontakti | — |
 | P-006 | Ponavljanje 45 stvarnih poruka (korak 6) | izvoz postoji lokalno | — | **čeka tebe**: `ANTHROPIC_API_KEY` u `.env.local` | — |
 | P-007 | Izmjena toka procesa porukom, „Zapamti“, procenat urađenog | PDF 29.10. | mogućnost | otvoreno | — |
+| P-008 | „AI se trenutno ne javlja“ kad ERP traži obavezan alat | ponavljanje 30.10.: 6 od 45 poruka pada s 400 „tool_choice … not supported“ na jačem modelu (Sonnet 5.5); isto u produkciji 30.10. ujutro | model | popravljeno: bez prisile kad je model odbije, pamti se po modelu; ponovljeno 6/6 bez greške | ovaj PR |
+| P-009 | „Sumiraj zadnja 3 maila od [dobavljača]“ se tumači kao slanje maila (nacrt), ne kao čitanje pošte | ponavljanje 30.10. | alat | otvoreno — `intent.ts` (mail = slanje) i pravilo za `search_mail` | — |
+| P-010 | „Da“ bez konteksta: bot pita na šta se odnosi, umjesto da ponudi dugmad zadnjeg prijedloga | 2 poruke 26.10. | pravilo | otvoreno | — |
 
 ## Urađeno
 

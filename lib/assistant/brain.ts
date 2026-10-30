@@ -103,11 +103,33 @@ export function suggestedThinking(err: unknown): ThinkingOff | null {
     return m ? (m[1] as ThinkingOff) : null;
 }
 
+// ── Obavezan alat, po modelu ─────────────────────────────────────────
+//
+// Čuvari (čitaj ERP, pošta prije „ne", tekst nije upis) traže `tool_choice: any`.
+// Model koji ne može ugasiti razmišljanje (Haiku 5.5: samo `between_tools`)
+// to odbija s 400 — ponavljanje stvarnih poruka (30.10.) pokazalo je da je
+// svaki takav krug završavao „AI se ne javlja". Tad isti zahtjev ide bez
+// prisile (napomena čuvara i dalje traži alat), i to se pamti za model.
+
+const forcedToolOff = new Set<string>();
+
+function toolChoiceRejected(err: unknown): boolean {
+    const status = (err as { status?: number })?.status;
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    return status === 400 && /tool_choice/i.test(message);
+}
+
 /**
  * messages.create bez razmišljanja. Kad API odbije `thinking`, probaju se
  * ostale vrijednosti (prvo ona iz poruke greške); prva koja prođe se pamti.
+ * Kad odbije obavezan alat (`tool_choice`), šalje se bez njega.
  */
 export async function createTurn(client: Anthropic, params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'thinking'>): Promise<Anthropic.Message> {
+    const forced = () => !!params.tool_choice && params.tool_choice.type !== 'auto' && params.tool_choice.type !== 'none';
+    if (forcedToolOff.has(params.model) && forced()) {
+        const { tool_choice: _drop, ...rest } = params;
+        params = rest;
+    }
     const send = (choice: ThinkingChoice) => client.messages.create(
         choice === 'omit' ? { ...params } : { ...params, thinking: { type: choice } });
     const first = thinkingOff.get(params.model) || 'disabled';
@@ -123,6 +145,14 @@ export async function createTurn(client: Anthropic, params: Omit<Anthropic.Messa
             }
             return res;
         } catch (e) {
+            if (toolChoiceRejected(e) && forced()) {
+                console.warn(`[assistant] ${params.model}: obavezan alat nije podržan — šaljem bez tool_choice i pamtim`);
+                forcedToolOff.add(params.model);
+                const { tool_choice: _drop, ...rest } = params;
+                params = rest;
+                tried.delete(choice);
+                continue;
+            }
             if (!thinkingRejected(e)) throw e;
             const suggested = suggestedThinking(e);
             const next = [suggested, 'between_tools', 'disabled', 'omit'].find(c => c && !tried.has(c as ThinkingChoice)) as ThinkingChoice | undefined;
