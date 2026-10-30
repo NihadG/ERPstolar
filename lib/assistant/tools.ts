@@ -36,6 +36,7 @@ import {
 import { markPresence } from '@/lib/server/presence';
 import { mentionsEveryone, orderMentioned, titleSaid, ungroundedOrders, ungroundedWorkers, workerNicknames, workSaid } from './grounding';
 import { getOpenWorkOrderIdsForProject, loadProjectHistory, orderStatusLines } from './orderStatus';
+import { projectBriefText } from '@/lib/server/projectBrief';
 import { dayLabel, diarySummary, presenceSummary, progressStepsSummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import { projectHistoryLines } from '@/lib/projectHistory';
@@ -353,6 +354,18 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'project_brief',
+        description: 'KARTICA PROJEKTA — sve o jednom projektu u jednom pozivu: proizvodi, materijali i dekori (iveral, kant, okovi, staklo…) s količinama i stanjem (primljeno / naručeno / nije naručeno), narudžbe sa statusom, mailom, predračunom i „spremno“, rad iz Knjige rada (prvi i zadnji dan, ko je radio), otvorena bilježnica i zadaci, ljudi s ulogama. PRVI izbor za svako pitanje o jednom projektu: „koji iveral smo koristili za Jerkine ormare“, „šta fali za Budnju“, „kad smo počeli Čorluku“, „ko je nadzor na Crnom Vrhu“. Projekat iz razgovora važi i kad ga poruka ne spominje.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                project: { ...str, description: 'Oznaka P#.' },
+                product: { ...str, description: 'Dio naziva proizvoda kad pita za određene („ormar“, „kuhinja“, „umivaonik“) — suzi karticu na njih.' },
+            },
+            required: ['project'],
+        },
+    },
+    {
         name: 'project_history',
         description: 'Istorija rada projekta kroz SVE njegove naloge (i završene), iz Knjige rada: kad je počelo (prvi dan rada), zadnji dan, koliko dana, po nalogu i proizvodu, ko je radio. Za „kad smo počeli Čorluku", „koliko dugo radimo na…", „kad je rađena kuhinja".',
         input_schema: {
@@ -587,7 +600,7 @@ export interface OrderGroup {
 export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
-export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_history', 'list_notebook', 'find_contact']);
+export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'find_contact']);
 
 /** Spisak koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
 export const DISPLAY_TOOLS = new Set(['list_notebook']);
@@ -2423,6 +2436,18 @@ async function orderStatusTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 }
 
 /** „Kad smo počeli Čorluku": prvi i zadnji dan rada kroz sve naloge projekta, i završene. */
+/** Kartica projekta: jedan poziv umjesto product_materials + list_orders + project_history (lib/server/projectBrief). */
+async function projectBriefTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (!project) return { ok: false, error: a.project ? `Projekat ${String(a.project)} ne postoji u listi.` : 'Navedi projekat (P#).' };
+    const brief = await projectBriefText(env.orgId, env.uid, project.id, projectLabel(project), text(a.product, 60) || undefined);
+    return {
+        ok: true,
+        brief,
+        note: 'Odgovori kratko i tačno iz kartice. Za materijal/dekor navedi tačan naziv iz kartice. „Nemam" samo ako kartica stvarno nema taj podatak.',
+    };
+}
+
 async function projectHistoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
     if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
@@ -2493,6 +2518,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'learn_name': return await learnNameTool(env, args);
             case 'material_status': return await materialStatusTool(env, args);
             case 'material_arrived': return await materialArrivedTool(env, args);
+            case 'project_brief': return await projectBriefTool(env, args);
             case 'project_history': return await projectHistoryTool(env, args);
             case 'list_notebook': return await listNotebookTool(env, args);
             case 'ask_user': return askUserTool(env, args);
