@@ -51,6 +51,8 @@ const TIMEOUT_MS = 25_000;
 const HISTORY_HOURS = 3;
 /** Lokacija iz razgovora važi ovoliko („u tom stanu“, poruka bez lokacije odmah poslije). */
 const FOCUS_MINUTES = 20;
+/** Narudžba iz razgovora važi duže — „pošalji je i Zaimu" stiže i poslije pola sata. */
+const ORDER_FOCUS_MINUTES = 60;
 
 /** Jači model: teška poruka i ponovni krug poslije greške (samo taj poziv). */
 function strongModel(): string {
@@ -288,7 +290,11 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     // Zaglavlje proslijeđene poruke („[Proslijeđeno od Amer…]") nije dio onoga što se traži.
     const intent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
     const workerOf = (id: string) => ctx.workers.find(w => w.value.id === id);
-    const note = factsNote(pre.facts, focusLocation, intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }));
+    const focusOrder = focus?.order && now.getTime() - Date.parse(focus.order.at) <= ORDER_FOCUS_MINUTES * 60_000 ? focus.order : undefined;
+    const note = factsNote(pre.facts, focusLocation, [
+        ...intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }),
+        ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
+    ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
     const people = intent.workerIds.length + intent.nicknames.length;
     const sentenceCount = pre.text.split(/[.!?\n]+/).filter(s => s.trim().length > 3).length;
@@ -297,7 +303,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         || intent.kinds.includes('progress')
         || (people > 0 && (people >= 2 || sentenceCount >= 2) && !intent.kinds.every(k => k === 'question'));
     const modelMessage = note ? `${pre.text}\n${note}` : pre.text;
-    nextFocus = focusLocation ? focus! : null;
+    nextFocus = focusLocation || focusOrder
+        ? { at: focus!.at, ...(focusLocation ? { location: focusLocation } : {}), ...(focusOrder ? { order: focusOrder } : {}) }
+        : null;
 
     // Vrijeme se potvrđuje samo prema OVOJ poruci — osim kad je ovo odgovor na
     // pitanje; tad i prema poruci koja je pitanje izazvala („napomeni me sutra…"
@@ -324,6 +332,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         // „U tom stanu" / poruka bez lokacije odmah poslije upisa → lokacija iz razgovora.
         ...(focusLocation && (pre.facts.deictic || !pre.facts.locations.length) ? { focusLocation } : {}),
         reporter: input.forward?.from || 'ja',
+        ...(focusOrder ? { focusOrder: { id: focusOrder.id, number: focusOrder.number, supplier: focusOrder.supplier } } : {}),
         searchHits: (prevRefs?.searchHits as ToolEnv['searchHits']) || [],
         ...(prevRefs?.orderGroups ? {
             orderGroups: (prevRefs.orderGroups as NonNullable<ToolEnv['orderGroups']>).map(g => ({ ...g, value: { ...g.value, restored: true } })),
@@ -504,7 +513,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
 
     // Fokus razgovora: lokacija zadnje upisane stavke.
     const lastLoc = [...(env.touchedMemory || [])].reverse().find(m => m.Location)?.Location;
-    if (lastLoc) nextFocus = { location: lastLoc, at };
+    if (lastLoc) nextFocus = { ...(nextFocus || {}), location: lastLoc, at };
+    // Narudžba koju je ova poruka dotakla postaje narudžba iz razgovora.
+    if (env.touchedOrder) nextFocus = { ...(nextFocus || { at }), order: { ...env.touchedOrder, at } };
     const undoRow: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
     const wroteFacts = env.changes.length ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}]\n` : '';
 

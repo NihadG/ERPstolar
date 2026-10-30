@@ -2,7 +2,7 @@ import type { Contact } from '../types';
 import {
     contactCountBySupplier, contactFullName, duplicateOf, emailDomain, filterContacts, formatAddress,
     groupContacts, importCandidates, isSharedMailDomain, isValidEmail, looksLikeCompany, matchSender,
-    normalizeEmail, resolveRecipient, searchContacts, singleDefaults, splitEmails, splitName, staleDefaults,
+    addressTypos, normalizeEmail, resolveRecipient, searchContacts, singleDefaults, splitEmails, splitName, staleDefaults,
 } from '../contacts';
 
 const person = (id: string, email: string, extra: Partial<Contact> = {}): Contact => ({
@@ -295,5 +295,20 @@ describe('traženje osobe po imenu', () => {
     it('nepoznato → prazno', () => {
         expect(ids('Nepoznati')).toEqual([]);
         expect(ids('neko@nigdje.example')).toEqual([]);
+    });
+});
+
+describe('tipfeler u adresi', () => {
+    const known = ['amra@schachermayer-demo.example', 'info@okovi.ba', 'ja@gmail.com'];
+    it('domen sličan poznatom → prijedlog ispravke', () => {
+        expect(addressTypos(['info@schacermayer-demo.example'], known)).toEqual([{ email: 'info@schacermayer-demo.example', suggestion: 'info@schachermayer-demo.example' }]);
+        expect(addressTypos(['Neko@gmial.com'], known)).toEqual([{ email: 'neko@gmial.com', suggestion: 'neko@gmail.com' }]);
+    });
+    it('poznata adresa, poznat domen ili sasvim drugi domen — bez upozorenja', () => {
+        expect(addressTypos(['amra@schachermayer-demo.example', 'drugi@okovi.ba', 'x@sasvim-drugo.example'], known)).toEqual([]);
+    });
+    it('kratak domen: samo jedno slovo razlike', () => {
+        expect(addressTypos(['a@okovi.bb'], known)).toEqual([{ email: 'a@okovi.bb', suggestion: 'a@okovi.ba' }]);
+        expect(addressTypos(['a@okvo.bb'], known)).toEqual([]);
     });
 });

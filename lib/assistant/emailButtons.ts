@@ -7,11 +7,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import {
-    awaitDraftText, cancelDraft, chooseRecipient, draftAwaitingText, DraftError, getDraft, sendDraft, setDraftText,
+    awaitDraftText, cancelDraft, chooseRecipient, draftAwaitingText, DraftError, fixDraftTypos, getDraft, sendDraft, setDraftText,
 } from '@/lib/server/emailDrafts';
 import { GmailError } from '@/lib/server/gmail';
 import { answerCallbackQuery, editMessageText, sendMessage } from '@/lib/telegram/api';
-import { draftMessage, EDIT_PROMPT, sentMessage } from './emailText';
+import { draftMessage, EDIT_PROMPT, sentButtons, sentMessage } from './emailText';
 import type { AssistantLink } from './store';
 
 export async function sendDraftToChat(chatId: number, link: AssistantLink, draftId: string): Promise<void> {
@@ -42,7 +42,14 @@ export async function handleEmailButton(
             await answerCallbackQuery(inc.callbackId, 'Šaljem…');
             const d = await getDraft(link.orgId, link.uid, draftId);
             const res = await sendDraft(link.orgId, link.uid, draftId);
-            await editMessageText(inc.chatId, inc.messageId, sentMessage(d, res), []);
+            await editMessageText(inc.chatId, inc.messageId, sentMessage(d, res), sentButtons(d, res));
+            return;
+        }
+        if (action === 'f') {
+            const d = await fixDraftTypos(link.orgId, link.uid, draftId);
+            await answerCallbackQuery(inc.callbackId, 'Ispravljeno');
+            const m = draftMessage(d);
+            await editMessageText(inc.chatId, inc.messageId, m.text, m.buttons);
             return;
         }
         if (action === 'x') {

@@ -20,7 +20,7 @@ import './EmailDraftModal.css';
 export interface DraftViewResponse {
     draft: EmailDraft;
     contacts: { name: string; email: string; company?: string }[];
-    recipient: 'contact' | 'choose' | 'supplier-email' | 'none';
+    recipient: 'contact' | 'choose' | 'supplier-email' | 'requested' | 'none';
     orderStatus?: string;
 }
 
@@ -154,6 +154,20 @@ export default function EmailDraftModal({ isOpen, orderId, onClose, onSent, api 
                     {view.recipient === 'none' && !to.length && (
                         <div className="ed-hint warn">Dobavljač nema nijedne adrese ni u Kontaktima ni na kartici — upiši je ispod.</div>
                     )}
+                    {(view.draft.Warnings || []).filter(w => [...to, ...cc].some(a => a.email === w.email)).map(w => (
+                        <div key={w.email} className="ed-hint warn">
+                            <span>⚠️ {w.email} — da li si mislio <b>{w.suggestion}</b>?</span>
+                            <div className="ed-pick">
+                                <button
+                                    type="button" className="ed-pill"
+                                    onClick={() => {
+                                        const swap = (list: EmailDraftAddress[]) => list.map(a => (a.email === w.email ? { ...a, email: w.suggestion } : a));
+                                        setTo(swap(to)); setCc(swap(cc));
+                                    }}
+                                >Ispravi na {w.suggestion}</button>
+                            </div>
+                        </div>
+                    ))}
 
                     <AddressField label="Kome" value={to} onChange={setTo} contacts={view.contacts} />
                     <AddressField label="Kopija" value={cc} onChange={setCc} contacts={view.contacts} />

@@ -176,6 +176,8 @@ export interface SessionRefs {
 /** Šta je u fokusu razgovora — „u tom stanu", „na istom hodniku" znače ovo. Vodi ga ERP, ne model. */
 export interface SessionFocus {
     location?: string;
+    /** Narudžba o kojoj se pričalo („pošalji ovu narudžbu Zaimu"). */
+    order?: { id: string; number: string; supplier: string; at: string };
     at: string;
 }
 

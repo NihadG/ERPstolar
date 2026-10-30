@@ -370,3 +370,49 @@ function stemOf(word: string): string {
     }
     return w;
 }
+
+// ── Tipfeler u adresi („schacermayer.ba" umjesto „schachermayer.ba") ──
+
+/** Levenshtein, prekida čim razlika pređe `max`. */
+function distance(a: string, b: string, max: number): number {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    // Zamijenjena susjedna slova („gmial") su jedna greška, ne dvije.
+    if (a.length === b.length) {
+        const diff = Array.from(a).map((ch, i) => (ch === b[i] ? -1 : i)).filter(i => i >= 0);
+        if (diff.length === 2 && diff[1] === diff[0] + 1 && a[diff[0]] === b[diff[1]] && a[diff[1]] === b[diff[0]]) return 1;
+    }
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        let best = i;
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            best = Math.min(best, cur[j]);
+        }
+        if (best > max) return max + 1;
+        prev = cur;
+    }
+    return prev[b.length];
+}
+
+/**
+ * Adrese čiji domen liči na poznat (1–2 slova razlike), a nije isti — vjerovatno
+ * tipfeler. `known` = adrese iz Kontakata, dobavljača i vlastite. Vraća prijedlog.
+ */
+export function addressTypos(emails: string[], known: string[]): { email: string; suggestion: string }[] {
+    const knownSet = new Set(known.map(normalizeEmail).filter(isValidEmail));
+    const domains = Array.from(new Set(Array.from(knownSet).map(emailDomain)));
+    const out: { email: string; suggestion: string }[] = [];
+    for (const raw of emails) {
+        const email = normalizeEmail(raw);
+        if (!isValidEmail(email) || knownSet.has(email)) continue;
+        const domain = emailDomain(email);
+        if (domains.includes(domain)) continue;
+        const near = domains
+            .map(d => ({ d, dist: distance(domain, d, 2) }))
+            .filter(x => x.dist > 0 && x.dist <= (x.d.length >= 10 ? 2 : 1))
+            .sort((a, b) => a.dist - b.dist)[0];
+        if (near) out.push({ email, suggestion: `${email.slice(0, email.lastIndexOf('@'))}@${near.d}` });
+    }
+    return out;
+}

@@ -572,6 +572,8 @@ export interface EmailDraft {
     Bounced?: boolean;
     /** Odgovor u niti: Message-ID zaglavlje poruke na koju se odgovara. */
     In_Reply_To?: string;
+    /** Adresa liči na poznatu, a nije ista („schacermayer.ba" ≈ „schachermayer.ba") — vjerovatno tipfeler. */
+    Warnings?: { email: string; suggestion: string }[];
 }
 
 // ============================================
