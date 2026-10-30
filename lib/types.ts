@@ -425,6 +425,12 @@ export interface Order {
     Gmail_Thread_ID?: string;
     /** Mail se vratio (adresa ne postoji) — narudžba možda nije stigla. */
     Email_Bounced?: boolean;
+    /** ULAZNA POŠTA (lib/server/mailSync.ts) — dobavljačevi dokumenti i javljanja, vezani na tvoj klik. */
+    Supplier_Doc?: { No: string; Date: string; Message_ID: string; Kind: 'predracun' | 'ponuda' };
+    Confirmed_At?: string;
+    /** Dobavljač je javio da je spremno — njegov stvarni rok (supplierLeadDays). */
+    Ready_At?: string;
+    Invoice?: { No: string; Date: string; Message_ID: string };
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
@@ -564,6 +570,45 @@ export interface EmailDraft {
     /** Provjera vraćenog maila (MAILER-DAEMON) još nije gotova. */
     Bounce_Pending?: boolean;
     Bounced?: boolean;
+    /** Odgovor u niti: Message-ID zaglavlje poruke na koju se odgovara. */
+    In_Reply_To?: string;
+}
+
+// ============================================
+// ULAZNA POŠTA (lib/server/mailSync.ts) — šta je stiglo od poznatih ljudi
+//
+// ERP čita samo poštu od Kontakata, domena dobavljača i niti koje je sam
+// započeo. Prepoznavanje je determinističko (lib/email/classify.ts); u ERP
+// se upisuje tek na klik (Telegram dugmad). U Gmailu se ništa ne mijenja.
+// ============================================
+
+export type MailKind = 'supplier_doc' | 'ready' | 'invoice' | 'accepted' | 'site' | 'reply' | 'contact';
+
+export interface MailInboxItem {
+    Item_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Message_ID: string;
+    Thread_ID: string;
+    /** Zaglavlje Message-ID — za odgovor u istoj niti. */
+    Rfc_Message_ID?: string;
+    From: string;
+    From_Name: string;
+    Subject: string;
+    Snippet: string;
+    Received_At: string;
+    Kind: MailKind;
+    Doc_Kind?: 'predracun' | 'ponuda';
+    Doc_No?: string;
+    Supplier_ID?: string;
+    Supplier_Name?: string;
+    /** Narudžbe na koje se mail može odnositi (jedna = vezano niti ili jedina otvorena). */
+    Order_IDs: string[];
+    Contact_ID?: string;
+    State: 'new' | 'applied' | 'dismissed';
+    Applied?: string;
+    Notified_At?: string;
+    Created_At: string;
 }
 
 export interface Worker {

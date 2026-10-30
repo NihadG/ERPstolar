@@ -306,6 +306,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Ulazna pošta — samo server (sat i Telegram dugmad).
+    match /mail_inbox/{itemId} {
+      allow read, write: if false;
+    }
+
     // ============================================
     // WORKERS (Multi-tenancy enabled)
     // ============================================
