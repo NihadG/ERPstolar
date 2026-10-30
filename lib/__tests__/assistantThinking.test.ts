@@ -60,3 +60,47 @@ describe('ponovni pokušaj', () => {
         expect(f.sent).toHaveLength(1);
     });
 });
+
+describe('model odbija i predloženi tip (greška 30.10.)', () => {
+    const scripted = (rejects: Record<string, string>) => {
+        const sent: any[] = [];
+        return {
+            sent,
+            client: { messages: { create: async (p: any) => {
+                sent.push(p);
+                const key = p.thinking ? p.thinking.type : 'omit';
+                if (rejects[key]) throw apiError(400, rejects[key]);
+                return { content: [], usage: {} };
+            } } } as any,
+        };
+    };
+    const params = (model: string) => ({ model, max_tokens: 10, messages: [{ role: 'user' as const, content: 'x' }] });
+
+    it('disabled odbijen s prijedlogom between_tools, a i to „nije podržano" → bez polja thinking, pa zapamti', async () => {
+        const { createTurn } = await import('../assistant/brain');
+        const rejects = {
+            disabled: 'To turn thinking off on this model, send "thinking": {"type": "between_tools"} instead.',
+            between_tools: '"thinking.type.between_tools" is not supported for this model.',
+        };
+        const f = scripted(rejects);
+        await createTurn(f.client, params('model-z'));
+        expect(f.sent.map(p => p.thinking?.type ?? 'omit')).toEqual(['disabled', 'between_tools', 'omit']);
+        const g = scripted(rejects);
+        await createTurn(g.client, params('model-z'));
+        expect(g.sent.map(p => p.thinking?.type ?? 'omit')).toEqual(['omit']);
+    });
+
+    it('Haiku koji ipak odbije between_tools prelazi na disabled', async () => {
+        const { createTurn } = await import('../assistant/brain');
+        const f = scripted({ between_tools: '"thinking.type.between_tools" is not supported for this model.' });
+        await createTurn(f.client, params('claude-haiku-5-5'));
+        expect(f.sent.map(p => p.thinking?.type ?? 'omit')).toEqual(['between_tools', 'disabled']);
+    });
+
+    it('sve odbijeno → prava greška ide dalje', async () => {
+        const { createTurn } = await import('../assistant/brain');
+        const f = scripted({ disabled: 'thinking x', between_tools: 'thinking y', omit: 'thinking z' });
+        await expect(createTurn(f.client, params('model-w'))).rejects.toThrow('thinking z');
+        expect(f.sent).toHaveLength(3);
+    });
+});
