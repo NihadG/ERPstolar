@@ -15,7 +15,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { setTaskStatus, taskRef } from '@/lib/server/fieldWrites';
-import { receiveOrderItems, sendOrder } from '@/lib/server/orderWrites';
+import { receiveOrderItems, revertOrderToDraft, sendOrder } from '@/lib/server/orderWrites';
 import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
@@ -326,6 +326,16 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
 
     if (kind === 'em') {
         await handleEmailButton(inc, link, arg, extra || '');
+        return;
+    }
+
+    if (kind === 'ordback') {
+        // Narudžba poslana mailom greškom: Poslano → Nacrt (materijali više nisu naručeni).
+        const result = await revertOrderToDraft(link.orgId, arg);
+        await answerCallbackQuery(inc.callbackId, result.ok ? 'Vraćeno u nacrt' : result.error.slice(0, 190));
+        if (result.ok) {
+            await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n↩️ Narudžba ${result.orderNumber} je vraćena u nacrt — materijali više nisu naručeni. Ako treba, javi dobavljaču da je zanemari.`, []);
+        }
         return;
     }
 

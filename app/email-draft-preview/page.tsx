@@ -8,6 +8,7 @@
 //   ?case=choose    više ljudi, nijedan ★ — izbor primaoca
 //   ?case=none      dobavljač bez ijedne adrese
 //   ?case=gmail     Gmail nije povezan
+//   ?case=typo      tipfeler u adresi (upozorenje + Ispravi)
 // U produkciji ruta ne postoji.
 // ════════════════════════════════════════════════════════════════════
 
@@ -43,6 +44,13 @@ function draftFor(kind: string): DraftViewResponse {
     }
     if (kind === 'none') {
         return { draft: { ...base, To: [], Body: BODY_VI }, contacts: CONTACTS, recipient: 'none', orderStatus: 'Nacrt' };
+    }
+    if (kind === 'typo') {
+        const typo = 'info@staklo-dmeo.example';
+        return {
+            draft: { ...base, To: [{ email: typo }], Body: BODY_VI, Warnings: [{ email: typo, suggestion: 'info@staklo-demo.example' }] },
+            contacts: CONTACTS, recipient: 'requested', orderStatus: 'Nacrt',
+        };
     }
     return { draft: base, contacts: CONTACTS, recipient: 'contact', orderStatus: 'Nacrt' };
 }

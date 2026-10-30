@@ -25,7 +25,7 @@ import { sendMessage } from '@/lib/telegram/api';
 import {
     attachmentName, companyTag, composeText, defaultSignature, greeting, orderBody, orderSubject, addressFormFor,
 } from '@/lib/email/compose';
-import { contactFullName, isValidEmail, normalizeEmail, resolveRecipient, splitEmails } from '@/lib/contacts';
+import { addressTypos, contactFullName, isValidEmail, normalizeEmail, resolveRecipient, splitEmails } from '@/lib/contacts';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import type { Contact, EmailDraft, EmailDraftAddress, Order, Project } from '@/lib/types';
 
@@ -64,12 +64,34 @@ async function signatureFor(uid: string, own?: string): Promise<string> {
     return defaultSignature(p.Name || '', p.Phone);
 }
 
+/** Bez duplikata i bez adrese koja je već u Kome. */
+function mergeAddresses(list: EmailDraftAddress[], to: EmailDraftAddress[]): EmailDraftAddress[] {
+    const seen = new Set(to.map(a => a.email));
+    return list.filter(a => (seen.has(a.email) ? false : (seen.add(a.email), true)));
+}
+
+/** Tipfeleri u adresama prema Kontaktima, dobavljačima i vlastitom nalogu. */
+async function typoWarnings(orgId: string, uid: string, emails: string[], contacts?: Contact[]): Promise<{ email: string; suggestion: string }[]> {
+    if (!emails.length) return [];
+    const [people, suppliers, account] = await Promise.all([
+        contacts ? Promise.resolve(contacts) : loadContacts(orgId),
+        adminDb().collection(COLLECTIONS.SUPPLIERS).where('Organization_ID', '==', orgId).get(),
+        getEmailAccount(uid),
+    ]);
+    const known = [
+        ...people.map(c => c.Email),
+        ...suppliers.docs.flatMap(doc => splitEmails(String(doc.data().Email || ''))),
+        account?.Email || '', account?.Send_As || '',
+    ];
+    return addressTypos(emails, known);
+}
+
 export interface DraftView {
     draft: EmailDraft;
     /** Kontakti za izbor primaoca (naziv, adresa, firma). */
     contacts: { name: string; email: string; company?: string }[];
     /** Koliko je ERP bio siguran u primaoca. */
-    recipient: 'contact' | 'choose' | 'supplier-email' | 'none';
+    recipient: 'contact' | 'choose' | 'supplier-email' | 'requested' | 'none';
     orderStatus?: string;
 }
 
@@ -88,6 +110,10 @@ export async function createOrderDraft(input: {
     orgId: string; uid: string; orderId: string; source: EmailDraft['Source']; now?: Date;
     /** Rečenica koju je korisnik rekao botu („isporuka do petka") — ide iza standardne. */
     extraText?: string;
+    /** Primalac koga je korisnik rekao („pošalji na …", „pošalji Zaimu") — ima prednost pred glavnim kontaktom. */
+    to?: Contact[];
+    /** Dodatna kopija koju je korisnik rekao. */
+    cc?: Contact[];
 }): Promise<DraftView> {
     const { orgId, uid, orderId } = input;
     const account = await getEmailAccount(uid);
@@ -107,7 +133,12 @@ export async function createOrderDraft(input: {
     let candidates: EmailDraftAddress[] | undefined;
     let recipient: DraftView['recipient'] = 'none';
     let toContact: Contact | undefined;
-    if (choice.status === 'ok') {
+    if (input.to?.length) {
+        // Rečeni primalac: jedan → njemu; više mogućih (isto ime) → izbor.
+        if (input.to.length === 1) { toContact = input.to[0].Contact_ID ? input.to[0] : undefined; to = [addr(input.to[0])]; }
+        else candidates = input.to.slice(0, 6).map(addr);
+        recipient = input.to.length === 1 ? 'requested' : 'choose';
+    } else if (choice.status === 'ok') {
         toContact = choice.to;
         to = [addr(choice.to)];
         recipient = 'contact';
@@ -139,7 +170,7 @@ export async function createOrderDraft(input: {
         Purpose: 'order',
         Entity_ID: orderId,
         To: to,
-        Cc: choice.cc.map(addr),
+        Cc: mergeAddresses([...(input.cc || []).map(addr), ...choice.cc.map(addr)], to),
         ...(candidates ? { Candidates: candidates } : {}),
         Subject: subject,
         Body: body,
@@ -150,6 +181,8 @@ export async function createOrderDraft(input: {
         Created_At: now,
         Updated_At: now,
     };
+    const warnings = await typoWarnings(orgId, uid, [...draft.To, ...draft.Cc, ...(draft.Candidates || [])].map(a => a.email), contacts);
+    if (warnings.length) draft.Warnings = warnings;
     await drafts().doc(draft.Draft_ID).set(draft);
     return { draft, contacts: contactOptions(contacts, id => (id ? supplierNames.get(id) : undefined)), recipient, orderStatus: order.Status };
 }
@@ -189,6 +222,8 @@ export async function createContactDraft(input: {
         Created_At: now,
         Updated_At: now,
     };
+    const warnings = await typoWarnings(orgId, uid, [...draft.To, ...(draft.Candidates || [])].map(a => a.email));
+    if (warnings.length) draft.Warnings = warnings;
     await drafts().doc(draft.Draft_ID).set(draft);
     return draft;
 }
@@ -282,12 +317,27 @@ export async function updateDraft(orgId: string, uid: string, draftId: string, p
     const next: Partial<EmailDraft> = { Updated_At: new Date().toISOString() };
     if (patch.To !== undefined) next.To = cleanAddresses(patch.To, 'Kome');
     if (patch.Cc !== undefined) next.Cc = cleanAddresses(patch.Cc, 'Kopija');
+    if (next.To || next.Cc) next.Warnings = await typoWarnings(orgId, uid, [...(next.To || d.To), ...(next.Cc || d.Cc)].map(a => a.email));
     if (typeof patch.Subject === 'string') next.Subject = patch.Subject.replace(/\s+/g, ' ').trim().slice(0, 300);
     // Ručno prepravljen cijeli tekst: dijelovi (pozdrav/tekst/potpis) više ne važe.
     if (typeof patch.Body === 'string' && patch.Body !== d.Body) { next.Body = patch.Body.slice(0, 20_000); next.Parts = null; }
     if (next.Subject !== undefined && d.Purpose === 'order') {
         next.Attachments = d.Attachments.map(a => ({ ...a, filename: attachmentName(next.Subject || d.Subject) }));
     }
+    await drafts().doc(draftId).set(next, { merge: true });
+    return { ...d, ...next } as EmailDraft;
+}
+
+/** „Ispravi" na upozorenju: tipfeler u Kome/Kopija zamijeni predloženom adresom. */
+export async function fixDraftTypos(orgId: string, uid: string, draftId: string): Promise<EmailDraft> {
+    const d = await getDraft(orgId, uid, draftId);
+    if (d.Status !== 'draft' && d.Status !== 'failed') throw new DraftError('Nacrt je već poslan ili otkazan.', 409);
+    const fix = new Map((d.Warnings || []).map(w => [w.email, w.suggestion]));
+    const swap = (list: EmailDraftAddress[]) => list.map(a => (fix.has(a.email) ? { ...a, email: fix.get(a.email)! } : a));
+    const next: Partial<EmailDraft> = {
+        To: swap(d.To), Cc: swap(d.Cc), ...(d.Candidates ? { Candidates: swap(d.Candidates) } : {}),
+        Warnings: [], Updated_At: new Date().toISOString(),
+    };
     await drafts().doc(draftId).set(next, { merge: true });
     return { ...d, ...next } as EmailDraft;
 }

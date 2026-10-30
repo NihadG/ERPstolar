@@ -248,3 +248,77 @@ describe('kontakti preko bota', () => {
         expect((await runTool(env('selma@projekt-demo.example'), 'save_contact', { email: 'selma@projekt-demo.example' })).ok).toBe(false);
     });
 });
+
+describe('kontekst i intuicija (30.10.)', () => {
+    beforeEach(() => {
+        store.set('contacts/c1', { ...store.get('contacts/c1'), Is_Default: true });
+        store.set('contacts/c4', { Contact_ID: 'c4', Organization_ID: ORG, First_Name: 'Zaim', Last_Name: 'Hodžić', Email: 'zaim@staklo-demo.example', Kind: 'supplier', Supplier_ID: 's1', Address_Form: 'ti', Created_At: 'x' });
+        // Novija narudžba istog dobavljača — „ova narudžba" ipak znači onu iz razgovora.
+        store.set('orders/o2', { ...store.get('orders/o1'), Order_ID: 'o2', Order_Number: 'N2026-10/99', Order_Date: '2026-10-30T08:00:00Z' });
+        store.set('order_items/i2', { ...store.get('order_items/i1'), ID: 'i2', Order_ID: 'o2' });
+    });
+
+    it('rečena adresa ima prednost pred glavnim kontaktom', async () => {
+        const e = env('pošalji narudžbu na nihad.test@gmail.com');
+        const res = await runTool(e, 'email_order', { number: 'N2026-10/07', to: 'nihad.test@gmail.com' });
+        expect(res.ok).toBe(true);
+        expect(drafts()[0].To).toEqual([{ email: 'nihad.test@gmail.com' }]);
+        expect(drafts()[0].Body.startsWith('Poštovani,')).toBe(true);
+    });
+
+    it('„pošalji ovu narudžbu Zaimu": narudžba iz razgovora i Zaim iz Kontakata', async () => {
+        const e = env('pošalji ovu narudžbu Zaimu');
+        e.focusOrder = { id: 'o1', number: 'N2026-10/07', supplier: 'Staklo Demo' };
+        const res = await runTool(e, 'email_order', { to: 'Zaimu' });
+        expect(res).toMatchObject({ ok: true, order: 'N2026-10/07' });
+        expect(drafts()[0].To).toEqual([{ name: 'Zaim Hodžić', email: 'zaim@staklo-demo.example' }]);
+        expect(drafts()[0].Body.startsWith('Pozdrav Zaim,')).toBe(true);
+        expect(e.touchedOrder).toEqual({ id: 'o1', number: 'N2026-10/07', supplier: 'Staklo Demo' });
+    });
+
+    it('bez narudžbe iz razgovora i bez oznake: najnovija', async () => {
+        await runTool(env(), 'email_order', {});
+        expect(drafts()[0].Entity_ID).toBe('o2');
+    });
+
+    it('izmišljena adresa u „to" se odbija', async () => {
+        const res = await runTool(env('pošalji narudžbu Zaimu'), 'email_order', { to: 'zaim@izmisljeno.example' });
+        expect(res.ok).toBe(false);
+        expect(drafts()).toHaveLength(0);
+    });
+
+    it('tipfeler u adresi: upozorenje u nacrtu i „Ispravi" ga zamijeni', async () => {
+        const typo = 'info@staklo-dmeo.example';
+        await runTool(env(`pošalji mail na ${typo} da zanemare narudžbu`), 'email_contact', { to: typo, subject: 'Narudžba N2026-10/07 - zanemarite', text: 'Narudžba je poslana greškom, zanemarite je.' });
+        const d = drafts()[0];
+        expect(d.Warnings).toEqual([{ email: typo, suggestion: 'info@staklo-demo.example' }]);
+        const msg = draftMessage(d);
+        expect(msg.text).toContain(`⚠️ ${typo} — da li si mislio info@staklo-demo.example?`);
+        expect(msg.buttons[0][0]).toEqual({ text: '✏️ Ispravi na info@staklo-demo.example', data: `em:${d.Draft_ID}:f` });
+        await handleEmailButton({ chatId: 77, messageId: 5, callbackId: 'cb' }, link, d.Draft_ID, 'f');
+        expect(drafts()[0].To).toEqual([{ email: 'info@staklo-demo.example' }]);
+        expect(drafts()[0].Warnings).toEqual([]);
+    });
+
+    it('poslije slanja narudžbe: dugme „Vrati narudžbu u nacrt"', async () => {
+        await runTool(env(), 'email_order', { number: 'N2026-10/07' });
+        fetchMock
+            .mockResolvedValueOnce(json(200, { access_token: 'A', expires_in: 3600 }))
+            .mockResolvedValueOnce(json(200, { id: 'gm1', threadId: 'th1' }));
+        await handleEmailButton({ chatId: 77, messageId: 5, callbackId: 'cb' }, link, drafts()[0].Draft_ID, 's');
+        const [, , text, buttons] = (editMessageText as jest.Mock).mock.calls[0];
+        expect(text).toContain('prešla u „Poslano"');
+        expect(buttons).toEqual([[{ text: '↩️ Vrati narudžbu u nacrt', data: 'ordback:o1' }]]);
+    });
+});
+
+describe('PDF „ove narudžbe"', () => {
+    it('order_pdf bez oznake šalje PDF narudžbe iz razgovora, ne najnovije', async () => {
+        store.set('orders/o2', { ...store.get('orders/o1'), Order_ID: 'o2', Order_Number: 'N2026-10/99', Order_Date: '2026-10-30T08:00:00Z' });
+        const e = env();
+        e.focusOrder = { id: 'o1', number: 'N2026-10/07', supplier: 'Staklo Demo' };
+        const res = await runTool(e, 'order_pdf', {});
+        expect(res).toMatchObject({ ok: true, order: 'N2026-10/07' });
+        expect(e.documents).toEqual([{ orderId: 'o1', draft: true }]);
+    });
+});

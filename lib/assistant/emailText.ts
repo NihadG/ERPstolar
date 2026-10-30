@@ -25,10 +25,12 @@ export function draftMessage(d: EmailDraft): { text: string; buttons: ButtonRows
     if (d.Cc.length) lines.push(`Kopija: ${d.Cc.map(who).join(', ')}`);
     lines.push(`Naslov: ${d.Subject}`);
     d.Attachments.forEach(a => lines.push(`📎 ${a.filename}`));
+    (d.Warnings || []).forEach(w => lines.push(`⚠️ ${w.email} — da li si mislio ${w.suggestion}?`));
     const body = d.Body.length > MAX_BODY ? `${d.Body.slice(0, MAX_BODY)}…` : d.Body;
 
     const id = d.Draft_ID;
     const buttons: ButtonRows = [];
+    if (d.Warnings?.length) buttons.push([{ text: `✏️ Ispravi na ${d.Warnings[0].suggestion}`.slice(0, 60), data: `em:${id}:f` }]);
     if (d.To.length) {
         buttons.push([{ text: '📤 Pošalji', data: `em:${id}:s` }, { text: '✏️ Izmijeni tekst', data: `em:${id}:e` }]);
     } else if (d.Candidates?.length) {
@@ -38,6 +40,13 @@ export function draftMessage(d: EmailDraft): { text: string; buttons: ButtonRows
     }
     buttons.push([{ text: '✖ Otkaži', data: `em:${id}:x` }]);
     return { text: `${lines.join('\n')}\n\n${body}`, buttons };
+}
+
+/** Poslije slanja narudžbe: „poslano greškom" se ispravlja jednim klikom. */
+export function sentButtons(d: EmailDraft, res: { orderSent: boolean }): ButtonRows {
+    return d.Purpose === 'order' && d.Entity_ID && res.orderSent
+        ? [[{ text: '↩️ Vrati narudžbu u nacrt', data: `ordback:${d.Entity_ID}` }]]
+        : [];
 }
 
 export function sentMessage(d: EmailDraft, res: { to: string[]; orderSent: boolean; orderNumber?: string }): string {
