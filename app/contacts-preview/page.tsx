@@ -164,6 +164,7 @@ export default function ContactsPreview() {
                             onDisconnect={() => { setGmail(GMAIL.off); setFromMail([]); setScanned(null); }}
                             onSuggest={onSuggest}
                             onSendAs={async email => setGmail(g => ({ ...g, sendAs: email }))}
+                            onSignature={async text => setGmail(g => ({ ...g, signature: text }))}
                         />
                     }
                 />

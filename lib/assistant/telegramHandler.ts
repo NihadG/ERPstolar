@@ -20,6 +20,8 @@ import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
+import { consumeDraftText, handleEmailButton, sendDraftToChat } from './emailButtons';
+import { handleMailButton } from './mailButtons';
 import { handleMaterialButton, sendMaterialAlerts, setOrderReceivedDaysAgo, setOrderSentDaysAgo } from './materialAlerts';
 import { normalizeUpdate, type Incoming, type TgUpdate } from '@/lib/telegram/update';
 import { transcribeAudio } from '@/lib/voice/transcribeServer';
@@ -136,6 +138,8 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         await sendTyping(inc.chatId);
     }
 
+    if (await consumeDraftText(inc.chatId, link, text)) return;
+
     const [entryId, session] = await Promise.all([
         addEntry({
             Organization_ID: link.orgId,
@@ -187,6 +191,14 @@ async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOu
                 taskIds: out.created.taskIds, memoryIds: Array.from(new Set(out.created.memoryIds)), toolCalls: out.toolCalls,
             })
             : Promise.resolve(),
+        ...(out.emailDrafts || []).map(async draftId => {
+            try {
+                await sendDraftToChat(chatId, link, draftId);
+            } catch (e) {
+                console.error('[assistant] nacrt maila pao:', e);
+                await sendMessage(chatId, '✉️ Nacrt maila je napravljen, ali ga ne mogu prikazati. Pošalji narudžbu iz ERP-a: Narudžbe → Pošalji emailom.');
+            }
+        }),
         ...(out.documents || []).map(async doc => {
             try {
                 await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
@@ -302,6 +314,18 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         await answerCallbackQuery(inc.callbackId);
         const msg = await createProposalMessage(link, arg, today);
         await sendMessage(inc.chatId, msg?.text || `Za ${shortDate(arg)} nema prijedloga — nijedan radnik nema raniji upis. Izdiktiraj taj dan porukom.`, msg?.buttons);
+        return;
+    }
+
+    if (kind === 'mx') {
+        const res = await handleMailButton(inc, link, arg, extra || '');
+        // Tekst maila ide botu kao proslijeđena poruka — isto razumijevanje kao za proslijeđen Telegram.
+        if (res.forward) await converse(link, inc.chatId, { text: res.forward.text, forward: { from: res.forward.from, date: res.forward.date } });
+        return;
+    }
+
+    if (kind === 'em') {
+        await handleEmailButton(inc, link, arg, extra || '');
         return;
     }
 

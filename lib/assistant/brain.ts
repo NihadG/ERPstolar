@@ -114,6 +114,8 @@ export interface AssistantTurnOutput {
     created: { taskIds: string[]; memoryIds: string[] };
     /** PDF-ovi narudžbi koji idu poslije odgovora. */
     documents?: { orderId: string; draft: boolean }[];
+    /** Nacrti mailova (Telegram ih prikaže s dugmetom „Pošalji"). */
+    emailDrafts?: string[];
     /** Poruka je nešto upisala (rad, narudžba…) — kapije materijala se provjere odmah. */
     changed?: boolean;
     /** Ishod za dnevnik: upisano / pitanje / odgovor / nije upisano / AI nije radio. */
@@ -487,7 +489,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         const buttons: ButtonRows = [...q.options.map((o, i) => [{ text: o.label, data: `act:${i}` }]), ...undoRow];
         const pending = pendingFor(q, env, at, input.entryId);
         return finish(reply, buttons, pending, `${wroteFacts}${q.question}\n(opcije: ${q.options.map(o => o.label).join(' / ')})`, {
-            created: env.created, documents: env.documents, changed: env.changes.length > 0,
+            created: env.created, documents: env.documents, emailDrafts: env.emailDrafts, changed: env.changes.length > 0,
             outcome: env.changes.length ? 'written' : 'question', changes: env.changes,
         });
     }
@@ -498,7 +500,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         const modelTurn = `${wroteFacts}${options.length ? `${question}\n(opcije: ${options.join(' / ')})` : question}`;
         const pending = { question, options, askedAt: at, ...(input.entryId ? { entryId: input.entryId } : {}) };
         return finish(composeReply(env.summaries, question), buttons, pending, modelTurn, {
-            created: env.created, documents: env.documents, changed: env.changes.length > 0, outcome: 'question', changes: env.changes,
+            created: env.created, documents: env.documents, emailDrafts: env.emailDrafts, changed: env.changes.length > 0, outcome: 'question', changes: env.changes,
         });
     }
 
@@ -528,7 +530,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}${hasMissing(left) ? `; nije upisano: ${missingText(left)}` : ''}]${cleaned ? `\n${cleaned}` : ''}`
         : reply;
     return finish(reply, buttons, null, modelTurn, {
-        created: env.created, documents: env.documents, changed: env.changes.length > 0,
+        created: env.created, documents: env.documents, emailDrafts: env.emailDrafts, changed: env.changes.length > 0,
         outcome: env.changes.length ? 'written' : 'answer', changes: env.changes,
     });
 }
@@ -573,7 +575,7 @@ export async function runPendingAction(input: {
     const toolCalls = [toolCallLog(action.tool, args, out)];
     const facts = env.changes.length ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}]` : '[ništa nije upisano]';
     const turns = (modelTurn: string): SessionTurn[] => [...history, { role: 'user', text: `→ ${label}`, at }, { role: 'model', text: modelTurn, at }];
-    const extra = { created: env.created, documents: env.documents, changed: env.changes.length > 0, changes: env.changes, toolCalls };
+    const extra = { created: env.created, documents: env.documents, emailDrafts: env.emailDrafts, changed: env.changes.length > 0, changes: env.changes, toolCalls };
 
     // Izbor je otvorio novo pitanje (npr. drugi radnik u istoj poruci).
     if (env.erpQuestion) {

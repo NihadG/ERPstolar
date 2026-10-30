@@ -12,7 +12,8 @@ import { buildOrderPdf, orderPdfFileName, type PdfCompany } from '@/lib/server/o
 import { getOrderWithItems, getSupplier, loadOrderSpecs } from '@/lib/server/orderWrites';
 import { sendDocument, sendMessage } from '@/lib/telegram/api';
 
-async function companyOf(orgId: string): Promise<PdfCompany> {
+/** Podaci firme za zaglavlje PDF-a (Postavke → Podaci firme). */
+export async function companyOf(orgId: string): Promise<PdfCompany> {
     const snap = await adminDb().collection('org_settings').doc(orgId).get();
     return ((snap.data() as { companyInfo?: PdfCompany } | undefined)?.companyInfo) || {};
 }

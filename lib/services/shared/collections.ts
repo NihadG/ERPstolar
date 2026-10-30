@@ -23,6 +23,10 @@ export const COLLECTIONS = {
     CONTACTS: 'contacts',
     // Gmail veza po korisniku (ID = uid) — šifrovan token, SAMO Admin SDK (lib/server/gmail.ts).
     EMAIL_ACCOUNTS: 'email_accounts',
+    // Nacrti mailova (ERP i bot) — samo server; slanje tek na klik.
+    EMAIL_DRAFTS: 'email_drafts',
+    // Ulazna pošta od poznatih (ID = uid_messageId) — samo server.
+    MAIL_INBOX: 'mail_inbox',
     WORKERS: 'workers',
     WORK_ORDERS: 'work_orders',
     WORK_ORDER_ITEMS: 'work_order_items',

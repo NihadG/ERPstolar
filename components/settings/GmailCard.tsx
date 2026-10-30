@@ -17,9 +17,11 @@ export interface GmailState {
     email: string | null;
     sendAs: string | null;
     status: 'ok' | 'reconnect' | null;
+    /** Potpis koji ERP dodaje na kraj maila; prazno = „Srdačno," + ime. */
+    signature?: string;
 }
 
-export type GmailBusy = 'connect' | 'disconnect' | 'suggest' | 'sendAs' | null;
+export type GmailBusy = 'connect' | 'disconnect' | 'suggest' | 'sendAs' | 'signature' | null;
 
 /** 1 nova adresa, 3 nove adrese, 5 novih adresa. */
 const newAddresses = (n: number) => n % 10 === 1 && n % 100 !== 11 ? `${n} nova adresa je` : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? `${n} nove adrese su` : `${n} novih adresa je`;
@@ -33,11 +35,14 @@ interface Props {
     onDisconnect: () => void;
     onSuggest: () => void;
     onSendAs: (email: string) => Promise<void>;
+    onSignature: (text: string) => Promise<void>;
 }
 
-export default function GmailCard({ state, busy, lastScan, onConnect, onDisconnect, onSuggest, onSendAs }: Props) {
+export default function GmailCard({ state, busy, lastScan, onConnect, onDisconnect, onSuggest, onSendAs, onSignature }: Props) {
     const [editing, setEditing] = useState(false);
     const [alias, setAlias] = useState('');
+    const [signing, setSigning] = useState(false);
+    const [signature, setSignature] = useState('');
 
     if (!state) {
         return <div className="gm-card muted"><span className="material-icons-round">mail</span><p>Provjeravam Gmail vezu…</p></div>;
@@ -101,6 +106,26 @@ export default function GmailCard({ state, busy, lastScan, onConnect, onDisconne
                         Šalje kao <b>{state.sendAs || state.email}</b>{' '}
                         <button type="button" className="ct-link" onClick={() => { setAlias(state.sendAs || state.email || ''); setEditing(true); }}>Promijeni</button>
                         <span className="gm-hint"> (druga adresa mora biti dodana u Gmailu kao „Pošalji poštu kao")</span>
+                    </p>
+                )}
+                {signing ? (
+                    <div className="gm-signature">
+                        <textarea
+                            rows={4} value={signature} autoFocus aria-label="Potpis"
+                            placeholder={'Srdačno,\n\nIme Prezime\n061 …'}
+                            onChange={e => setSignature(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Escape') setSigning(false); }}
+                        />
+                        <div className="gm-alias">
+                            <button type="button" className="btn btn-primary btn-sm" disabled={busy === 'signature'}
+                                onClick={async () => { await onSignature(signature); setSigning(false); }}>Sačuvaj potpis</button>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setSigning(false)}>Otkaži</button>
+                        </div>
+                    </div>
+                ) : (
+                    <p>
+                        Potpis: <span className="gm-sig-preview">{state.signature ? state.signature.split('\n').filter(Boolean).join(' · ') : '„Srdačno," + tvoje ime i telefon'}</span>{' '}
+                        <button type="button" className="ct-link" onClick={() => { setSignature(state.signature || ''); setSigning(true); }}>Uredi</button>
                     </p>
                 )}
                 {lastScan && (

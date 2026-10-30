@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════
 // SAT ASISTENTA — dospjeli podsjetnici, jutarnji pregled (s rupama u
-// upisu rada), večernji prijedlog rada i kapije materijala.
+// upisu rada), večernji prijedlog rada, kapije materijala i vraćeni mailovi.
 //
 // Poziva ga Cloudflare Worker svake minute (tools/cloudflare-cron) s
 // `Authorization: Bearer <CRON_SECRET>`. Isti oblik zaglavlja šalje i
@@ -13,6 +13,8 @@ import { NextResponse } from 'next/server';
 import { assistantTimezone } from '@/lib/assistant/datetime';
 import { sendDayProposals, sendDueReminders, sendMorningDigests } from '@/lib/assistant/reminders';
 import { sendMaterialAlerts } from '@/lib/assistant/materialAlerts';
+import { checkBounces } from '@/lib/server/emailDrafts';
+import { syncAllMailboxes } from '@/lib/server/mailSync';
 import { errorResponse } from '@/lib/server/requireUser';
 
 export const runtime = 'nodejs';
@@ -38,7 +40,15 @@ async function tick(req: Request) {
         const proposals = await sendDayProposals(now, tz);
         // Kapije materijala (svakih 10 min); greška ne smije ugasiti ostatak sata.
         const materials = await sendMaterialAlerts(now, tz).catch(e => { console.error('[tick] kapije materijala:', e); return 0; });
-        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, at: now.toISOString() });
+        // Vraćeni mailovi (svakih 5 min) — isto ne smije ugasiti ostatak sata.
+        const bounces = now.getUTCMinutes() % 5 === 0
+            ? await checkBounces(now).catch(e => { console.error('[tick] vraćeni mailovi:', e); return 0; })
+            : 0;
+        // Ulazna pošta (svake 2 min): predračuni, „spremno", računi, primjedbe → prijedlozi na Telegram.
+        const mail = now.getUTCMinutes() % 2 === 1
+            ? await syncAllMailboxes(now).catch(e => { console.error('[tick] ulazna pošta:', e); return 0; })
+            : 0;
+        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, bounces, mail, at: now.toISOString() });
     } catch (e) {
         return errorResponse(e);
     }

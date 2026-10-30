@@ -418,6 +418,19 @@ export interface Order {
     Sent_At?: string;
     /** Datum slanja nije poznat (nacrt primljen porukom „stiglo je…") — ne uči rok isporuke dok ga korisnik ne kaže. */
     Sent_At_Assumed?: boolean;
+    /** POŠTA (od 10/2026): narudžba poslana mailom iz ERP-a ili bota (lib/server/emailDrafts.ts). */
+    Emailed_At?: string;
+    Emailed_To?: string[];
+    /** Gmail nit — odgovori dobavljača u njoj se vežu za ovu narudžbu bez pogađanja. */
+    Gmail_Thread_ID?: string;
+    /** Mail se vratio (adresa ne postoji) — narudžba možda nije stigla. */
+    Email_Bounced?: boolean;
+    /** ULAZNA POŠTA (lib/server/mailSync.ts) — dobavljačevi dokumenti i javljanja, vezani na tvoj klik. */
+    Supplier_Doc?: { No: string; Date: string; Message_ID: string; Kind: 'predracun' | 'ponuda' };
+    Confirmed_At?: string;
+    /** Dobavljač je javio da je spremno — njegov stvarni rok (supplierLeadDays). */
+    Ready_At?: string;
+    Invoice?: { No: string; Date: string; Message_ID: string };
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
@@ -509,6 +522,92 @@ export interface Contact {
     Receive_Only?: boolean;
     Notes?: string;
     Last_Emailed_At?: string;
+    Created_At: string;
+}
+
+// ============================================
+// NACRT MAILA — jedan put za ERP i bota (lib/server/emailDrafts.ts)
+//
+// Nacrt se pravi, pregleda i mijenja, a šalje tek na klik („Pošalji").
+// ERP bira primaoca iz Kontakata i slaže naslov, prilog i potpis; model
+// smije pisati samo tijelo. Poslan mail se ne može poništiti.
+// ============================================
+
+export interface EmailDraftAddress {
+    name?: string;
+    email: string;
+}
+
+export type EmailDraftPurpose = 'order' | 'general';
+export type EmailDraftStatus = 'draft' | 'sent' | 'failed' | 'cancelled';
+
+export interface EmailDraft {
+    Draft_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Purpose: EmailDraftPurpose;
+    /** Narudžba (Purpose 'order'). */
+    Entity_ID?: string;
+    To: EmailDraftAddress[];
+    Cc: EmailDraftAddress[];
+    /** Više mogućih primalaca, nijedan glavni — korisnik bira. */
+    Candidates?: EmailDraftAddress[];
+    Subject: string;
+    Body: string;
+    /** Dijelovi teksta — izmjena teksta ili primaoca mijenja samo svoj dio (pozdrav prati primaoca). */
+    Parts?: { greeting: string; text: string; signature: string; /** Tekst je složio ERP (prati ti/vi primaoca). */ auto?: boolean; extra?: string } | null;
+    Attachments: { kind: 'order'; id: string; filename: string }[];
+    /** Telegram: korisnik je kliknuo „Izmijeni tekst" — sljedeća poruka je novi tekst maila. */
+    Awaiting_Text_Since?: string | null;
+    Status: EmailDraftStatus;
+    Source: 'app' | 'telegram';
+    Created_At: string;
+    Updated_At: string;
+    Sent_At?: string;
+    Gmail_Message_ID?: string;
+    Thread_ID?: string;
+    Error?: string;
+    /** Provjera vraćenog maila (MAILER-DAEMON) još nije gotova. */
+    Bounce_Pending?: boolean;
+    Bounced?: boolean;
+    /** Odgovor u niti: Message-ID zaglavlje poruke na koju se odgovara. */
+    In_Reply_To?: string;
+}
+
+// ============================================
+// ULAZNA POŠTA (lib/server/mailSync.ts) — šta je stiglo od poznatih ljudi
+//
+// ERP čita samo poštu od Kontakata, domena dobavljača i niti koje je sam
+// započeo. Prepoznavanje je determinističko (lib/email/classify.ts); u ERP
+// se upisuje tek na klik (Telegram dugmad). U Gmailu se ništa ne mijenja.
+// ============================================
+
+export type MailKind = 'supplier_doc' | 'ready' | 'invoice' | 'accepted' | 'site' | 'reply' | 'contact';
+
+export interface MailInboxItem {
+    Item_ID: string;
+    Organization_ID: string;
+    Owner_UID: string;
+    Message_ID: string;
+    Thread_ID: string;
+    /** Zaglavlje Message-ID — za odgovor u istoj niti. */
+    Rfc_Message_ID?: string;
+    From: string;
+    From_Name: string;
+    Subject: string;
+    Snippet: string;
+    Received_At: string;
+    Kind: MailKind;
+    Doc_Kind?: 'predracun' | 'ponuda';
+    Doc_No?: string;
+    Supplier_ID?: string;
+    Supplier_Name?: string;
+    /** Narudžbe na koje se mail može odnositi (jedna = vezano niti ili jedina otvorena). */
+    Order_IDs: string[];
+    Contact_ID?: string;
+    State: 'new' | 'applied' | 'dismissed';
+    Applied?: string;
+    Notified_At?: string;
     Created_At: string;
 }
 
