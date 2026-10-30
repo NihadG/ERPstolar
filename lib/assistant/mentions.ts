@@ -9,6 +9,7 @@
 // jest: lib/__tests__/toolRouting.test.ts
 // ════════════════════════════════════════════════════════════════════
 
+import { firmDomains, splitEmails } from '@/lib/contacts';
 import { orderMentioned, type GroundRef } from './grounding';
 
 export type MentionRef = GroundRef & { alias: string };
@@ -29,6 +30,8 @@ export function mentionNote(input: {
     projects: MentionRef[];
     orders: MentionRef[];
     question: boolean;
+    /** Dobavljači koje poruka spominje (searchFirms) — s adresom, da model zna gdje je pošta. */
+    firms?: { name: string; email?: string }[];
 }): string[] {
     const out: string[] = [];
     const label = (r: MentionRef) => `${r.alias} ${r.name}`;
@@ -41,6 +44,16 @@ export function mentionNote(input: {
     const orders = hits(input.text, input.orders);
     if (orders.length) out.push(`${orders.length > 1 ? 'nalozi' : 'nalog'}: ${orders.map(label).join(', ')}`);
 
+    const firms = (input.firms || []).slice(0, MAX_HITS);
+    if (firms.length) {
+        out.push(`${firms.length > 1 ? 'dobavljači' : 'dobavljač'}: ${firms.map(f => {
+            const domains = firmDomains(splitEmails(f.email || ''));
+            return domains.length ? `${f.name} (pošta: ${domains.join(', ')})` : f.name;
+        }).join(', ')}`);
+    }
+
     if (input.question && projects.length === 1) out.push(`pitanje o projektu → project_brief ${projects[0].alias}`);
+    // Stanje kod dobavljača („spremno, potvrdio, predračun") često je samo u pošti.
+    if (input.question && firms.length) out.push(`stanje kod dobavljača → i search_mail who="${firms[0].name}"`);
     return out;
 }

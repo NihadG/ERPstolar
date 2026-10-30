@@ -14,10 +14,29 @@ import { getMessageFull, getMessageMeta, listMessageIds, mapLimit } from './gmai
 export const MAX_RESULTS = 8;
 const HEADERS = ['From', 'To', 'Subject', 'Content-Type'];
 
-export async function searchMail(uid: string, s: MailSearch, tz: string): Promise<{ query: string; lines: string[] }> {
+/**
+ * Osoba/firma + riječi, a nađeno manje od 2 → ista osoba bez riječi (najnovije
+ * prvo): „ogledala Crni Vrh" ne smije sakriti „Gotova su ogledala" ni predračun.
+ */
+export async function searchMail(uid: string, s: MailSearch, tz: string): Promise<{ query: string; lines: string[]; widened?: string }> {
     const query = gmailQuery(s);
     if (!query) return { query, lines: [] };
-    const ids = await listMessageIds(uid, query, MAX_RESULTS);
+    let ids = await listMessageIds(uid, query, MAX_RESULTS);
+    let widened: string | undefined;
+    const hasWho = !!(s.addresses?.length || s.domains?.length || s.names?.length || s.phrase);
+    if (ids.length < 2 && s.words && hasWho) {
+        const wide = gmailQuery({ ...s, words: '' });
+        const more = await listMessageIds(uid, wide, MAX_RESULTS);
+        if (more.length > ids.length) {
+            ids = Array.from(new Set([...ids, ...more])).slice(0, MAX_RESULTS);
+            widened = wide;
+        }
+    }
+    const lines = await linesFor(uid, ids, tz);
+    return { query, lines, ...(widened ? { widened } : {}) };
+}
+
+async function linesFor(uid: string, ids: string[], tz: string): Promise<string[]> {
     const metas = await mapLimit(ids, 4, id => getMessageMeta(uid, id, HEADERS));
     const mails: FoundMail[] = metas.map(m => ({
         id: m.id,
@@ -30,7 +49,7 @@ export async function searchMail(uid: string, s: MailSearch, tz: string): Promis
         sent: m.labelIds.includes('SENT'),
         attachment: hasAttachmentHeader(m.headers['content-type']),
     }));
-    return { query, lines: foundMailLines(mails, iso => toZoned(iso, tz).date) };
+    return foundMailLines(mails, iso => toZoned(iso, tz).date);
 }
 
 /** Cijeli tekst jedne poruke (bez citata stare poruke), zaglavlja i imena priloga. */

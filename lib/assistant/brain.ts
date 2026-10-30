@@ -41,7 +41,9 @@ import { DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, t
 import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, SessionTurn } from './store';
 import type { AssistantOutcome, AssistantUsage, MemoryItem, ToolCallLog } from '@/lib/types';
 import { toolCallLog } from './toolLog';
-import { READ_FIRST_NOTE, shouldReadFirst } from './readGuard';
+import { mailFirstNote, READ_FIRST_NOTE, shouldCheckMail, shouldReadFirst } from './readGuard';
+import { searchFirms } from '@/lib/contacts';
+import { getEmailAccount } from '@/lib/server/gmail';
 import { addUsage, emptyUsage } from './usage';
 import { mentionNote } from './mentions';
 import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
@@ -303,9 +305,12 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const projectGround = ctx.projects.map(p => ({ id: p.value.id, alias: p.alias, name: projectLabel(p.value), aliases: aliasesOf(ctx.vocab || [], 'project', p.value.id) }));
     const orderGround = (ctx.orders || []).map(o => ({ id: o.value.id, alias: o.alias, name: o.value.name, aliases: aliasesOf(ctx.vocab || [], 'order', o.value.id) }));
     const recentUserText = history.filter(t => t.role === 'user').slice(-2).map(t => t.text).join('\n');
+    // Dobavljači iz poruke („iz Ramaglasa“) s adresom — stanje kod njih je često samo u pošti.
+    const firmHits = searchFirms((ctx.firms || []).map(f => ({ Name: f.name, Email: f.email })), pre.text).slice(0, 3)
+        .map(f => ({ name: f.Name, ...(f.Email ? { email: f.Email } : {}) }));
     const note = factsNote(pre.facts, focusLocation, [
         ...intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }),
-        ...mentionNote({ text: pre.text, recent: recentUserText, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question') }),
+        ...mentionNote({ text: pre.text, recent: recentUserText, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question'), firms: firmHits }),
         ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
     ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
@@ -419,6 +424,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     let readFirst = false;      // pitanje o ERP-u bez čitanja: sljedeći krug samo alati za čitanje
     let readAsked = false;
     let readUsed = false;       // model je čitao ERP — tekst bez upisa je odgovor iz podataka
+    let mailAsked = false;      // već vraćeno: „prvo pogledaj poštu“
+    let mailSearched = false;   // search_mail s osobom/firmom/projektom
+    const mailConnected = async () => (await getEmailAccount(input.uid).catch(() => null))?.Status === 'ok';
     const isQuestion = intent.kinds.includes('question');
     // Manji skup alata kad ERP zna šta poruka traži (lib/assistant/toolRouting); all_tools ga proširi.
     let toolSet: ToolSet = toolSetFor(intent.kinds, { answeringQuestion: !!input.session.pending });
@@ -459,6 +467,16 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                     readFirst = true;
                     messages.push({ role: 'assistant', content: res.content });
                     messages.push({ role: 'user', content: READ_FIRST_NOTE });
+                    continue;
+                }
+                // „Ne / nema u ERP-u“ za stanje kod dobavljača, a pošta nije pogledana → prvo pošta (lib/assistant/readGuard).
+                if (shouldCheckMail({ isQuestion, asked: mailAsked, mailSearched, firmMentioned: firmHits.length > 0, question: pre.text, answer: textOf(res) })
+                    && await mailConnected()) {
+                    mailAsked = true;
+                    forceTool = true;
+                    readFirst = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: mailFirstNote(firmHits[0]?.name) });
                     continue;
                 }
                 // Model je „potvrdio" tekstom, a ništa nije upisano → još jednom, uz obavezan alat.
@@ -506,6 +524,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
                 const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
+                const mailArgs = (use.input || {}) as Record<string, unknown>;
+                if (use.name === 'search_mail' && out.ok !== false && (mailArgs.who || mailArgs.project)) mailSearched = true;
                 toolCalls.push(toolCallLog(use.name, use.input, out));
                 if (out.ok === false) allOk = false;
                 else usedInputs.push(JSON.stringify(use.input || {}));

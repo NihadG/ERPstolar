@@ -43,7 +43,39 @@ export function shouldReadFirst(s: {
     return asksForData(s.question);
 }
 
-export const READ_FIRST_NOTE = 'ERP: ovo je pitanje o podacima u ERP-u, a nisi ništa pročitao. Pozovi alat za čitanje pa odgovori iz rezultata: '
+// ── Pošta prije „ne" (PDF 30.10.) ────────────────────────────────────
+// „Jesu li spremna ogledala iz Ramaglasa?" → „ne mogu potvrditi, u ERP-u nema",
+// a u pošti je „Gotova su ogledala za Crni vrh". Narudžbe idu i mailom mimo
+// ERP-a, pa je „nema u ERP-u" za stanje kod dobavljača tek pola odgovora.
+
+/** Pitanje o stanju kod dobavljača/firme: spremno, gotovo, stiglo, potvrda, predračun, račun, rok. */
+const SUPPLIER_STATE = /\b(sprem\w*|gotov\w*|zavrs\w*|stig\w*|stiza\w*|dosl\w*|potvrd\w*|predracun\w*|racun\w*|ponud\w*|rok\w*|isporu\w*|preuzet\w*|preuzim\w*|odgovor\w*|javil\w*|poslal\w*|mail\w*|email\w*|mejl\w*)\b/;
+
+/** Odgovor „ne / nema / ne mogu potvrditi / bez odgovora". */
+const SAYS_NO = /\b(ne mogu (da )?potvrdi\w*|nema (nijedn\w*|odgovor\w*|potvrd\w*|zapis\w*|stavk\w*|traga|narudzb\w*)|nije (stigl\w*|potvrd\w*|odgovor\w*|zapis\w*)|bez (ijednog )?odgovora|nisam nasao|nemam)\b/;
+
+export function shouldCheckMail(s: {
+    isQuestion: boolean;
+    /** Već jednom vraćeno na poštu u ovoj poruci. */
+    asked: boolean;
+    /** search_mail je zvan s osobom, firmom ili projektom. */
+    mailSearched: boolean;
+    /** Poruka spominje dobavljača (searchFirms). */
+    firmMentioned: boolean;
+    question: string;
+    answer: string;
+}): boolean {
+    if (!s.isQuestion || s.asked || s.mailSearched) return false;
+    if (!SAYS_NO.test(foldText(s.answer)) && !NO_DATA.test(foldText(s.answer))) return false;
+    return s.firmMentioned || SUPPLIER_STATE.test(foldText(s.question));
+}
+
+export function mailFirstNote(firm?: string): string {
+    return `ERP: u ERP-u nema traga, ali odgovor je možda u pošti — narudžbe idu i mailom mimo ERP-a, a firme odgovaraju NOVIM mailom („gotovo", „spremno", predračun). `
+        + `Pozovi search_mail s who=${firm ? `„${firm}"` : 'osoba ili firma o kojoj pita'} (bez riječi ili s jednom), pa odgovori iz pošte: ko je pisao, kad i šta.`;
+}
+
+export const READ_FIRST_NOTE ='ERP: ovo je pitanje o podacima u ERP-u, a nisi ništa pročitao. Pozovi alat za čitanje pa odgovori iz rezultata: '
     + 'materijal i dekor proizvoda → product_materials (project ili orders, material = vrsta); šta fali / šta čeka → material_status; '
     + 'tok i faze naloga → order_status; ko je radio i kad (i „kad smo počeli") → project_history ili work_report; '
     + 'narudžbe → list_orders. Projekat iz razgovora važi i kad ga ova poruka ne spominje. „Nemam" reci tek ako alat vrati prazno.';

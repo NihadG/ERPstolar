@@ -1,7 +1,7 @@
 import type { Contact } from '../types';
 import {
     contactCountBySupplier, contactFullName, duplicateOf, emailDomain, filterContacts, formatAddress,
-    groupContacts, importCandidates, isSharedMailDomain, isValidEmail, looksLikeCompany, matchSender,
+    compactName, firmDomains, groupContacts, importCandidates, searchFirms, isSharedMailDomain, isValidEmail, looksLikeCompany, matchSender,
     addressTypos, normalizeEmail, resolveRecipient, searchContacts, singleDefaults, splitEmails, splitName, staleDefaults,
 } from '../contacts';
 
@@ -310,5 +310,32 @@ describe('tipfeler u adresi', () => {
     it('kratak domen: samo jedno slovo razlike', () => {
         expect(addressTypos(['a@okovi.bb'], known)).toEqual([{ email: 'a@okovi.bb', suggestion: 'a@okovi.ba' }]);
         expect(addressTypos(['a@okvo.bb'], known)).toEqual([]);
+    });
+});
+
+describe('firma po imenu i domenu (pošta, „iz Stakloreza")', () => {
+    const firms = [
+        { Name: 'Staklorez', Email: 'info@staklo-rez.example' },
+        { Name: 'Ploče Demo', Email: 'prodaja@ploce-demo.example; racuni@ploce-demo.example' },
+        { Name: 'Okovi Sarajevo', Email: 'okovi.sa@gmail.com' },
+    ];
+    const names = (t: string) => searchFirms(firms, t).map(f => f.Name);
+
+    it('padež, razdvojeno, s crticom i po domenu adrese', () => {
+        expect(names('Jesu li spremna ogledala iz Stakloreza, ova za Kuću?')).toEqual(['Staklorez']);
+        expect(names('od Staklo reza')).toEqual(['Staklorez']);
+        expect(names('staklo-rez')).toEqual(['Staklorez']);
+        expect(names('šta su javili iz Pločama')).toEqual(['Ploče Demo']);
+        expect(names('Okovi')).toEqual(['Okovi Sarajevo']);
+    });
+
+    it('kratke i nepovezane riječi ne pogađaju firmu', () => {
+        expect(names('je li ko potvrdio na email')).toEqual([]);
+        expect(names('iz za ova')).toEqual([]);
+    });
+
+    it('domen firme: bez gmail.com i sličnih, bez duplikata', () => {
+        expect(firmDomains(['a@staklo-rez.example', 'B@Staklo-Rez.example', 'x@gmail.com', 'nije adresa'])).toEqual(['staklo-rez.example']);
+        expect(compactName('STAKLO REZ d.o.o.')).toBe('staklorezdoo');
     });
 });
