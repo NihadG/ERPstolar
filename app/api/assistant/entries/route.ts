@@ -38,6 +38,7 @@ export async function GET(req: Request) {
             .map(e => ({
                 id: e.Entry_ID, at: e.Created_At, kind: e.Kind, text: e.Raw_Text, from: e.Forward_From || null,
                 outcome: outcomeOf(e), reply: e.Reply_Text || null, changes: e.Changes || [], toolCalls: e.Tool_Calls || [], attempts: e.Attempts || 0, usage: e.Usage || null,
+                signals: e.Signals || [], feedback: (e.Feedback || []).map(f => ({ at: f.At, kind: f.Kind, text: f.Text })),
             }));
         return NextResponse.json({ entries }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (e) {

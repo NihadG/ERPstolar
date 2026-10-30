@@ -7,6 +7,7 @@
 // api.anthropic.com (Gmail, Drive i ostalo odbijaju). Košta API pozive, pa se
 // pokreće samo izričito, nad lokalnim izvozom (ne ide u repo — stvarne poruke):
 //
+//   npm run bot:replay      (zadnji izvoz: scripts/bot-review/export.cjs → .bot-review/latest.txt)
 //   ASSISTANT_REPLAY=<folder sa snapshot.json i entries.json> npx jest lib/__tests__/assistantReplay.real.test.ts
 //
 // ANTHROPIC_API_KEY se uzima iz okruženja ili .env.local. Izvještaj:
@@ -30,8 +31,9 @@ import { READ_TOOLS, WRITE_TOOLS } from '@/lib/assistant/tools';
 import { billedTokens } from '@/lib/assistant/usage';
 import { replayReport, type ReplayCase } from '@/lib/assistant/replayReport';
 import type { AssistantOutcome, AssistantUsage } from '@/lib/types';
+import { reviewDir } from '@/lib/testing/reviewDir';
 
-const DIR = process.env.ASSISTANT_REPLAY || '';
+const DIR = reviewDir(process.env.ASSISTANT_REPLAY);
 const run = DIR ? describe : describe.skip;
 
 interface Entry {

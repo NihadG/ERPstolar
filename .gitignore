@@ -33,6 +33,9 @@ ts-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Revizija bota: lokalni izvoz stvarnih poruka (scripts/bot-review/export.cjs) — nikad u repo
+/.bot-review/
+
 # Playwright
 /test-results/
 /playwright-report/
@@ -40,7 +43,8 @@ next-env.d.ts
 /playwright/.cache/
 /playwright/.auth/
 
-# Claude/Gemini agent config
-.claude/
+# Claude/Gemini agent config — osim project skillova (npr. /bot-revizija), oni idu s kodom
+.claude/*
+!.claude/skills/
 .gemini/
 

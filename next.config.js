@@ -5,6 +5,8 @@ const nextConfig = {
         // PDF narudžbe za Telegram crta se na serveru fontom iz assets/fonts (čita se fs-om).
         outputFileTracingIncludes: {
             '/api/telegram/webhook': ['./assets/fonts/**/*'],
+            // Dnevnik unapređenja bota (Postavke → Telegram) čita se fs-om.
+            '/api/assistant/journal': ['./docs/bot/**/*'],
         },
     },
     webpack: (config, { isServer, dev }) => {
