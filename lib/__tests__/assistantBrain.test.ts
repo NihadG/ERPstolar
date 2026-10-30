@@ -648,3 +648,45 @@ describe('nema odgovora bez čitanja (30.10.)', () => {
         expect(mockSent).toHaveLength(1);
     });
 });
+
+describe('alati po vrsti poruke i prepoznat projekat (30.10.)', () => {
+    const names = (p: any) => p.tools.map((t: any) => t.name);
+
+    it('čisto pitanje: samo čitanje + all_tools; projekat iz poruke je u napomeni s putem na karticu', async () => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        const out = await say('Koji iveral smo koristili za Grbavicu?', [{ calls: [{ name: 'project_brief', args: { project: 'P1' } }] }, { text: 'U702.' }]);
+        const tools = names(mockSent[0]);
+        expect(tools).toContain('project_brief');
+        expect(tools).toContain('order_pdf');
+        expect(tools).not.toContain('create_order');
+        expect(tools).not.toContain('log_work');
+        expect(tools.at(-1)).toBe('all_tools');
+        expect(names(mockSent[1])).toEqual(tools);   // isti skup u svakom krugu = isti keš
+        expect(mockSent[0].messages.at(-1).content).toContain('projekat: P1 Begović · Zgrada Grbavica · Grbavica; pitanje o projektu → project_brief P1');
+        expect(out.usage?.toolSet).toBe('pitanje');
+    });
+
+    it('treba upis usred pitanja → all_tools, sljedeći krug ima sve alate', async () => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        const out = await say('Šta je sa Grbavicom?', [
+            { calls: [{ name: 'all_tools', args: {} }] },
+            { text: 'Sve je u redu.' },
+        ]);
+        expect(names(mockSent[0])).not.toContain('create_task');
+        expect(names(mockSent[1])).toContain('create_task');
+        expect(names(mockSent[1])).not.toContain('all_tools');
+        expect(lastToolResult(mockSent[1])).toMatchObject({ ok: true });
+        expect(out.usage?.toolSet).toBe('pitanje → svi');
+    });
+
+    it('upis (rad, zadatak…) dobija sve alate; projekat iz prethodne poruke je „iz razgovora"', async () => {
+        mockSent.length = 0;
+        const out = await say('Amer je radio montažu cijeli dan', [{ text: 'Koji nalog?' }]);
+        expect(names(mockSent[0])).toContain('log_work');
+        expect(names(mockSent[0])).not.toContain('all_tools');
+        expect(mockSent[0].messages.at(-1).content).toContain('projekat iz razgovora: P1 Begović · Zgrada Grbavica · Grbavica');
+        expect(out.usage?.toolSet).toBe('svi');
+    });
+});

@@ -909,6 +909,8 @@ export interface AssistantUsage {
     models: string[];
     /** Ukupno čekanje na model (ms). */
     ms: number;
+    /** Skup alata (lib/assistant/toolRouting): „pitanje“, „mail“, „svi“, „pitanje → svi“. */
+    toolSet?: string;
 }
 
 export interface ToolCallLog {

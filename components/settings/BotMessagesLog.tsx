@@ -48,7 +48,7 @@ const num = (n: number) => n.toLocaleString('bs-BA');
 function usageLine(u: AssistantUsage): string {
     const input = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
     const krug = u.calls === 1 ? 'krug' : u.calls < 5 ? 'kruga' : 'krugova';
-    return `${u.calls} ${krug} · ulaz ${num(input)} (keš ${num(u.cacheRead)}) · izlaz ${num(u.output)} · ≈ ${num(billedTokens(u))} obračunskih · ${(u.ms / 1000).toFixed(1)} s`;
+    return `${u.calls} ${krug} · ulaz ${num(input)} (keš ${num(u.cacheRead)}) · izlaz ${num(u.output)} · ≈ ${num(billedTokens(u))} obračunskih · ${(u.ms / 1000).toFixed(1)} s${u.toolSet ? ` · alati: ${u.toolSet}` : ''}`;
 }
 
 function when(iso: string): string {
