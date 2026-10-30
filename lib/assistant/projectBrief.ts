@@ -49,7 +49,24 @@ export interface BriefInput {
     notebook: { title: string; location?: string; state: string; quantity?: number }[];
     tasks: { title: string; due?: string; worker?: string }[];
     people: { name: string; role: string; email: string }[];
+    /** Pošta o projektu (mail_inbox: spominje projekat ili njegovu narudžbu); nema = Gmail nije povezan. */
+    mail?: BriefMail[];
 }
+
+export interface BriefMail {
+    /** ISO. */
+    at: string;
+    from: string;
+    kind: string;
+    subject: string;
+    snippet: string;
+    docNo?: string;
+}
+
+const MAIL_KIND: Record<string, string> = {
+    ready: 'gotovo / spremno', supplier_doc: 'predračun / ponuda', invoice: 'račun', accepted: 'odobreno',
+    site: 'gradilište', reply: 'odgovor', contact: 'mail',
+};
 
 const MAX_MATERIALS = 40;
 const MAX_LINES = 140;
@@ -131,6 +148,15 @@ export function buildProjectBrief(input: BriefInput, opts: { product?: string } 
         return `• ${o.number} · ${o.supplier} · ${o.status} · ${day(o.date)} · ${o.items} stavki${trail ? ` (${trail})` : ''}`;
     }));
     if (!orders.length) out.push('— nema narudžbi');
+
+    if (input.mail) {
+        out.push(`\nPOŠTA o projektu (${input.mail.length}; i narudžbe poslane mailom mimo ERP-a):`);
+        out.push(...input.mail.slice(0, 6).map(m => {
+            const snip = m.snippet.replace(/\s+/g, ' ').trim();
+            return `• ${day(m.at)} · ${m.from} · ${MAIL_KIND[m.kind] || 'mail'}${m.docNo ? ` ${m.docNo}` : ''} · „${m.subject.trim().slice(0, 80)}" — ${snip.slice(0, 140)}${snip.length > 140 ? '…' : ''}`;
+        }));
+        if (!input.mail.length) out.push('— u ulaznoj pošti nema ništa o ovom projektu (search_mail za stariju ili poslanu poštu)');
+    }
 
     out.push('\nRAD (Knjiga rada):');
     out.push(...(input.history ? projectHistoryLines(input.history, 'Projekat') : ['Projekat: u Knjizi rada nema upisanog rada.']));

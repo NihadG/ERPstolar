@@ -58,6 +58,10 @@ export interface EmailAccount {
     Last_Error?: string;
     /** Zadnji sažetak pošte na Telegram (svaka 3 dana). */
     Mail_Digest_At?: string;
+    /** Imenik pošte napravljen iz poslanih (lib/server/mailDirectory.ts). */
+    People_At?: string;
+    /** Jednokratno popunjavanje ulazne pošte unazad (tiho, bez poruka). */
+    Backfill_At?: string;
 }
 
 // ── Podešenost ───────────────────────────────────────────────────────
@@ -156,7 +160,7 @@ export async function saveEmailAccount(input: {
     return account;
 }
 
-export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'Signature' | 'History_ID' | 'Status' | 'Last_Error' | 'Mail_Digest_At'>>) {
+export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'Signature' | 'History_ID' | 'Status' | 'Last_Error' | 'Mail_Digest_At' | 'People_At' | 'Backfill_At'>>) {
     await accounts().doc(uid).set({ ...patch, Updated_At: new Date().toISOString() }, { merge: true });
 }
 

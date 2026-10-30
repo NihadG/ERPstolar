@@ -105,6 +105,13 @@ describe('alat search_mail', () => {
         expect(list.mock.calls[0][1]).toBe('{from:staklo-rez.example to:staklo-rez.example cc:staklo-rez.example} newer_than:120d -category:promotions -category:social');
     });
 
+    it('nije u Kontaktima ni dobavljač → imenik pošte (ljudi kojima si pisao)', async () => {
+        store.delete('contacts/c1');
+        store.set('mail_people/u1', { UID: 'u1', People: [{ Email: 'amra.demic@staklo-demo.example', Name: 'Amra Demić', Count: 4, Last_At: '' }] });
+        await runTool(env(), 'search_mail', { who: 'Amri' });
+        expect(list.mock.calls[0][1]).toMatch(/^{from:amra.demic@staklo-demo.example to:amra.demic@staklo-demo.example/);
+    });
+
     it('osoba + riječi nađu manje od 2 → ERP proširi na svu poštu te osobe i kaže to', async () => {
         list.mockResolvedValueOnce([]).mockResolvedValueOnce(['a1', 'b2']);
         const res = await runTool(env(), 'search_mail', { who: 'Merima', words: 'ogledala potvrda' });
