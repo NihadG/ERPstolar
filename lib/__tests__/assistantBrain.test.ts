@@ -106,7 +106,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_history', 'list_notebook', 'order_pdf', 'email_order', 'email_contact', 'find_contact', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'email_order', 'email_contact', 'find_contact', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
         expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
