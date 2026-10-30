@@ -56,6 +56,8 @@ export interface EmailAccount {
     Updated_At: string;
     History_ID?: string;
     Last_Error?: string;
+    /** Zadnji sažetak pošte na Telegram (svaka 3 dana). */
+    Mail_Digest_At?: string;
 }
 
 // ── Podešenost ───────────────────────────────────────────────────────
@@ -154,7 +156,7 @@ export async function saveEmailAccount(input: {
     return account;
 }
 
-export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'Signature' | 'History_ID' | 'Status' | 'Last_Error'>>) {
+export async function updateEmailAccount(uid: string, patch: Partial<Pick<EmailAccount, 'Send_As' | 'Signature' | 'History_ID' | 'Status' | 'Last_Error' | 'Mail_Digest_At'>>) {
     await accounts().doc(uid).set({ ...patch, Updated_At: new Date().toISOString() }, { merge: true });
 }
 

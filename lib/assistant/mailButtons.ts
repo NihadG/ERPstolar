@@ -51,8 +51,11 @@ export async function handleMailButton(
         return {};
     }
 
-    const done = async (applied: string, state: MailInboxItem['State'] = 'applied') => {
-        await ref.set({ State: state, Applied: applied }, { merge: true });
+    const done = async (applied: string, state: MailInboxItem['State'] = 'applied', closeFollow = true) => {
+        const close = closeFollow && item.Follow && !item.Done_At
+            ? { Done_At: new Date().toISOString(), Done_How: state === 'dismissed' ? 'dismissed' : action.startsWith('r') ? 'received' : 'applied', Next_Follow_At: null }
+            : {};
+        await ref.set({ State: state, Applied: applied, ...close }, { merge: true });
         await editMessageText(inc.chatId, inc.messageId, `${inc.messageText || ''}\n→ ${applied}`.trim(), []);
     };
 
@@ -94,7 +97,7 @@ export async function handleMailButton(
                     threadId: item.Thread_ID, inReplyTo: item.Rfc_Message_ID, source: 'telegram',
                 });
                 await answerCallbackQuery(inc.callbackId, 'Vezano — odgovor je ispod');
-                await done(`✔ ${what} vezan na ${order.Order_Number}; odgovor čeka tvoj klik ispod`);
+                await done(`✔ ${what} vezan na ${order.Order_Number}; odgovor čeka tvoj klik ispod`, 'applied', false);
                 await sendDraftToChat(inc.chatId, link, draft.Draft_ID);
                 return {};
             }
@@ -117,7 +120,7 @@ export async function handleMailButton(
                 return {};
             }
             await answerCallbackQuery(inc.callbackId, 'Zabilježeno');
-            await done(`🕒 ${order.Order_Number}: spremno za preuzimanje (rok dobavljača se uči od ovog dana)`);
+            await done(`🕒 ${order.Order_Number}: spremno za preuzimanje (rok dobavljača se uči od ovog dana); podsjetiću te da preuzmeš`, 'applied', false);
             return {};
         }
 

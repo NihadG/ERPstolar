@@ -15,6 +15,7 @@ import { sendDayProposals, sendDueReminders, sendMorningDigests } from '@/lib/as
 import { sendMaterialAlerts } from '@/lib/assistant/materialAlerts';
 import { checkBounces } from '@/lib/server/emailDrafts';
 import { syncAllMailboxes } from '@/lib/server/mailSync';
+import { sendMailDigests, sendMailFollowUps } from '@/lib/server/mailFollow';
 import { errorResponse } from '@/lib/server/requireUser';
 
 export const runtime = 'nodejs';
@@ -48,7 +49,14 @@ async function tick(req: Request) {
         const mail = now.getUTCMinutes() % 2 === 1
             ? await syncAllMailboxes(now).catch(e => { console.error('[tick] ulazna pošta:', e); return 0; })
             : 0;
-        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, bounces, mail, at: now.toISOString() });
+        // Podsjetnici pošte (svakih 5 min, 7–20 h) i sažetak svaka 3 dana ujutro — bez AI-ja.
+        const followUps = now.getUTCMinutes() % 5 === 2
+            ? await sendMailFollowUps(now, tz).catch(e => { console.error('[tick] podsjetnici pošte:', e); return 0; })
+            : 0;
+        const mailDigests = now.getUTCMinutes() % 10 === 4
+            ? await sendMailDigests(now, tz).catch(e => { console.error('[tick] sažetak pošte:', e); return 0; })
+            : 0;
+        return NextResponse.json({ ok: true, ...reminders, digests, proposals, materials, bounces, mail, followUps, mailDigests, at: now.toISOString() });
     } catch (e) {
         return errorResponse(e);
     }

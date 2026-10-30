@@ -586,6 +586,9 @@ export interface EmailDraft {
 
 export type MailKind = 'supplier_doc' | 'ready' | 'invoice' | 'accepted' | 'site' | 'reply' | 'contact';
 
+/** Šta se prati poslije prijema (lib/email/followUp.ts): odgovor, preuzimanje, zadatak s gradilišta. */
+export type MailFollow = 'reply' | 'pickup' | 'task';
+
 export interface MailInboxItem {
     Item_ID: string;
     Organization_ID: string;
@@ -610,6 +613,12 @@ export interface MailInboxItem {
     State: 'new' | 'applied' | 'dismissed';
     Applied?: string;
     Notified_At?: string;
+    /** PRAĆENJE: podsjetnici dok se ne riješi (odgovor u niti, preuzeto, dugme). */
+    Follow?: MailFollow;
+    Follow_Count?: number;
+    Next_Follow_At?: string | null;
+    Done_At?: string;
+    Done_How?: 'replied' | 'button' | 'received' | 'applied' | 'dismissed' | 'stopped';
     Created_At: string;
 }
 

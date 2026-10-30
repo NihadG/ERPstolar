@@ -17,6 +17,9 @@ import {
 import { loadContacts } from './emailDrafts';
 import { classifyMail, type MailContext, type MailOrderRef } from '@/lib/email/classify';
 import { mailMessage, NOTIFY_KINDS } from '@/lib/assistant/mailText';
+import { companyOf } from '@/lib/assistant/orderDocuments';
+import { addressedToMe, followMessage, followOf, needsReply, nextFollowAt } from '@/lib/email/followUp';
+import { companyTag } from '@/lib/email/compose';
 import { getLinkByUid } from '@/lib/assistant/store';
 import { sendMessage } from '@/lib/telegram/api';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
@@ -80,6 +83,8 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
     const ctx = await loadContext(account);
     const link = await getLinkByUid(uid);
     const orderNo = new Map(ctx.orders.map(o => [o.Order_ID, o.Order_Number]));
+    // „Luxco treba ugraditi…" u masovnom mailu gradilišta znači tebe.
+    const tag = companyTag((await companyOf(account.Organization_ID)).name || '');
     let notified = 0;
 
     for (const id of page.messageIds.slice(-MAX_PER_RUN)) {
@@ -87,10 +92,15 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
         if ((await ref.get()).exists) continue;
         let meta;
         try {
-            meta = await getMessageMeta(uid, id, ['From', 'Subject', 'Message-ID']);
+            meta = await getMessageMeta(uid, id, ['From', 'To', 'Cc', 'Subject', 'Message-ID']);
         } catch (e) {
             if (e instanceof GmailError && e.status === 404) continue;   // obrisana u međuvremenu
             throw e;
+        }
+        if (meta.labelIds.includes('SENT')) {
+            // Tvoj odgovor u niti zatvara podsjetnik „čeka tvoj odgovor".
+            await closeReplied(uid, meta.threadId, meta.internalDate ? new Date(Number(meta.internalDate)).toISOString() : now.toISOString());
+            continue;
         }
         const cls = classifyMail({ id, threadId: meta.threadId, from: meta.headers.from || '', subject: meta.headers.subject || '', snippet: meta.snippet, labelIds: meta.labelIds }, ctx);
         if (cls.kind === 'ignore') continue;
@@ -117,9 +127,23 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
             State: 'new',
             Created_At: now.toISOString(),
         };
+        // Praćenje: šta čeka tebe (odgovor, preuzimanje, gradilište) i kad podsjetiti.
+        const addressing = {
+            subject: item.Subject, snippet: item.Snippet, to: meta.headers.to || '', cc: meta.headers.cc || '',
+            own: ctx.own, companyWords: tag ? [tag] : [],
+        };
+        const follow = followOf(item.Kind, needsReply(addressing), addressedToMe(addressing));
+        if (follow) Object.assign(item, { Follow: follow, Follow_Count: 0, Next_Follow_At: nextFollowAt(item.Received_At, follow, 0) });
+
         if (link && NOTIFY_KINDS.has(item.Kind)) {
             const m = mailMessage(item, o => orderNo.get(o));
             await sendMessage(link.chatId, m.text, m.buttons.length ? m.buttons : undefined);
+            item.Notified_At = now.toISOString();
+            notified++;
+        } else if (link && follow === 'reply') {
+            // Običan mail poznatog koji pita nešto: javi odmah, s dugmetom „Odgovorio sam".
+            const m = followMessage(item, now, o => orderNo.get(o));
+            await sendMessage(link.chatId, m.text, m.buttons);
             item.Notified_At = now.toISOString();
             notified++;
         }
@@ -127,6 +151,17 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
     }
     await updateEmailAccount(uid, { History_ID: page.historyId });
     return notified;
+}
+
+/** Poslan mail u niti: otvoreni „čeka tvoj odgovor" iz te niti (stigli prije njega) su odgovoreni. */
+export async function closeReplied(uid: string, threadId: string, sentAt: string): Promise<number> {
+    const snap = await adminDb().collection(COLLECTIONS.MAIL_INBOX).where('Thread_ID', '==', threadId).get();
+    const open = snap.docs.filter(d => {
+        const i = d.data() as MailInboxItem;
+        return i.Owner_UID === uid && i.Follow === 'reply' && !i.Done_At && i.Received_At <= sentAt;
+    });
+    await Promise.all(open.map(d => d.ref.set({ Done_At: sentAt, Done_How: 'replied', Next_Follow_At: null }, { merge: true })));
+    return open.length;
 }
 
 /** Svi povezani sandučići (sat). Greška jednog ne zaustavlja ostale. */
