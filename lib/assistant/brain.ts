@@ -11,7 +11,7 @@
 //      drugi krug iste poruke plaća ulaz ~10 puta jeftinije.
 //   2. Bez drugog poziva: kad je model samo upisivao (zadatak, bilješka,
 //      izmjena) i sve je uspjelo, potvrdu složi sistem iz rezultata alata.
-//   3. Bez razmišljanja (thinking: disabled) i effort: low — biranje alata
+//   3. Bez razmišljanja (thinkingFor: disabled / between_tools) i effort: low — biranje alata
 //      i izvlačenje podataka iz poruke ne treba razmišljanje, a ono bi se
 //      platilo kao izlaz i čekalo se na njega pri svakom koraku.
 //   4. Razgovor stariji od HISTORY_HOURS ne ide modelu — ne pomaže, a plaća se.
@@ -59,6 +59,42 @@ function strongModel(): string {
 
 function model(): string {
     return process.env.ASSISTANT_MODEL?.trim() || 'claude-haiku-5-5';
+}
+
+// ── Isključeno razmišljanje, po modelu ──────────────────────────────
+//
+// Haiku 5.5 više ne prima `thinking: disabled` — razmišljanje se gasi s
+// `between_tools`. Kad API odbije `thinking` i u grešci kaže koji tip traži,
+// to se zapamti za taj model i zahtjev se ponovi jednom (bot se sam oporavi
+// umjesto da svaka poruka padne).
+
+type ThinkingOff = 'disabled' | 'between_tools';
+const thinkingOff = new Map<string, ThinkingOff>([['claude-haiku-5-5', 'between_tools']]);
+
+export function thinkingFor(modelId: string): { type: ThinkingOff } {
+    return { type: thinkingOff.get(modelId) || 'disabled' };
+}
+
+/** Iz greške „To turn thinking off on this model, send "thinking": {"type": "between_tools"}" → between_tools. */
+export function suggestedThinking(err: unknown): ThinkingOff | null {
+    const status = (err as { status?: number })?.status;
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    if (status !== 400 || !/thinking/i.test(message)) return null;
+    const m = message.replace(/\\"/g, '"').match(/"thinking"\s*:\s*\{\s*"type"\s*:\s*"(disabled|between_tools)"/);
+    return m ? (m[1] as ThinkingOff) : null;
+}
+
+/** messages.create s isključenim razmišljanjem; jedan ponovni pokušaj kad API predloži drugi tip. */
+export async function createTurn(client: Anthropic, params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'thinking'>): Promise<Anthropic.Message> {
+    try {
+        return await client.messages.create({ ...params, thinking: thinkingFor(params.model) });
+    } catch (e) {
+        const next = suggestedThinking(e);
+        if (!next || next === thinkingFor(params.model).type) throw e;
+        console.warn(`[assistant] ${params.model}: razmišljanje se gasi s „${next}" — pamtim i ponavljam`);
+        thinkingOff.set(params.model, next);
+        return client.messages.create({ ...params, thinking: { type: next } });
+    }
 }
 
 export interface AssistantTurnInput {
@@ -339,7 +375,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     try {
         for (let step = 0; step < MAX_STEPS; step++) {
             const started = Date.now();
-            const res = await client.messages.create({
+            const res = await createTurn(client, {
                 model: strong ? strongModel() : model(),
                 max_tokens: MAX_TOKENS,
                 system,
@@ -347,7 +383,6 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 messages,
                 // Automatski keš za rastući rep (razgovor + rezultati alata).
                 cache_control: { type: 'ephemeral' },
-                thinking: { type: 'disabled' },
                 output_config: { effort: 'low' },
                 ...(forceTool ? { tool_choice: { type: 'any' as const } } : {}),
             });

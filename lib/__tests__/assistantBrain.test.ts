@@ -100,7 +100,7 @@ describe('asistent od poruke do baze', () => {
         const p = mockSent[0];
         expect(p.model).toBe('claude-haiku-5-5');
         expect(p.output_config).toEqual({ effort: 'low' });
-        expect(p.thinking).toEqual({ type: 'disabled' });
+        expect(p.thinking).toEqual({ type: 'between_tools' });   // Haiku 5.5 više ne prima „disabled"
         expect(p.cache_control).toEqual({ type: 'ephemeral' });
         expect(p.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' }); // poruke s terena stižu u razmacima 5–60 min
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
