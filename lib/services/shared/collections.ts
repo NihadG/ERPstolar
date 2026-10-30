@@ -27,6 +27,7 @@ export const COLLECTIONS = {
     EMAIL_DRAFTS: 'email_drafts',
     // Ulazna pošta od poznatih (ID = uid_messageId) — samo server.
     MAIL_INBOX: 'mail_inbox',
+    MAIL_PEOPLE: 'mail_people',
     WORKERS: 'workers',
     WORK_ORDERS: 'work_orders',
     WORK_ORDER_ITEMS: 'work_order_items',

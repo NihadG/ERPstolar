@@ -17,10 +17,14 @@ import { listMemory } from '@/lib/assistant/store';
 import { buildProjectBrief, type BriefInput } from '@/lib/assistant/projectBrief';
 import { contactFullName, PROJECT_ROLE_LABELS } from '@/lib/contacts';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
-import type { Contact, Product, Project } from '@/lib/types';
+import type { Contact, MailInboxItem, Product, Project } from '@/lib/types';
+import { getEmailAccount } from './gmail';
 
 const TTL_MS = 2 * 60_000;
 const cache = new Map<string, { at: number; input: BriefInput }>();
+
+/** Za testove: kartica se čita iznova. */
+export function clearProjectBriefCache() { cache.clear(); }
 
 const isOpenTask = (status: string) => status === 'pending' || status === 'in_progress';
 
@@ -30,7 +34,7 @@ export async function loadProjectBriefInput(orgId: string, uid: string, projectI
     if (hit && now - hit.at < TTL_MS) return hit.input;
 
     const db = adminDb();
-    const [projectSnap, productsSnap, materials, orders, history, memory, tasks, contactsSnap] = await Promise.all([
+    const [projectSnap, productsSnap, materials, orders, history, memory, tasks, contactsSnap, mailItems] = await Promise.all([
         db.collection(COLLECTIONS.PROJECTS).where('Organization_ID', '==', orgId).where('Project_ID', '==', projectId).limit(1).get(),
         db.collection(COLLECTIONS.PRODUCTS).where('Organization_ID', '==', orgId).where('Project_ID', '==', projectId).get(),
         loadProjectMaterials(orgId, [projectId]),
@@ -39,7 +43,9 @@ export async function loadProjectBriefInput(orgId: string, uid: string, projectI
         listMemory(orgId, uid, false),
         getAllTasks(orgId),
         db.collection(COLLECTIONS.CONTACTS).where('Organization_ID', '==', orgId).get(),
+        loadMail(uid),
     ]);
+    const projectOrderIds = new Set(orders.filter(o => (o.items || []).some(i => i.Project_ID === projectId)).map(o => o.Order_ID));
     const project = projectSnap.empty ? null : (projectSnap.docs[0].data() as Project);
     const linked = (links?: { Entity_Type: string; Entity_ID: string }[]) => (links || []).some(l => l.Entity_Type === 'project' && l.Entity_ID === projectId);
 
@@ -72,9 +78,27 @@ export async function loadProjectBriefInput(orgId: string, uid: string, projectI
         people: contactsSnap.docs.map(d => d.data() as Contact).flatMap(c => (c.Project_Roles || [])
             .filter(r => r.Project_ID === projectId)
             .map(r => ({ name: contactFullName(c), role: PROJECT_ROLE_LABELS[r.Role] || r.Role, email: c.Email }))),
+        ...(mailItems ? {
+            mail: mailItems
+                .filter(m => (m.Project_IDs || []).includes(projectId) || (m.Order_IDs || []).some(id => projectOrderIds.has(id)))
+                .sort((a, b) => b.Received_At.localeCompare(a.Received_At))
+                .map(m => ({
+                    at: m.Received_At, kind: m.Kind, subject: m.Subject, snippet: m.Snippet,
+                    from: m.Supplier_Name && m.From_Name !== m.Supplier_Name ? `${m.From_Name} (${m.Supplier_Name})` : m.From_Name,
+                    ...(m.Doc_No ? { docNo: m.Doc_No } : {}),
+                })),
+        } : {}),
     };
     cache.set(key, { at: now, input });
     return input;
+}
+
+/** Ulazna pošta korisnika; null = Gmail nije povezan (kartica tad nema sekciju POŠTA). */
+async function loadMail(uid: string): Promise<MailInboxItem[] | null> {
+    const account = await getEmailAccount(uid).catch(() => null);
+    if (!account || account.Status !== 'ok') return null;
+    const snap = await adminDb().collection(COLLECTIONS.MAIL_INBOX).where('Owner_UID', '==', uid).get();
+    return snap.docs.map(d => d.data() as MailInboxItem);
 }
 
 export async function projectBriefText(orgId: string, uid: string, projectId: string, label: string, product?: string): Promise<string> {

@@ -610,6 +610,10 @@ export interface MailInboxItem {
     /** Narudžbe na koje se mail može odnositi (jedna = vezano niti ili jedina otvorena). */
     Order_IDs: string[];
     Contact_ID?: string;
+    /** Projekti koje mail spominje (naziv/klijent u naslovu ili tekstu) — i kad narudžbe nema u ERP-u. */
+    Project_IDs?: string[];
+    /** Popunjeno unazad pri povezivanju — bez poruka i podsjetnika. */
+    Backfilled?: boolean;
     State: 'new' | 'applied' | 'dismissed';
     Applied?: string;
     Notified_At?: string;

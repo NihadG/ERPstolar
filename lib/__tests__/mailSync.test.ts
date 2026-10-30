@@ -48,6 +48,13 @@ const fetchMock = jest.fn(async (url: string, init?: { body?: string; method?: s
         gmail.sent.push(JSON.parse(init!.body!));
         return res(200, { id: 'sent1', threadId: JSON.parse(init!.body!).threadId || 'tnew' });
     }
+    if (path === '/messages') {
+        // Pretraga: „in:sent" = poslani, inače primljeni.
+        const q = u.searchParams.get('q') || '';
+        const sent = /(^|\s)in:sent/.test(q);
+        const ids = Array.from(gmail.messages.values()).filter(x => (x.labels || ['INBOX']).includes('SENT') === sent).map(x => ({ id: x.id }));
+        return res(200, { messages: ids });
+    }
     const m = path.match(/^\/messages\/([^/]+)$/);
     if (m) {
         const msg = gmail.messages.get(decodeURIComponent(m[1]));
@@ -201,8 +208,10 @@ describe('sinhronizacija', () => {
         store.set('email_accounts/u1', { ...store.get('email_accounts/u1'), Status: 'reconnect' });
         deliver({ id: 'd1', threadId: 'th-o1', from: 'amra@staklo-demo.example', subject: 'Re', snippet: 'spremno' });
         expect(await syncAllMailboxes()).toBe(0);
-        store.set('email_accounts/u1', { ...store.get('email_accounts/u1'), Status: 'ok' });
-        store.set('email_accounts/pokvaren', { UID: 'pokvaren', Organization_ID: ORG, Email: 'x@y.example', Status: 'ok', Scopes: GMAIL_SCOPES, Refresh_Token_Enc: 'smeće', History_ID: '1' });
+        // Imenik i popunjavanje unazad su već urađeni — ovaj krug je obično čitanje.
+        const done = { People_At: new Date().toISOString(), Backfill_At: '2026-10-01T00:00:00Z' };
+        store.set('email_accounts/u1', { ...store.get('email_accounts/u1'), Status: 'ok', ...done });
+        store.set('email_accounts/pokvaren', { UID: 'pokvaren', Organization_ID: ORG, Email: 'x@y.example', Status: 'ok', Scopes: GMAIL_SCOPES, Refresh_Token_Enc: 'smeće', History_ID: '1', ...done });
         const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
         expect(await syncAllMailboxes()).toBe(1);
         spy.mockRestore();
@@ -295,5 +304,42 @@ describe('dugmad', () => {
     it('tuđi ili nepostojeći mail', async () => {
         await btn('nema', 'i');
         expect((answerCallbackQuery as jest.Mock).mock.calls[0][1]).toContain('nije u ERP-u');
+    });
+});
+
+// PDF 30.10.: „Gotova su ogledala" je stiglo kao nova nit prije povezivanja Gmaila,
+// od osobe koja nije u Kontaktima — ERP ga mora imati, tiho, i vezati za projekat.
+describe('imenik pošte i popunjavanje unazad', () => {
+    beforeEach(() => {
+        store.set('projects/p1', { Project_ID: 'p1', Organization_ID: ORG, Client_Name: 'Demo Klijent', Name: 'Kuća Grbavica', Status: 'U proizvodnji' });
+        gmail.messages.set('s1', { id: 's1', threadId: 'ts1', from: 'ja@luxco-demo.example', to: 'Lejla Demo <lejla@studio-demo.example>, Mia Ploče <mia@ploce-demo.example>', subject: 'Crteži', snippet: 'Pozdrav Lejla', labels: ['SENT'], at: '2026-09-01T08:00:00Z' });
+        gmail.messages.set('r1', { id: 'r1', threadId: 'tr1', from: 'Mia Ploče <mia@ploce-demo.example>', subject: 'nalog Grbavica', snippet: 'Gotova su ogledala za Grbavicu.', at: '2026-09-03T10:00:00Z' });
+        gmail.messages.set('r2', { id: 'r2', threadId: 'tr2', from: 'Lejla Demo <lejla@studio-demo.example>', subject: 'Termin', snippet: 'Može sutra u 10?', at: '2026-09-05T10:00:00Z' });
+        gmail.messages.set('r3', { id: 'r3', threadId: 'tr3', from: 'Akcija <promo@trgovina-demo.example>', subject: 'Popust 50%', snippet: 'Samo danas', at: '2026-09-06T10:00:00Z' });
+    });
+
+    it('prvi krug: imenik iz poslanih; drugi: tiho unazad, vezano za projekat; nepoznati ostaju vani', async () => {
+        await syncAllMailboxes(new Date('2026-10-30T08:00:00Z'));
+        const people = (store.get('mail_people/u1') as any).People.map((p: any) => `${p.Name} <${p.Email}>`);
+        expect(people).toEqual(['Lejla Demo <lejla@studio-demo.example>', 'Mia Ploče <mia@ploce-demo.example>']);
+        expect(inbox()).toHaveLength(0);   // jedan teži posao po krugu
+
+        await syncAllMailboxes(new Date('2026-10-30T08:15:00Z'));
+        expect(item('r1')).toMatchObject({ Kind: 'ready', Supplier_ID: 's2', Project_IDs: ['p1'], Backfilled: true, State: 'new' });
+        expect(item('r1')!.Follow).toBeUndefined();
+        expect(item('r2')).toMatchObject({ Kind: 'contact', From_Name: 'Lejla Demo', Backfilled: true });   // samo iz imenika, nije u Kontaktima
+        expect(item('r3')).toBeUndefined();
+        expect(sendMessage).not.toHaveBeenCalled();   // stare stvari ne zvone
+        expect((await account()).Backfill_At).toBe('2026-10-30T08:15:00.000Z');
+    });
+
+    it('obično čitanje: osoba iz imenika piše → u ulaznoj pošti, ime i datum osvježeni', async () => {
+        store.set('mail_people/u1', { UID: 'u1', People: [{ Email: 'lejla@studio-demo.example', Name: 'Lejla', Count: 1, Last_At: '2026-09-01T08:00:00Z' }] });
+        await syncMailbox(await account());
+        deliver({ id: 'n1', threadId: 'tn1', from: 'Lejla Demo <lejla@studio-demo.example>', subject: 'Primjedbe Grbavica', snippet: 'Šaljem listu', at: '2026-10-30T09:00:00Z' });
+        await syncMailbox(await account());
+        expect(item('n1')).toMatchObject({ Kind: 'contact', Project_IDs: ['p1'] });
+        const lejla = (store.get('mail_people/u1') as any).People[0];
+        expect(lejla).toMatchObject({ Count: 2, Last_At: '2026-10-30T09:00:00.000Z' });
     });
 });

@@ -38,6 +38,8 @@ import { mentionsEveryone, orderMentioned, titleSaid, ungroundedOrders, unground
 import { getOpenWorkOrderIdsForProject, loadProjectHistory, orderStatusLines } from './orderStatus';
 import { projectBriefText } from '@/lib/server/projectBrief';
 import { readMail, searchMail } from '@/lib/server/mailSearch';
+import { loadMailPeople } from '@/lib/server/mailDirectory';
+import { searchPeople } from '@/lib/email/directory';
 import { dayLabel, diarySummary, presenceSummary, progressStepsSummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import { projectHistoryLines } from '@/lib/projectHistory';
@@ -357,7 +359,7 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'project_brief',
-        description: 'KARTICA PROJEKTA — sve o jednom projektu u jednom pozivu: proizvodi, materijali i dekori (iveral, kant, okovi, staklo…) s količinama i stanjem (primljeno / naručeno / nije naručeno), narudžbe sa statusom, mailom, predračunom i „spremno“, rad iz Knjige rada (prvi i zadnji dan, ko je radio), otvorena bilježnica i zadaci, ljudi s ulogama. PRVI izbor za svako pitanje o jednom projektu: „koji iveral smo koristili za Jerkine ormare“, „šta fali za Budnju“, „kad smo počeli Čorluku“, „ko je nadzor na Crnom Vrhu“. Projekat iz razgovora važi i kad ga poruka ne spominje.',
+        description: 'KARTICA PROJEKTA — sve o jednom projektu u jednom pozivu: proizvodi, materijali i dekori (iveral, kant, okovi, staklo…) s količinama i stanjem (primljeno / naručeno / nije naručeno), narudžbe sa statusom, mailom, predračunom i „spremno“, rad iz Knjige rada (prvi i zadnji dan, ko je radio), otvorena bilježnica i zadaci, ljudi s ulogama, pošta o projektu (gotovo, predračun, račun — i za narudžbe poslane mailom mimo ERP-a). PRVI izbor za svako pitanje o jednom projektu: „koji iveral smo koristili za Jerkine ormare“, „šta fali za Budnju“, „kad smo počeli Čorluku“, „ko je nadzor na Crnom Vrhu“. Projekat iz razgovora važi i kad ga poruka ne spominje.',
         input_schema: {
             type: 'object',
             properties: {
@@ -2070,6 +2072,8 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
                 const firms = searchFirms(suppliers, who).slice(0, 3);
                 const firmPeople = contacts.filter(c => c.Supplier_ID && firms.some(f => f.Supplier_ID === c.Supplier_ID));
                 const found = [...people.map(c => c.Email), ...firmPeople.map(c => c.Email), ...firms.flatMap(f => splitEmails(f.Email || ''))];
+                // Nije u Kontaktima ni među dobavljačima → imenik pošte (ljudi kojima si pisao).
+                if (!found.length) found.push(...searchPeople(await loadMailPeople(env.uid), who).slice(0, 4).map(p => p.Email));
                 addresses.push(...found);
                 domains.push(...firmDomains([...firms.flatMap(f => splitEmails(f.Email || '')), ...firmPeople.map(c => c.Email), ...people.filter(c => c.Supplier_ID).map(c => c.Email)]));
                 // Nikog u Kontaktima ni među dobavljačima → Gmail traži ime u zaglavljima Od/Za.
