@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Project, Material, Product, ProductMaterial, WorkOrder, WorkOrderItem, Offer, OfferProduct, WorkLog, Order, Task } from '@/lib/types';
 import { ALLOWED_MATERIAL_TRANSITIONS } from '@/lib/types';
 import {
@@ -53,6 +53,7 @@ import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
 import { folderLink } from '@/lib/google/driveClient';
 import { Search, ListFilter, Archive, ArchiveRestore, RefreshCw, Plus, LayoutDashboard } from 'lucide-react';
+import type { CompanionBundle } from '@/lib/materialCompanions';
 import './ProjectsTab.css';
 
 interface ProjectsTabProps {
@@ -155,6 +156,20 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [editingProject, setEditingProject] = useState<Partial<Project> | null>(null);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> & { projectId?: string } | null>(null);
     const [addingMaterial, setAddingMaterial] = useState<{ productId: string } | null>(null);
+    // „Obično ide uz to" u modalu materijala — uči iz sastavnica svih proizvoda firme.
+    const companionHistory = useMemo<CompanionBundle[]>(
+        () => projects.flatMap(p => (p.products || []).map(pr => ({ projectId: p.Project_ID, materials: pr.materials || [] }))),
+        [projects]
+    );
+    const addingMaterialExisting = useMemo(() => {
+        const id = addingMaterial?.productId;
+        if (!id) return [];
+        for (const p of projects) {
+            const pr = (p.products || []).find(x => x.Product_ID === id);
+            if (pr) return pr.materials || [];
+        }
+        return [];
+    }, [projects, addingMaterial]);
     const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
     const [materialQty, setMaterialQty] = useState(1);
     const [materialPrice, setMaterialPrice] = useState(0);
@@ -1226,6 +1241,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         onAluDoorRedirect={handleAluDoorRedirect}
                         onRefresh={onRefresh}
                         showToast={showToast}
+                        companionHistory={companionHistory}
+                        existingMaterials={addingMaterialExisting}
                     />
                 )}
 
@@ -2538,6 +2555,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 onAluDoorRedirect={handleAluDoorRedirect}
                 onRefresh={onRefresh}
                 showToast={showToast}
+                companionHistory={companionHistory}
+                existingMaterials={addingMaterialExisting}
             />
 
             {/* Glass Modal */}

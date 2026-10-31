@@ -8,6 +8,7 @@ import { saveMaterial, getMaterialTemplates, saveMaterialTemplate, deleteMateria
 import { useData } from '@/context/DataContext';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import BoardCalculatorModal from '@/components/ui/BoardCalculatorModal';
+import { buildCompanionStats, suggestCompanions, type CompanionBundle, type CompanionItemLite } from '@/lib/materialCompanions';
 import './MaterialSelectModal.css';
 
 // ============================================
@@ -34,6 +35,10 @@ interface MaterialSelectModalProps {
     organizationId: string;
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    /** Sastavnice svih proizvoda firme — iz njih se uči „Obično ide uz to" (lib/materialCompanions). */
+    companionHistory?: CompanionBundle[];
+    /** Šta proizvod već ima — ne predlaže se ponovo, a služi i kao sidro prijedloga. */
+    existingMaterials?: CompanionItemLite[];
 }
 
 // ============================================
@@ -51,6 +56,8 @@ export default function MaterialSelectModal({
     organizationId,
     onRefresh,
     showToast,
+    companionHistory,
+    existingMaterials,
 }: MaterialSelectModalProps) {
     // Suppliers iz zajedničke baze (isti izvor kao Resursi tab)
     const { appState, isTabLoaded, loadTabData } = useData();
@@ -176,6 +183,32 @@ export default function MaterialSelectModal({
         }
         return counts;
     }, [materials, searchQuery]);
+
+    // ---- Prateći materijali („Obično ide uz to") ----
+    const companionStats = useMemo(
+        () => buildCompanionStats(companionHistory || [], materials),
+        [companionHistory, materials]
+    );
+    const companions = useMemo(() => suggestCompanions({
+        selected: Array.from(selected.values()).map(s => ({ Material_ID: s.materialId, Material_Name: s.materialName })),
+        existing: existingMaterials || [],
+        catalog: materials,
+        stats: companionStats,
+        options: { limit: 5 },
+    }), [selected, existingMaterials, materials, companionStats]);
+
+    function addCompanion(mat: Material) {
+        const next = new Map(selected);
+        next.set(mat.Material_ID, {
+            materialId: mat.Material_ID,
+            materialName: mat.Name,
+            unit: mat.Unit,
+            quantity: 1,
+            price: mat.Default_Unit_Price,
+            supplier: mat.Default_Supplier || '',
+        });
+        setSelected(next);
+    }
 
     // ---- Handlers ----
     function isGlass(mat: Material): boolean {
@@ -806,6 +839,34 @@ export default function MaterialSelectModal({
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+                        )}
+
+                        {/* Prateći materijali — iz sastavnica firme + pravila dekora/tipa */}
+                        {companions.length > 0 && (
+                            <div className="msm-companions">
+                                <div className="msm-companions-head">
+                                    <span className="material-icons-round">auto_awesome</span>
+                                    Obično ide uz to
+                                    <span className="msm-companions-hint">klik dodaje</span>
+                                </div>
+                                <div className="msm-companions-list">
+                                    {companions.map(c => (
+                                        <button
+                                            key={c.material.Material_ID}
+                                            type="button"
+                                            className={`msm-companion kind-${c.reasons[0].kind}`}
+                                            onClick={() => addCompanion(c.material)}
+                                            title={c.reasons.map(r => r.text).join('\n')}
+                                        >
+                                            <span className="material-icons-round msm-companion-plus">add</span>
+                                            <span className="msm-companion-text">
+                                                <span className="msm-companion-name">{c.material.Name}</span>
+                                                <span className="msm-companion-reason">{c.reasons[0].text}</span>
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
