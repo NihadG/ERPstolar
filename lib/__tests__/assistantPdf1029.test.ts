@@ -242,6 +242,17 @@ describe('3. Koji iveral je išao za Švicarsku / umivaonike', () => {
         expect(res.note).toContain('Za naručiti');
     });
 
+    // Ponavljanje 31.10.: kartica je stari „Na stanju" (bez količine) pokazivala kao „nije naručeno",
+    // pa se model na „ne kontam" opet „ispravio" na pogrešan broj. Kartica i pregled moraju reći isto.
+    it('kartica projekta: stari status „Na stanju" je pokriven, kao u pregledu materijala', async () => {
+        store.set('products/p-u2', { Product_ID: 'p-u2', Organization_ID: ORG, Project_ID: 'ps', Name: 'Uzglavlje kreveta', Quantity: 10 });
+        store.set('product_materials/m5', { ID: 'm5', Organization_ID: ORG, Product_ID: 'p-u2', Material_Name: 'Furnir / Hrast', Quantity: 1.5, Unit: 'm2', Unit_Price: 0, Total_Price: 0, Status: 'Na stanju' });
+        const res: any = await runTool(env('Koliko treba furnira za Švicarsku'), 'project_brief', { project: 'P2' });
+        expect(res.ok).toBe(true);
+        expect(res.brief).toMatch(/Furnir \/ Hrast — 16.5 m2 · na stanju 15, nije naručeno 1.5/);
+        expect(res.brief).toMatch(/Iveral \/ U960 ST9 Onyx siva \(Elgrad\) — 0.4 Kom · sve tu/);
+    });
+
     it('kant je zasebna vrsta, a pogrešan proizvod nudi popis proizvoda', async () => {
         const kant: any = await runTool(env('koji kant'), 'product_materials', { project: 'P2', material: 'kant' });
         expect(kant.materials[0]).toMatch(/^KT \/ U960 ST9 23\/2/);

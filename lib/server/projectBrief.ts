@@ -16,6 +16,7 @@ import { loadProjectHistory } from '@/lib/assistant/orderStatus';
 import { listMemory } from '@/lib/assistant/store';
 import { buildProjectBrief, type BriefInput } from '@/lib/assistant/projectBrief';
 import { contactFullName, PROJECT_ROLE_LABELS } from '@/lib/contacts';
+import { roundQty } from '@/lib/orderItemGroups';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import type { Contact, MailInboxItem, Product, Project } from '@/lib/types';
 import { getEmailAccount } from './gmail';
@@ -56,9 +57,12 @@ export async function loadProjectBriefInput(orgId: string, uid: string, projectI
         products: productsSnap.docs.map(d => d.data() as Product)
             .sort((a, b) => a.Name.localeCompare(b.Name, 'bs'))
             .map(p => ({ name: p.Name, quantity: Number(p.Quantity) || 1, status: p.Status || '' })),
+        // Stari status „Na stanju" bez količine (On_Stock 0) je pokriven kao u product_materials (materialCoverage):
+        // inače kartica kaže „nije naručeno 256", a pregled materijala „za naručiti 181" (31.10.).
         materials: materials.map(r => ({
             name: r.name, unit: r.unit, supplier: r.supplier, productName: r.productName,
-            needed: r.needed, ordered: r.ordered, received: r.received, onStock: r.onStock,
+            needed: r.needed, ordered: r.ordered, received: r.received,
+            onStock: Math.max(r.onStock, roundQty(r.needed - (r.available + r.inDrafts) - r.ordered - r.received)),
         })),
         orders: orders
             .map(o => ({ o, mine: (o.items || []).filter(i => i.Project_ID === projectId) }))
