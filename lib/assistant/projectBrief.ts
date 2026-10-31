@@ -117,7 +117,11 @@ function materialLine(m: MaterialGroup): string {
 }
 
 export function buildProjectBrief(input: BriefInput, opts: { product?: string } = {}): string {
-    const filter = (opts.product || '').trim();
+    const asked = (opts.product || '').trim();
+    // Filter koji ne pogađa nijedan proizvod (31.10.: product „furnir" — to je materijal) ne smije
+    // dati praznu karticu: model je iz nje zaključio „nema materijala ni narudžbi".
+    const missed = !!asked && !input.products.some(p => productMatches(p.name, asked));
+    const filter = missed ? '' : asked;
     const products = input.products.filter(p => productMatches(p.name, filter));
     const productNames = new Set(products.map(p => p.name));
     const materials = groupMaterials(filter ? input.materials.filter(m => productNames.has(m.productName)) : input.materials);
@@ -125,6 +129,7 @@ export function buildProjectBrief(input: BriefInput, opts: { product?: string } 
     const out: string[] = [
         `PROJEKAT: ${input.label}${input.status ? ` · ${input.status}` : ''}${input.deadline ? ` · rok ${day(input.deadline)}` : ''}`,
     ];
+    if (missed) out.push(`(nijedan proizvod se ne zove „${asked}" — prikazana je cijela kartica; za materijal po vrsti koristi product_materials s material)`);
     if (filter) out.push(`(samo proizvodi koji odgovaraju „${filter}": ${products.length} od ${input.products.length})`);
 
     out.push(`\nPROIZVODI (${products.length}):`);

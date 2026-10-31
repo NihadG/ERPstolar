@@ -15,21 +15,31 @@ export const MAX_RESULTS = 8;
 const HEADERS = ['From', 'To', 'Subject', 'Content-Type'];
 
 /**
- * Osoba/firma + riječi, a nađeno manje od 2 → ista osoba bez riječi (najnovije
- * prvo): „ogledala Crni Vrh" ne smije sakriti „Gotova su ogledala" ni predračun.
+ * Osoba/firma + riječi, a nađeno manje od 2 → šire, redom:
+ * 1. iste riječi bez osobe — mail je možda išao s druge adrese ili ime nije
+ *    u zaglavlju (31.10.: „Narudzba stakala - Dino Kuća" nije bio u 8
+ *    najnovijih Meriminih, a riječi su ga nalazile odmah);
+ * 2. ista osoba bez riječi (najnovije prvo): „ogledala Crni Vrh" ne smije
+ *    sakriti „Gotova su ogledala" ni predračun.
  */
-export async function searchMail(uid: string, s: MailSearch, tz: string): Promise<{ query: string; lines: string[]; widened?: string }> {
+export async function searchMail(uid: string, s: MailSearch, tz: string): Promise<{ query: string; lines: string[]; widened?: 'words' | 'who' }> {
     const query = gmailQuery(s);
     if (!query) return { query, lines: [] };
     let ids = await listMessageIds(uid, query, MAX_RESULTS);
-    let widened: string | undefined;
+    let widened: 'words' | 'who' | undefined;
     const hasWho = !!(s.addresses?.length || s.domains?.length || s.names?.length || s.phrase);
     if (ids.length < 2 && s.words && hasWho) {
-        const wide = gmailQuery({ ...s, words: '' });
-        const more = await listMessageIds(uid, wide, MAX_RESULTS);
+        const byWords = await listMessageIds(uid, gmailQuery({ words: s.words, days: s.days, direction: s.direction, attachment: s.attachment }), MAX_RESULTS);
+        if (byWords.some(id => !ids.includes(id))) {
+            ids = Array.from(new Set([...ids, ...byWords])).slice(0, MAX_RESULTS);
+            widened = 'words';
+        }
+    }
+    if (ids.length < 2 && s.words && hasWho) {
+        const more = await listMessageIds(uid, gmailQuery({ ...s, words: '' }), MAX_RESULTS);
         if (more.length > ids.length) {
             ids = Array.from(new Set([...ids, ...more])).slice(0, MAX_RESULTS);
-            widened = wide;
+            widened = 'who';
         }
     }
     const lines = await linesFor(uid, ids, tz);

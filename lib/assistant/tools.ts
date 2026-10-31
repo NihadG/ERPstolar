@@ -1485,23 +1485,36 @@ async function productMaterialsTool(env: ToolEnv, a: Args): Promise<ToolResult> 
     const label = project ? projectLabel(project) : (env.ctx.orders || []).filter(o => orderIds.includes(o.value.id)).map(o => o.value.name).join(', ');
 
     // Pitanje o jednoj vrsti: jedan red po materijalu (dekoru) s proizvodima koji ga imaju.
+    // Ukupno i „za naručiti" računa ERP, s količinom po proizvodu i šta je pokriveno (31.10.:
+    // „treba 256, za naručiti 181" bez objašnjenja → model se „ispravio" na pogrešno).
     if (materialName) {
-        const groups = new Map<string, { name: string; products: string[]; unit: string; status: Set<string>; supplier: Set<string>; qty: number }>();
+        const groups = new Map<string, { name: string; products: string[]; unit: string; status: Set<string>; supplier: Set<string>; qty: number; toOrder: number }>();
         for (const m of materials.filter(wanted)) {
             const p = products.find(x => x.Product_ID === m.Product_ID);
+            const count = p && p.Quantity > 0 ? p.Quantity : 1;
+            const c = materialCoverage(m, count);
             const key = foldText(m.Material_Name);
-            const g = groups.get(key) || { name: m.Material_Name, products: [], unit: m.Unit || 'kom', status: new Set<string>(), supplier: new Set<string>(), qty: 0 };
-            g.products.push(p ? `${p.Name}${p.Quantity > 1 ? ` ×${p.Quantity}` : ''}` : '—');
+            const g = groups.get(key) || { name: m.Material_Name, products: [], unit: m.Unit || 'kom', status: new Set<string>(), supplier: new Set<string>(), qty: 0, toOrder: 0 };
+            g.products.push(p
+                ? `${p.Name}${count > 1 ? ` ×${count}` : ''}: ${q(c.needed)}${count > 1 ? ` (${q(m.Quantity)}/kom)` : ''}${c.needed > 0 && c.toOrder === 0 ? ` ✓ ${m.Status || 'pokriveno'}` : ''}`
+                : '—');
             g.status.add(m.Status || 'Nije naručeno');
             if (m.Supplier) g.supplier.add(m.Supplier);
-            g.qty += (m.Quantity || 0) * (p && p.Quantity > 0 ? p.Quantity : 1);
+            g.qty += c.needed;
+            g.toOrder += c.toOrder;
             groups.set(key, g);
         }
         if (!groups.size) return { ok: true, project: label, materials: [], note: `Proizvodi (${products.length}) nemaju materijal „${materialName}" u sastavnici.` };
+        const list = Array.from(groups.values());
+        const covered = list.some(g => g.toOrder < g.qty);
         return {
             ok: true, project: label, proizvoda: products.length,
-            materials: Array.from(groups.values()).map(g =>
-                `${g.name} — ${q(g.qty)} ${g.unit} · ${Array.from(g.status).join('/')}${g.supplier.size ? ` · ${Array.from(g.supplier).join(', ')}` : ''} · proizvodi: ${g.products.slice(0, 10).join('; ')}${g.products.length > 10 ? '; …' : ''}`),
+            materials: list.map(g => {
+                const left = roundQty(g.toOrder);
+                const split = left < g.qty ? ` · za naručiti ${q(left)}, pokriveno ${q(roundQty(g.qty - left))}` : '';
+                return `${g.name} — ${q(roundQty(g.qty))} ${g.unit}${split} · ${Array.from(g.status).join('/')}${g.supplier.size ? ` · ${Array.from(g.supplier).join(', ')}` : ''} · proizvodi: ${g.products.slice(0, 12).join('; ')}${g.products.length > 12 ? '; …' : ''}`;
+            }),
+            ...(covered ? { note: 'Prvi broj je ukupno po sastavnici. „Za naručiti" = ukupno − ono što je već na stanju, naručeno ili primljeno; proizvodi s ✓ su pokriveni. Navedi oba broja i koji su proizvodi pokriveni.' } : {}),
         };
     }
 
@@ -2087,12 +2100,13 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         const days = typeof a.days === 'number' ? a.days : undefined;
         const found = await searchMail(env.uid, { words, addresses, domains, names, phrase, days, direction, attachment: a.attachment === true }, env.tz);
         if (!found.query) return { ok: false, error: 'Po čemu da tražim? Navedi riječi, osobu ili projekat.' };
-        const shown = (q: string) => q.replace(/ -category:\S+/g, '');
+        // Padežne oblike („{kolone kolona …}") model ne treba vidjeti — dovoljna je riječ.
+        const shown = (q: string) => q.replace(/ -category:\S+/g, '').replace(/\{([^\s{}:]+)(?: [^\s{}:]+)+\}/g, '$1');
         return {
             ok: true,
             mails: found.lines,
             ...(found.lines.length
-                ? { note: `${MAIL_IS_DATA} ${found.widened ? `Sa riječima „${words}" skoro ništa — ERP je pokazao svu poštu te osobe/firme. ` : ''}${NEW_THREAD_NOTE} Za cijeli tekst jedne poruke pozovi search_mail s id.` }
+                ? { note: `${MAIL_IS_DATA} ${found.widened === 'words' ? `Kod te osobe/firme s riječima „${words}" skoro ništa — ERP je tražio iste riječi u svoj pošti; pogledaj ko je pisao. ` : found.widened === 'who' ? `Sa riječima „${words}" skoro ništa — ERP je pokazao svu poštu te osobe/firme. ` : ''}${NEW_THREAD_NOTE} Za cijeli tekst jedne poruke pozovi search_mail s id.` }
                 : { note: `Nema poruka za: ${shown(found.query)}. Probaj šire (manje riječi, više dana) prije nego kažeš da nema.` }),
         };
     } catch (e) {

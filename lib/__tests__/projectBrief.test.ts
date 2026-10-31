@@ -66,6 +66,14 @@ describe('kartica projekta — sastav', () => {
         expect(t).not.toContain('N2026-09/03');
     });
 
+    // 31.10.: product „furnir" (materijal, ne proizvod) → prazna kartica → „nema materijala ni narudžbi".
+    it('filter koji ne pogađa nijedan proizvod → cijela kartica i napomena, ne prazna', () => {
+        const t = buildProjectBrief(input, { product: 'furnir' });
+        expect(t).toContain('nijedan proizvod se ne zove „furnir"');
+        expect(t).toContain('Iveral U702');
+        expect(t).toContain('PROIZVODI (3)');
+    });
+
     it('pošta o projektu: i kad narudžbe nema u ERP-u (mail mimo ERP-a), najnovije prvo', () => {
         const t = buildProjectBrief({ ...input, mail: [
             { at: '2026-09-30T06:00:00Z', from: 'Mia Demo (Staklo Demo)', kind: 'supplier_doc', docNo: '330421', subject: 'Predracun 330421 - Narudzba ogledala', snippet: 'U prilogu predračun, molim potvrdu.' },

@@ -29,4 +29,12 @@ describe('šta poruka traži: stvarne poruke 23.–27.10.', () => {
         expect(intent('Kad se zadnji put radilo na Čorluki?').expectsWrite).toBe(false);
         expect(intent('Da').expectsWrite).toBe(false);
     });
+
+    // 31.10.: „Naručio sam preko emaila, poslao Amri" → ERP je tražio upis → „Ništa nije upisano".
+    it('„poslao sam mailom" je trag gdje tražiti (pitanje), ne nalog za novi mail', () => {
+        expect(intent('Narucio sam preko emaila, poslao amri')).toMatchObject({ kinds: ['question'], expectsWrite: false });
+        expect(intent('Poslao sam joj mail prošle sedmice')).toMatchObject({ kinds: ['question'], expectsWrite: false });
+        expect(intent('Pošalji Amri narudžbu mailom').kinds).toEqual(['email']);
+        expect(intent('Poslao sam mail, napiši Amri još jedan').kinds).toEqual(['email']);
+    });
 });

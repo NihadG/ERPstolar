@@ -66,9 +66,13 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         && /\b(gotov|zavrs|napravljen|skrojen|srezan|kantiran|sklopljen|izbrusen|polakiran|zapakovan|montiran|ofarban|furniran|u toku|na (brusenj|lakiranj|kantiranj|krojenj|sklapanj|okivanj|montaz|furniranj|pakovanj|presovanj)|krenul|zapoce|zavrseno)\w*/.test(t)) kinds.add('progress');
     // Mail („pošalji Amri narudžbu mailom", „javi Selmi mailom da su lajsne gotove"): sadržaj maila
     // nije upis u ERP — nije nova narudžba, zadatak ni stanje procesa. Pitanje o adresi nije mail.
+    // „Naručio sam preko emaila, poslao Merimi" (31.10.) je podatak gdje tražiti, ne nalog za
+    // novi mail: prošlo vrijeme bez naredbe → pitanje (pošta se čita), ne upis.
+    const mailReport = /\b(poslao|poslala|poslali|narucio|narucila|narucili|pisao|pisala|slao|slala)\b/.test(t)
+        && !/\b(posalji|posaljite|napisi|sastavi|javi|naruci|narucite|proslijedi|odgovori|napravi|upisi|zapisi|dodaj|kreiraj|podsjeti|napomeni)\b/.test(t);
     if (/\b(e-?mail|mail|mejl|imejl)\w*/.test(t) && !/\b(koji je|kakav je|adres)\w*/.test(t)) {
         kinds.clear();
-        kinds.add('email');
+        kinds.add(mailReport ? 'question' : 'email');
     }
     if (question) kinds.add('question');
 
