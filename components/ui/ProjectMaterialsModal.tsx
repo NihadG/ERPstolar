@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Project, Product } from '@/lib/types';
 import Modal from '@/components/ui/Modal';
 import { sortProductsByName } from '@/lib/sortProducts';
+import { materialCoverage } from '@/lib/materialCoverage';
 
 interface ProjectMaterialsModalProps {
     isOpen: boolean;
@@ -114,8 +115,11 @@ export default function ProjectMaterialsModal({ isOpen, onClose, project }: Proj
             for (const mat of product.materials || []) {
                 const key = mat.Material_ID || mat.Material_Name;
                 const ex = map.get(key);
+                // Sastavnica je PO KOMADU proizvoda; potrebno = količina × komada proizvoda.
+                // Naručeno/primljeno/na stanju su već ukupne količine (lib/materialCoverage).
+                const needed = materialCoverage(mat, product.Quantity || 1).needed;
                 if (ex) {
-                    ex.Needed += mat.Quantity || 0;
+                    ex.Needed += needed;
                     ex.On_Stock += mat.On_Stock || 0;
                     ex.Ordered += mat.Ordered_Quantity || 0;
                     ex.Received += mat.Received_Quantity || 0;
@@ -126,7 +130,7 @@ export default function ProjectMaterialsModal({ isOpen, onClose, project }: Proj
                         Material_Name: mat.Material_Name,
                         Material_ID: mat.Material_ID,
                         Unit: mat.Unit || 'Kom',
-                        Needed: mat.Quantity || 0,
+                        Needed: needed,
                         On_Stock: mat.On_Stock || 0,
                         Ordered: mat.Ordered_Quantity || 0,
                         Received: mat.Received_Quantity || 0,
