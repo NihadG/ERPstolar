@@ -127,7 +127,8 @@ export async function checkMissingAttendanceForActiveOrders(
 
     try {
         const firestore = getDb();
-        const checkDate = date || new Date().toISOString().split('T')[0];
+        // Lokalni dan (UTC bi poslije ponoći do 1–2h gledao jučer).
+        const checkDate = date || formatLocalDateISO(new Date());
 
         // PROFIT-10 FIX: Use date string for day-of-week check to avoid timezone issues
         // Parse as local noon to avoid midnight timezone shifts
@@ -178,15 +179,28 @@ export async function checkMissingAttendanceForActiveOrders(
         const checkedWorkers = new Set<string>();
         let totalAssigned = 0;
 
-        for (const woDoc of woSnap.docs) {
+        // Obrisani radnici (soft-delete 'Obrisan' ili kojih više nema) ostaju upisani na
+        // stavkama, ali njima se prisustvo ne vodi — upozorenje za njih je šum.
+        const workersSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORKERS),
+            where('Organization_ID', '==', organizationId)
+        ));
+        const activeWorkerIds = new Set(workersSnap.docs
+            .map(d => d.data() as { Worker_ID?: string; Status?: string })
+            .filter(w => w.Worker_ID && w.Status !== 'Obrisan')
+            .map(w => w.Worker_ID as string));
+
+        // Stavke svih naloga u toku paralelno (ranije upit po upit).
+        const itemSnaps = await Promise.all(woSnap.docs.map(woDoc => getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', woDoc.data().Work_Order_ID),
+            where('Status', '==', 'U toku'),
+            where('Organization_ID', '==', organizationId)
+        ))));
+
+        for (const [woIdx, woDoc] of woSnap.docs.entries()) {
             const wo = woDoc.data();
-            const itemsQuery = query(
-                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                where('Work_Order_ID', '==', wo.Work_Order_ID),
-                where('Status', '==', 'U toku'),
-                where('Organization_ID', '==', organizationId)
-            );
-            const itemsSnap = await getDocs(itemsQuery);
+            const itemsSnap = itemSnaps[woIdx];
 
             for (const itemDoc of itemsSnap.docs) {
                 const item = itemDoc.data() as WorkOrderItem;
@@ -216,10 +230,10 @@ export async function checkMissingAttendanceForActiveOrders(
                     }
                 }
 
-                totalAssigned += itemWorkers.length;
+                totalAssigned += itemWorkers.filter(w => activeWorkerIds.has(w.id)).length;
 
                 for (const worker of itemWorkers) {
-                    if (checkedWorkers.has(worker.id)) continue;
+                    if (checkedWorkers.has(worker.id) || !activeWorkerIds.has(worker.id)) continue;
                     if (!workersWithAttendance.has(worker.id)) {
                         warnings.push({
                             Worker_ID: worker.id,
@@ -740,6 +754,7 @@ export interface AttendanceOrderContext {
 
 /** Stvarno knjiženi nalozi za otvoreni dan i posljednji raniji knjiženi dan SVAKOG radnika. */
 const HISTORY_DAYS = 45;
+const RECENT_DAYS = 10;
 
 function shiftDateISO(iso: string, days: number): string {
     const d = new Date(iso + 'T00:00:00');
@@ -759,50 +774,64 @@ export async function getAttendanceOrderContext(
     if (!date || !organizationId || workerIds.length === 0) return empty;
     const firestore = getDb();
     const workerSet = new Set(workerIds);
-    const daySnap = await getDocs(query(
+    // Otvoreni dan i istorija se čitaju paralelno.
+    const dayRead = getDocs(query(
         collection(firestore, 'work_logs'),
         where('Organization_ID', '==', organizationId), where('Date', '==', date)
-    ));
-    const dayLogs = daySnap.docs.map(d => d.data() as WorkLog).filter(l => workerSet.has(l.Worker_ID));
-    empty.postedTodayByWorker = postedOrdersByWorker(dayLogs);
-    for (const log of dayLogs) {
-        if (!empty.postedPresenceByWorker.has(log.Worker_ID) && (log.Presence === 0.5 || log.Presence === 1)) {
-            empty.postedPresenceByWorker.set(log.Worker_ID, log.Presence);
+    )).then(daySnap => {
+        const dayLogs = daySnap.docs.map(d => d.data() as WorkLog).filter(l => workerSet.has(l.Worker_ID));
+        empty.postedTodayByWorker = postedOrdersByWorker(dayLogs);
+        for (const log of dayLogs) {
+            if (!empty.postedPresenceByWorker.has(log.Worker_ID) && (log.Presence === 0.5 || log.Presence === 1)) {
+                empty.postedPresenceByWorker.set(log.Worker_ID, log.Presence);
+            }
         }
-    }
+    });
+    dayRead.catch(() => undefined); // greška se prijavi tek na `await dayRead` niže
 
     // Jedan upit za cijelu organizaciju u prozoru od HISTORY_DAYS dana, pa podjela po
     // radniku. Ranije je išao upit po radniku (Worker_ID + Organization_ID + Date< +
     // limitToLast), a limitToLast obrće smjer i traži DESC indeks koji ne postoji —
     // upit je padao i „Prepiši zadnji dan" nikad nije imao šta prepisati.
     // Organization_ID + Date raspon koristi isti indeks kao upit za otvoreni dan.
+    // Brzina: prvo kratak prozor (gotovo svaki radnik je knjižen u zadnjih 10 dana), pa
+    // stariji dio prozora samo ako nekome nije nađen dan — upit cijele firme za 45 dana
+    // je bio najsporiji dio otvaranja upita knjiženja.
     try {
-        const histSnap = await getDocs(query(
-            collection(firestore, 'work_logs'),
-            where('Organization_ID', '==', organizationId),
-            where('Date', '>=', shiftDateISO(date, -HISTORY_DAYS)),
-            where('Date', '<', date)
-        ));
-        const byWorker = new Map<string, WorkLog[]>();
-        for (const d of histSnap.docs) {
-            const log = d.data() as WorkLog;
-            if (!workerSet.has(log.Worker_ID)) continue;
-            const list = byWorker.get(log.Worker_ID) || [];
-            list.push(log);
-            byWorker.set(log.Worker_ID, list);
-        }
-        byWorker.forEach((logs, workerId) => {
-            // Ako je zadnji dan imao samo obrisane/otkazane naloge, uzmi prvi raniji valjani.
-            const found = lastUsableBookedDay(logs, workerId, isUsableOrder);
-            if (found) {
-                empty.previousByWorker.set(workerId, found.ids);
-                empty.previousDateByWorker.set(workerId, found.date);
+        const readWindow = async (from: string, to: string, who: Set<string>) => {
+            const snap = await getDocs(query(
+                collection(firestore, 'work_logs'),
+                where('Organization_ID', '==', organizationId),
+                where('Date', '>=', from),
+                where('Date', '<', to)
+            ));
+            const byWorker = new Map<string, WorkLog[]>();
+            for (const d of snap.docs) {
+                const log = d.data() as WorkLog;
+                if (!who.has(log.Worker_ID)) continue;
+                const list = byWorker.get(log.Worker_ID) || [];
+                list.push(log);
+                byWorker.set(log.Worker_ID, list);
             }
-        });
+            byWorker.forEach((logs, workerId) => {
+                // Ako je zadnji dan imao samo obrisane/otkazane naloge, uzmi prvi raniji valjani.
+                const found = lastUsableBookedDay(logs, workerId, isUsableOrder);
+                if (found) {
+                    empty.previousByWorker.set(workerId, found.ids);
+                    empty.previousDateByWorker.set(workerId, found.date);
+                }
+            });
+        };
+        const nearFrom = shiftDateISO(date, -RECENT_DAYS);
+        await readWindow(nearFrom, date, workerSet);
+        const missing = new Set(workerIds.filter(id => !empty.previousByWorker.has(id)));
+        if (missing.size) await readWindow(shiftDateISO(date, -HISTORY_DAYS), nearFrom, missing);
     } catch (error) {
         empty.historyLookupFailed = true;
         console.error('getAttendanceOrderContext: ranija knjiženja nisu učitana:', error);
     }
+    // Greška čitanja otvorenog dana se baca kao i ranije (pozivalac nudi naloge bez predizbora).
+    await dayRead;
     return empty;
 }
 
@@ -835,6 +864,178 @@ export async function reconcileAttendanceOrderSelection(
     return { deleted: toDelete.length, affectedWorkOrderIds: Array.from(affected) };
 }
 
+export interface AttendanceDayEntry {
+    workerId: string;
+    workerName: string;
+    presence: 0.5 | 1;
+    /** Stavke na koje se dan knjiži (nove; već knjižene se preskaču). */
+    targets: BookTarget[];
+    /** Nalozi izabrani u upitu — logovi šihtarice na ostalim nalozima tog dana se brišu. */
+    selectedOrderIds: ReadonlySet<string>;
+}
+
+export interface AttendanceDayResult {
+    workerId: string;
+    workerName: string;
+    created: number;
+    deleted: number;
+    /** Nalozi (izvorni, ne preusmjereni) koji su ostali knjiženi tog dana. */
+    bookedOrderIds: string[];
+    failed?: boolean;
+}
+
+/**
+ * POTVRDA UPITA ŠIHTARICE ZA CIJELI DAN, u jednom prolazu: isti ishod kao bookWorkerDayItems +
+ * reconcileAttendanceOrderSelection (+ dvije renormalizeWorkerDay) po radniku, ali:
+ *   • sva čitanja jednom i paralelno (logovi dana, stavke, radnici, grafovi naloga),
+ *   • podjela dnevnice se računa u memoriji nad konačnim skupom logova,
+ *   • jedan batch po radniku (paralelno) — greška jednog radnika ne ruši ostale.
+ * Ranije je svaki radnik radio ~10 uzastopnih upita, pa je potvrda za 9 radnika trajala sekundama.
+ */
+export async function commitAttendanceDay(
+    date: string,
+    organizationId: string,
+    entries: AttendanceDayEntry[],
+): Promise<{ results: AttendanceDayResult[]; affectedWorkOrderIds: string[] }> {
+    const affected = new Set<string>();
+    if (!date || !organizationId || entries.length === 0) return { results: [], affectedWorkOrderIds: [] };
+    const fs = getDb();
+    const workerSet = new Set(entries.map(e => e.workerId));
+
+    const [daySnap, itemMap, workers] = await Promise.all([
+        getDocs(query(collection(fs, 'work_logs'), where('Organization_ID', '==', organizationId), where('Date', '==', date))),
+        fetchWorkOrderItemsByIds(entries.flatMap(e => e.targets.map(t => t.itemId)).filter(Boolean), organizationId),
+        getWorkers(organizationId),
+    ]);
+    // Povezani „razni poslovi": trošak ide na povezani proizvod.
+    const linkedIds = Array.from(new Set(Array.from(itemMap.values())
+        .filter(it => it.Item_Type === 'custom' && it.Linked_Item_ID)
+        .map(it => it.Linked_Item_ID as string))).filter(id => !itemMap.has(id));
+    if (linkedIds.length) (await fetchWorkOrderItemsByIds(linkedIds, organizationId)).forEach((v, k) => itemMap.set(k, v));
+
+    const { getProcessGraph } = await import('./database');
+    const { resolveAutoProcessNode } = await import('./productProcesses');
+    const { resolveLaborCostTarget } = await import('./laborTarget');
+    const graphByWO = new Map<string, import('./types').ProcessGraph>();
+    try {
+        const woIds = Array.from(new Set([
+            ...entries.flatMap(e => e.targets.map(t => t.workOrderId)),
+            ...Array.from(itemMap.values()).map(it => it.Work_Order_ID),
+        ].filter(Boolean)));
+        await Promise.all(woIds.map(async id => { graphByWO.set(id, await getProcessGraph(id, organizationId)); }));
+    } catch (e) { console.warn('commitAttendanceDay: grafovi za auto-pripis (nije kritično):', e); }
+
+    const logsByWorker = new Map<string, typeof daySnap.docs>();
+    daySnap.docs.forEach(d => {
+        const w = d.data().Worker_ID as string;
+        if (!workerSet.has(w)) return;
+        logsByWorker.set(w, [...(logsByWorker.get(w) || []), d]);
+    });
+
+    const results = await Promise.all(entries.map(async (entry): Promise<AttendanceDayResult> => {
+        const base: AttendanceDayResult = { workerId: entry.workerId, workerName: entry.workerName, created: 0, deleted: 0, bookedOrderIds: [] };
+        try {
+            const existing = logsByWorker.get(entry.workerId) || [];
+            const loggedItemIds = new Set(existing.map(d => d.data().Work_Order_Item_ID).filter(Boolean));
+            const rate = effectiveDailyRate(workers.find(w => w.Worker_ID === entry.workerId), date);
+            const norm = entry.presence;
+            const touched = new Set<string>();
+
+            // 1) Novi logovi (ista pravila kao bookWorkerDayItems)
+            const creates: Record<string, unknown>[] = [];
+            const seen = new Set<string>();
+            for (const t of entry.targets) {
+                if (!t.itemId || !t.workOrderId) continue;
+                const booked = itemMap.get(t.itemId);
+                const { target, redirected, source } = booked
+                    ? resolveLaborCostTarget(booked, itemMap)
+                    : { target: undefined as (typeof booked), redirected: false, source: undefined };
+                const targetItemId = target?.ID || t.itemId;
+                const targetWoId = target?.Work_Order_ID || t.workOrderId;
+                if (seen.has(targetItemId) || loggedItemIds.has(targetItemId)) continue;
+                seen.add(targetItemId);
+                const autoNode = redirected ? null : resolveAutoProcessNode(graphByWO.get(targetWoId), targetItemId, target?.Processes);
+                const log: Record<string, unknown> = {
+                    WorkLog_ID: generateUUID(), Organization_ID: organizationId, Date: date,
+                    Worker_ID: entry.workerId, Worker_Name: entry.workerName, Daily_Rate: rate, Original_Daily_Rate: rate,
+                    Day_Fraction: norm, Presence: norm, Split_Factor: 1, Hours_Worked: 8 * norm,
+                    Booking_Source: 'attendance', Is_From_Attendance: true,
+                    Work_Order_ID: targetWoId, Work_Order_Item_ID: targetItemId, Product_ID: target?.Product_ID || t.productId || booked?.Product_ID,
+                    ...(redirected && source ? {
+                        Source_Work_Order_ID: source.Work_Order_ID,
+                        Source_Work_Order_Item_ID: source.ID,
+                        Process_Name: source.Product_Name,
+                    } : (autoNode ? { Process_Node_ID: autoNode.id, Process_Name: autoNode.name } : {})),
+                    Created_At: new Date().toISOString(),
+                };
+                Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
+                creates.push(log);
+                touched.add(targetWoId);
+            }
+
+            // 2) Skinuti nalozi: samo logovi šihtarice (ručni ostaju)
+            const toDelete = existing.filter(d => isDeselectedAttendanceLog(d.data(), entry.selectedOrderIds));
+            const deleteIds = new Set(toDelete.map(d => d.id));
+            toDelete.forEach(d => { const id = d.data().Work_Order_ID; if (id) touched.add(id); });
+            const remaining = existing.filter(d => !deleteIds.has(d.id));
+
+            // 3) Podjela dnevnice nad KONAČNIM skupom (kao renormalizeWorkerDay)
+            const updates: { ref: (typeof existing)[number]['ref']; data: Record<string, unknown> }[] = [];
+            const hasAttendanceLog = existing.some(d => d.data().Booking_Source === 'attendance' || d.data().Is_From_Attendance === true);
+            const live = remaining.filter(d => d.data().Work_Order_Deleted !== true);
+            if ((creates.length || toDelete.length || hasAttendanceLog) && (live.length || creates.length)) {
+                let dnevnica = 0;
+                for (const d of live) { const o = d.data().Original_Daily_Rate; if (typeof o === 'number' && o > 0) { dnevnica = o; break; } }
+                if (dnevnica <= 0) dnevnica = rate;
+                if (dnevnica > 0) {
+                    const all = [...live.map(d => d.data() as { Work_Order_ID?: string; Day_Weight?: number }), ...creates as { Work_Order_ID?: string }[]];
+                    const shares = splitWorkerDay(dnevnica, norm, all);
+                    live.forEach((d, i) => {
+                        const data = d.data();
+                        if (data.Work_Order_ID) touched.add(data.Work_Order_ID);
+                        const { amount, dayFraction, splitFactor } = shares[i];
+                        if (Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
+                            Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
+                            (data.Split_Factor || 0) !== splitFactor ||
+                            (data.Original_Daily_Rate || 0) !== dnevnica ||
+                            (data.Presence ?? 1) !== norm) {
+                            updates.push({ ref: d.ref, data: { Daily_Rate: amount, Day_Fraction: dayFraction, Split_Factor: splitFactor, Original_Daily_Rate: dnevnica, Presence: norm } });
+                        }
+                    });
+                    creates.forEach((log, j) => {
+                        const { amount, dayFraction, splitFactor } = shares[live.length + j];
+                        Object.assign(log, { Daily_Rate: amount, Day_Fraction: dayFraction, Split_Factor: splitFactor, Original_Daily_Rate: dnevnica });
+                    });
+                }
+            }
+
+            // 4) Jedan batch za radnika (Firestore: najviše 500 operacija)
+            type Op = (b: ReturnType<typeof writeBatch>) => void;
+            const ops: Op[] = [
+                ...toDelete.map(d => (b: ReturnType<typeof writeBatch>) => { b.delete(d.ref); }),
+                ...creates.map(log => (b: ReturnType<typeof writeBatch>) => { b.set(doc(collection(fs, 'work_logs')), log); }),
+                ...updates.map(u => (b: ReturnType<typeof writeBatch>) => { b.update(u.ref, u.data); }),
+            ];
+            for (let i = 0; i < ops.length; i += 450) {
+                const batch = writeBatch(fs);
+                ops.slice(i, i + 450).forEach(op => op(batch));
+                await batch.commit();
+            }
+
+            touched.forEach(id => affected.add(id));
+            const finalLogs = [...remaining.map(d => d.data()), ...creates] as { Work_Order_ID?: string; Source_Work_Order_ID?: string; Work_Order_Deleted?: boolean }[];
+            return {
+                ...base, created: creates.length, deleted: toDelete.length,
+                bookedOrderIds: Array.from(new Set(finalLogs.filter(l => l.Work_Order_Deleted !== true).map(l => bookedOrderId(l)).filter(Boolean))),
+            };
+        } catch (e) {
+            console.error(`commitAttendanceDay: ${entry.workerName} nije proknjižen`, e);
+            return { ...base, failed: true };
+        }
+    }));
+    return { results, affectedWorkOrderIds: Array.from(affected) };
+}
+
 /**
  * Helper: dohvati WorkOrderItem-e po ID-jevima (chunked 'in' upiti, max 10 po upitu).
  */
@@ -842,19 +1043,19 @@ async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: strin
     const map = new Map<string, WorkOrderItem>();
     if (itemIds.length === 0) return map;
     const firestore = getDb();
-    for (let i = 0; i < itemIds.length; i += 10) {
-        const chunk = itemIds.slice(i, i + 10);
-        const q = query(
-            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-            where('ID', 'in', chunk),
-            where('Organization_ID', '==', organizationId)
-        );
-        const snap = await getDocs(q);
-        snap.docs.forEach(d => {
-            const it = d.data() as WorkOrderItem;
-            map.set(it.ID, it);
-        });
-    }
+    const unique = Array.from(new Set(itemIds));
+    const chunks: string[][] = [];
+    for (let i = 0; i < unique.length; i += 10) chunks.push(unique.slice(i, i + 10));
+    // Svi komadi paralelno (ranije jedan po jedan — 30 stavki = 3 uzastopna upita).
+    const snaps = await Promise.all(chunks.map(chunk => getDocs(query(
+        collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+        where('ID', 'in', chunk),
+        where('Organization_ID', '==', organizationId)
+    ))));
+    snaps.forEach(snap => snap.docs.forEach(d => {
+        const it = d.data() as WorkOrderItem;
+        map.set(it.ID, it);
+    }));
     return map;
 }
 

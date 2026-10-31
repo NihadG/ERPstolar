@@ -34,12 +34,27 @@ export function searchTokens(query: string | null | undefined): string[] {
     return norm ? norm.split(' ') : [];
 }
 
+/** Samo slova i cifre — „CV-E105", „cv e105" i „cve105" su isto. */
+function compact(norm: string): string {
+    return norm.replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Token je u tekstu doslovno, ili kad se iz oba izbace crtice/razmaci/interpunkcija
+ * („park-residence" nalazi „Park Residence - Recepcija", „orasje-orsolic" „Orašje - Oršolić").
+ */
+function tokenHit(haystack: string, token: string): boolean {
+    if (haystack.includes(token)) return true;
+    const t = compact(token);
+    return !!t && compact(haystack).includes(t);
+}
+
 /** Da li svi tokeni upita postoje negdje u ponuđenim poljima. */
 export function matchesSearch(tokens: string[], ...fields: (string | null | undefined)[]): boolean {
     if (tokens.length === 0) return true;
     const haystack = fields.map(normalizeForSearch).filter(Boolean).join(' ');
     if (!haystack) return false;
-    return tokens.every(t => haystack.includes(t));
+    return tokens.every(t => tokenHit(haystack, t));
 }
 
 /**
@@ -54,7 +69,7 @@ export function searchScore(tokens: string[], ...fields: (string | null | undefi
 
     let score = 0;
     for (const token of tokens) {
-        if (!haystack.includes(token)) return 0;
+        if (!tokenHit(haystack, token)) return 0;
 
         let best = 1; // pogodak bilo gdje
         normFields.forEach((field, idx) => {

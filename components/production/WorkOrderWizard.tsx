@@ -8,9 +8,12 @@
 // ovdje je samo desktop prikaz. ProductionTab samo otvara/zatvara.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { planToStages } from '@/lib/productProcesses';
+import { formatDays } from '@/lib/planning';
+import { searchTokens, matchesSearch } from '@/lib/searchMatch';
 import Modal from '@/components/ui/Modal';
 import TaskAttachEditor from '@/components/ui/TaskAttachEditor';
 import MaterialOrderSelectModal from '@/components/ui/MaterialOrderSelectModal';
@@ -33,6 +36,31 @@ interface WorkOrderWizardProps {
     /** Poslije uspješnog kreiranja — pozivalac (npr. Platno) veže blok na stvarni nalog. */
     onCreated?: (workOrderId: string, workOrderNumber: string) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+}
+
+/**
+ * Izbornik radnika u portalu, pozicioniran uz okidač (`.wdd[data-wdd=anchorId]`).
+ * Lista ekipe ima vlastiti skrol, a `position: absolute` meni bi se u njoj odsjekao
+ * na dnu — ovaj se otvara prema gore kad ispod nema mjesta. Omotač nosi klasu `wdd`,
+ * pa klik u meniju ne zatvara izbornik (vidi onClick koraka).
+ */
+function FloatingMenu({ anchorId, minWidth = 240, children }: { anchorId: string; minWidth?: number; children: ReactNode }) {
+    const [style, setStyle] = useState<CSSProperties | null>(null);
+    useLayoutEffect(() => {
+        const el = document.querySelector(`[data-wdd="${CSS.escape(anchorId)}"]`);
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const below = window.innerHeight - r.bottom;
+        const up = below < 300 && r.top > below;
+        const width = Math.max(r.width, minWidth);
+        setStyle({
+            position: 'fixed', zIndex: 3000, width,
+            left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
+            ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+        });
+    }, [anchorId, minWidth]);
+    if (!style) return null;
+    return createPortal(<div className="wdd" style={style}>{children}</div>, document.body);
 }
 
 export default function WorkOrderWizard(props: WorkOrderWizardProps) {
@@ -68,7 +96,8 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
         suggestedDueDate,
         wizardFin,
         fmtKM,
-        undefinedProducts,
+        unpricedProducts,
+        undatedProducts,
         eligibleProducts,
         eligibleMontazaProducts,
         steps,
@@ -97,21 +126,35 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
         setWorkerSearch('');
     }, [isOpen, mode, initialProducts]);
 
+    // Meni je u portalu (fixed) — skrol liste ispod ili promjena veličine prozora ga zatvara,
+    // da ne ostane da visi pored pogrešnog reda. Skrol same liste opcija ga ne zatvara.
+    useEffect(() => {
+        if (!openDropdown) return;
+        const onScroll = (e: Event) => {
+            if ((e.target as Element | null)?.closest?.('.wdd-menu')) return;
+            setOpenDropdown(null);
+        };
+        const onResize = () => setOpenDropdown(null);
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onResize);
+        return () => {
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onResize);
+        };
+    }, [openDropdown]);
+
 
     return (
         <>
             {/* ========== FULL-SCREEN WIZARD MODAL ========== */}
-            <Modal isOpen={isOpen} onClose={onClose} title={mode === 'montaza' ? 'Montažni Nalog' : 'Novi Radni Nalog'} size="fullscreen" footer={null}>
+            {/* Bez naslovne trake Modala: naslov, koraci i akcije su JEDNA traka, da korak
+                „Radnik & rok" stane na laptop od 15" bez skrolanja. */}
+            <Modal isOpen={isOpen} onClose={onClose} title={null} size="fullscreen" footer={null} className="wz-modal">
                 <div className="wizard-container">
                     {/* COMPACT HEADER WITH NAVIGATION */}
                     <div className="wizard-header">
                         <div className="header-left">
-                            {activeStep > 0 && (
-                                <button className="btn-nav back" onClick={handleBack}>
-                                    <span className="material-icons-round">arrow_back</span>
-                                    Nazad
-                                </button>
-                            )}
+                            <h2 className="wz-title">{mode === 'montaza' ? 'Montažni nalog' : 'Novi radni nalog'}</h2>
                         </div>
 
                         <div className="steps-indicator compact">
@@ -125,6 +168,12 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                         </div>
 
                         <div className="header-right">
+                            {activeStep > 0 && (
+                                <button className="btn-nav back" onClick={handleBack}>
+                                    <span className="material-icons-round">arrow_back</span>
+                                    Nazad
+                                </button>
+                            )}
                             {activeStep === lastStep ? (
                                 <button className="btn-nav finish" onClick={handleCreateWorkOrder}
                                     style={mode === 'montaza' ? { background: 'linear-gradient(135deg, #00C7BE 0%, #00a89e 100%)' } : undefined}
@@ -140,6 +189,9 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                                     <span className="material-icons-round">arrow_forward</span>
                                 </button>
                             )}
+                            <button type="button" className="wz-close" onClick={onClose} aria-label="Zatvori" title="Zatvori (Esc)">
+                                <span className="material-icons-round">close</span>
+                            </button>
                         </div>
                     </div>
 
@@ -420,313 +472,324 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                             </div>
                         )}
 
-                        {/* DETAILS & WORKERS (production step 1, montaža step 2) */}
-                        {((mode === 'production' && activeStep === 1) || (mode === 'montaza' && activeStep === 2)) && (
-                            <div className="wizard-step step-details" onClick={(e) => {
-                                // Close dropdowns when clicking outside
-                                if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }
-                            }}>
-                                <div className="wz-col">
-                                    {/* Postavke naloga — jedan poravnat red (naziv / početak / rok) */}
-                                    <div className="wz-panel wz-panel-pad">
-                                        <div className="wz-band">
-                                            <div className="wz-field wz-c2">
-                                                <label>Naziv naloga <em>· opciono</em></label>
-                                                <input type="text" placeholder="npr. Kuhinja — Dino" value={workOrderName} onChange={e => setWorkOrderName(e.target.value)} />
-                                            </div>
-                                            <div className="wz-field">
-                                                <label>Početak</label>
-                                                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-                                            </div>
-                                            <div className="wz-field">
-                                                <label>Rok završetka{totalPlannedDays > 0 ? ` · ${totalPlannedDays} d` : ''}</label>
-                                                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-                                            </div>
-                                        </div>
-                                        {suggestedDueDate && suggestedDueDate !== dueDate && (
-                                            <button type="button" className="wz-suggest" onClick={() => setDueDate(suggestedDueDate)}>
-                                                ⤵ Predloženo iz {totalPlannedDays} planirana radna dana: {suggestedDueDate}
+                        {/* DETAILS & WORKERS (production step 1, montaža step 2) — sve na jednom ekranu:
+                            postavke naloga u jednom redu, ispod ekipa (lijevo) i ono što nalog nosi (desno). */}
+                        {((mode === 'production' && activeStep === 1) || (mode === 'montaza' && activeStep === 2)) && (() => {
+                            const noWorker = selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v));
+                            const showAdvisory = noWorker || unpricedProducts.length > 0 || undatedProducts.length > 0;
+                            // Proizvodnja: jedna ekipa za sve procese → red proizvoda je jedna linija.
+                            const singleCrew = selectedProcesses.length === 1;
+                            const tokens = searchTokens(workerSearch);
+                            const hit = (w: Worker) => matchesSearch(tokens, w.Name, w.Role);
+                            const isMain = (w: Worker) => w.Worker_Type === 'Glavni' || !w.Worker_Type;
+                            const toggle = (id: string) => { setOpenDropdown(openDropdown === id ? null : id); setWorkerSearch(''); };
+                            const close = () => { setOpenDropdown(null); setWorkerSearch(''); };
+                            const search = (placeholder: string) => (
+                                <div className="wdd-search">
+                                    <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                    <input autoFocus placeholder={placeholder} value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                </div>
+                            );
+                            const empty = (list: Worker[]) => list.length === 0 ? <div className="wdd-empty">Nema rezultata</div> : null;
+                            // Pomoćnici „svima" = pomoćnici prvog proizvoda na prvom procesu (reprezentativno).
+                            const bulkHelpers = selectedProducts.length > 0 && selectedProcesses.length > 0
+                                ? (selectedProducts[0].helperAssignments?.[selectedProcesses[0]] || [])
+                                : [];
+                            const shortDate = (iso: string) => iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : '';
+
+                            const crewCell = (prod: (typeof selectedProducts)[number], proc: string) => {
+                                const mainWorkerId = prod.assignments[proc];
+                                const helpers = prod.helperAssignments?.[proc] || [];
+                                const mainWorker = workers.find(w => w.Worker_ID === mainWorkerId);
+                                const dropdownId = `${prod.Product_ID}-${proc}`;
+                                const helperDropdownId = `${dropdownId}-helpers`;
+                                const mains = workers.filter(w => isMain(w) && hit(w));
+                                const helperOptions = workers.filter(w => w.Worker_ID !== mainWorkerId && hit(w));
+                                return (
+                                    <div key={proc} className={`m-col process${singleCrew ? ' single' : ''}`}>
+                                        <div className="wdd wdd-main" data-wdd={dropdownId}>
+                                            <button type="button" className={`wdd-trigger compact ${mainWorkerId ? 'filled' : ''}`} onClick={() => toggle(dropdownId)}>
+                                                <span className="material-icons-round wdd-icon">person</span>
+                                                <span className="wdd-label">{mainWorker ? mainWorker.Name : 'Glavni radnik'}</span>
+                                                <span className="material-icons-round wdd-arrow">expand_more</span>
                                             </button>
+                                            {openDropdown === dropdownId && (
+                                                <FloatingMenu anchorId={dropdownId}>
+                                                    <div className="wdd-menu floating">
+                                                        {search('Traži radnika...')}
+                                                        <div className="wdd-options">
+                                                            {mainWorkerId && (
+                                                                <button type="button" className="wdd-option wdd-option-clear" onClick={() => { assignWorker(prod.Product_ID, proc, ''); close(); }}>
+                                                                    <span className="material-icons-round" style={{ fontSize: 14, color: '#94a3b8' }}>close</span>
+                                                                    <span className="wdd-name" style={{ color: '#94a3b8' }}>Ukloni odabir</span>
+                                                                </button>
+                                                            )}
+                                                            {mains.map(w => (
+                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${w.Worker_ID === mainWorkerId ? 'selected' : ''}`}
+                                                                    onClick={() => { assignWorker(prod.Product_ID, proc, w.Worker_ID); close(); }}>
+                                                                    <span className="wdd-name">{w.Name}</span>
+                                                                    {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                </button>
+                                                            ))}
+                                                            {empty(mains)}
+                                                        </div>
+                                                    </div>
+                                                </FloatingMenu>
+                                            )}
+                                        </div>
+
+                                        {/* Pomoćnici: pilule + dodaj (tek kad postoji glavni radnik) */}
+                                        {mainWorkerId && (
+                                            <div className="wz-helpers">
+                                                {helpers.map(hId => {
+                                                    const h = workers.find(w => w.Worker_ID === hId);
+                                                    return h ? (
+                                                        <span key={hId} className="helper-pill">
+                                                            {h.Name.split(' ')[0]}
+                                                            <button type="button" onClick={() => toggleHelper(prod.Product_ID, proc, hId)} aria-label={`Ukloni ${h.Name}`}>×</button>
+                                                        </span>
+                                                    ) : null;
+                                                })}
+                                                <div className="wdd" data-wdd={helperDropdownId}>
+                                                    <button type="button" className="helper-add-btn" title="Dodaj pomoćnika" onClick={() => toggle(helperDropdownId)}>+</button>
+                                                    {openDropdown === helperDropdownId && (
+                                                        <FloatingMenu anchorId={helperDropdownId} minWidth={220}>
+                                                            <div className="wdd-menu floating">
+                                                                {search('Traži pomoćnika...')}
+                                                                <div className="wdd-options">
+                                                                    {helperOptions.map(w => {
+                                                                        const isH = helpers.includes(w.Worker_ID);
+                                                                        return (
+                                                                            <button key={w.Worker_ID} type="button" className={`wdd-option ${isH ? 'selected' : ''}`}
+                                                                                onClick={() => toggleHelper(prod.Product_ID, proc, w.Worker_ID)}>
+                                                                                <span className="wdd-check">{isH ? '✓' : ''}</span>
+                                                                                <span className="wdd-name">{w.Name}</span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                    {empty(helperOptions)}
+                                                                </div>
+                                                            </div>
+                                                        </FloatingMenu>
+                                                    )}
+                                                </div>
+                                                {singleCrew && helpers.length === 0 && <span className="wz-helpers-hint">pomoćnici</span>}
+                                            </div>
                                         )}
-                                        <div className="wz-field" style={{ marginTop: 14 }}>
+                                    </div>
+                                );
+                            };
+
+                            return (
+                                <div className="wizard-step step-details" onClick={(e) => {
+                                    // Klik van izbornika ga zatvara (meni je portal s klasom .wdd)
+                                    if (!(e.target as HTMLElement).closest('.wdd')) close();
+                                }}>
+                                    {/* Postavke naloga — jedan poravnat red */}
+                                    <div className="wz-panel wz-settings">
+                                        <div className="wz-field">
+                                            <label>Naziv naloga <em>· opciono</em></label>
+                                            <input type="text" placeholder="npr. Kuhinja — Dino" value={workOrderName} onChange={e => setWorkOrderName(e.target.value)} />
+                                        </div>
+                                        <div className="wz-field">
+                                            <label>Početak</label>
+                                            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                                        </div>
+                                        <div className="wz-field">
+                                            <div className="wz-label-row">
+                                                <label>Rok završetka</label>
+                                                {suggestedDueDate && suggestedDueDate !== dueDate && (
+                                                    <button type="button" className="wz-suggest" onClick={() => setDueDate(suggestedDueDate)}
+                                                        title={`Predloženo iz ${formatDays(totalPlannedDays)} planiranih radnih dana (dani po komadu × količina)`}>
+                                                        ⤵ {shortDate(suggestedDueDate)}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                                        </div>
+                                        <div className="wz-field">
                                             <label>Napomena <em>· opciono</em></label>
                                             <input type="text" placeholder="Dodatne upute za radnike…" value={notes} onChange={e => setNotes(e.target.value)} />
                                         </div>
                                     </div>
 
-                                    {/* Finansije — horizontalni strip (šta nalog nosi) */}
-                                    {wizardFin && (
-                                        <div className="wz-fin">
-                                            <div className="wz-fin-cell"><span className="k">Vrijednost</span><span className="v">{fmtKM(wizardFin.value)}</span></div>
-                                            <div className="wz-fin-cell"><span className="k">Materijal</span><span className="v">{fmtKM(wizardFin.material)}</span></div>
-                                            <div className="wz-fin-cell"><span className="k">Planirani rad{totalPlannedDays > 0 ? ` · ${totalPlannedDays} d` : ''}</span><span className="v">{fmtKM(wizardFin.plannedLabor)}</span></div>
-                                            {(wizardFin.transport > 0 || wizardFin.services > 0) && (
-                                                <div className="wz-fin-cell"><span className="k">Transport + usluge</span><span className="v">{fmtKM(wizardFin.transport + wizardFin.services)}</span></div>
-                                            )}
-                                            <div className={`wz-fin-cell total ${wizardFin.profit >= 0 ? 'pos' : 'neg'}`}><span className="k">Procijenjeno ostaje</span><span className="v">{fmtKM(wizardFin.profit)}</span></div>
-                                        </div>
-                                    )}
-
-                                    {/* Toggle narudžbi + objedinjeno upozorenje */}
-                                    {(() => {
-                                        const noWorker = selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v));
-                                        const showAdvisory = noWorker || undefinedProducts.length > 0;
-                                        const showToggle = mode === 'production';
-                                        if (!showAdvisory && !showToggle) return null;
-                                        return (
-                                            <div className={`wz-subrow${showToggle && showAdvisory ? '' : ' one'}`}>
-                                                {showToggle && (
-                                                    <label className="wz-toggle wz-panel">
-                                                        <input type="checkbox" checked={createMaterialOrders} onChange={e => setCreateMaterialOrders(e.target.checked)} />
-                                                        <span className="wz-toggle-txt">
-                                                            <b>Predloži narudžbe materijala</b>
-                                                            <span>Poslije kreiranja biraš dobavljače i materijale prije nego što se narudžba stvarno kreira.</span>
-                                                        </span>
-                                                    </label>
-                                                )}
-                                                {showAdvisory && (
-                                                    <div className="wz-advisory wz-panel">
-                                                        <div className="wz-adv-head"><span className="material-icons-round">warning_amber</span>Prije pokretanja</div>
-                                                        <ul>
-                                                            {noWorker && (
-                                                                <li><span className="b" /><span><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</span></li>
-                                                            )}
-                                                            {undefinedProducts.length > 0 && (
-                                                                <li><span className="b" /><span><b>Nedefinisani proizvodi</b> (cijena/rok): {undefinedProducts.join(', ')} — nalog možeš pokrenuti; cijena i profit se povežu sami kad ponuda bude prihvaćena ili dopunjena.</span></li>
-                                                            )}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })()}
-
-                                    {/* Dodjela radnika */}
-                                    <div className="wz-assign wz-panel">
-                                        <div className="wz-assign-head">
-                                            <b>Dodjela radnika</b>
-                                            <span>{selectedProducts.length} {selectedProducts.length === 1 ? 'proizvod' : 'proizvoda'}{mode === 'production' ? ' · jedna ekipa radi sve procese' : ''}</span>
-                                        </div>
-
-                                {/* Bulk assignment row */}
-                                <div className="bulk-assign-bar">
-                                    <div className="bulk-label">
-                                        <span className="material-icons-round" style={{ fontSize: 16 }}>bolt</span>
-                                        Dodjeli svima
-                                    </div>
-                                    <div className="bulk-controls">
-                                        {/* Bulk main worker */}
-                                        <div className="wdd" style={{ position: 'relative', flex: 1, minWidth: 180 }}>
-                                            <button type="button" className="wdd-trigger" onClick={() => { setOpenDropdown(openDropdown === 'bulk-main' ? null : 'bulk-main'); setWorkerSearch(''); }}>
-                                                <span className="material-icons-round wdd-icon">person</span>
-                                                <span className="wdd-label">Glavni radnik</span>
-                                                <span className="material-icons-round wdd-arrow">expand_more</span>
-                                            </button>
-                                            {openDropdown === 'bulk-main' && (
-                                                <div className="wdd-menu">
-                                                    <div className="wdd-search">
-                                                        <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
-                                                        <input autoFocus placeholder="Traži radnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
-                                                    </div>
-                                                    <div className="wdd-options">
-                                                        {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
-                                                            <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAllProcesses(w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
-                                                                <span className="wdd-name">{w.Name}</span>
-                                                                {w.Role && <span className="wdd-role">{w.Role}</span>}
-                                                            </button>
-                                                        ))}
-                                                        {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).length === 0 && (
-                                                            <div className="wdd-empty">Nema rezultata</div>
+                                    <div className="wz-main">
+                                        <div className="wz-left">
+                                        {/* EKIPA — glavni posao ovog koraka, zauzima veći dio ekrana */}
+                                        <div className="wz-panel wz-crew">
+                                            <div className="wz-crew-head">
+                                                <div className="wz-crew-title">
+                                                    <b>Ekipa</b>
+                                                    <span>{selectedProducts.length} {selectedProducts.length === 1 ? 'proizvod' : 'proizvoda'}{mode === 'production' ? ' · jedna ekipa radi sve procese' : ''}</span>
+                                                </div>
+                                                <div className="wz-crew-bulk">
+                                                    <span className="bulk-label">
+                                                        <span className="material-icons-round" style={{ fontSize: 16 }}>bolt</span>
+                                                        Svima
+                                                    </span>
+                                                    <div className="wdd" data-wdd="bulk-main">
+                                                        <button type="button" className="wdd-trigger compact" onClick={() => toggle('bulk-main')}>
+                                                            <span className="material-icons-round wdd-icon">person</span>
+                                                            <span className="wdd-label">Glavni radnik</span>
+                                                            <span className="material-icons-round wdd-arrow">expand_more</span>
+                                                        </button>
+                                                        {openDropdown === 'bulk-main' && (
+                                                            <FloatingMenu anchorId="bulk-main">
+                                                                <div className="wdd-menu floating">
+                                                                    {search('Traži radnika...')}
+                                                                    <div className="wdd-options">
+                                                                        {workers.filter(w => isMain(w) && hit(w)).map(w => (
+                                                                            <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAllProcesses(w.Worker_ID); close(); }}>
+                                                                                <span className="wdd-name">{w.Name}</span>
+                                                                                {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                            </button>
+                                                                        ))}
+                                                                        {empty(workers.filter(w => isMain(w) && hit(w)))}
+                                                                    </div>
+                                                                </div>
+                                                            </FloatingMenu>
                                                         )}
                                                     </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                        {/* Bulk helpers */}
-                                        <div className="wdd" style={{ position: 'relative', flex: 1, minWidth: 180 }}>
-                                            <button type="button" className="wdd-trigger" onClick={() => { setOpenDropdown(openDropdown === 'bulk-helpers' ? null : 'bulk-helpers'); setWorkerSearch(''); }}>
-                                                <span className="material-icons-round wdd-icon">group</span>
-                                                <span className="wdd-label">Pomoćnici</span>
-                                                <span className="material-icons-round wdd-arrow">expand_more</span>
-                                            </button>
-                                            {openDropdown === 'bulk-helpers' && (
-                                                <div className="wdd-menu">
-                                                    <div className="wdd-search">
-                                                        <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
-                                                        <input autoFocus placeholder="Traži pomoćnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
-                                                    </div>
-                                                    <div className="wdd-options">
-                                                        {workers.filter(w => w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => {
-                                                            // Check if this helper is in the first product+process combo (as representative)
-                                                            const isSelected = selectedProducts.length > 0 && selectedProcesses.length > 0 &&
-                                                                (selectedProducts[0].helperAssignments?.[selectedProcesses[0]] || []).includes(w.Worker_ID);
-                                                            return (
-                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${isSelected ? 'selected' : ''}`}
-                                                                    onClick={() => {
-                                                                        // Toggle: if already assigned everywhere, remove; otherwise add
-                                                                        const currentGlobalHelpers = selectedProducts.length > 0 && selectedProcesses.length > 0
-                                                                            ? (selectedProducts[0].helperAssignments?.[selectedProcesses[0]] || [])
-                                                                            : [];
-                                                                        const newHelpers = currentGlobalHelpers.includes(w.Worker_ID)
-                                                                            ? currentGlobalHelpers.filter((id: string) => id !== w.Worker_ID)
-                                                                            : [...currentGlobalHelpers, w.Worker_ID];
-                                                                        assignHelpersToAllProcesses(newHelpers);
-                                                                    }}>
-                                                                    <span className="wdd-check">{isSelected ? '✓' : ''}</span>
-                                                                    <span className="wdd-name">{w.Name}</span>
-                                                                    {w.Role && <span className="wdd-role">{w.Role}</span>}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="matrix-wrapper full-height">
-                                    <div className="mw-header">
-                                        <div className="m-col product">Proizvod</div>
-                                        {selectedProcesses.map(proc => (
-                                            <div key={proc} className="m-col process">
-                                                <span className="process-header-title">{procLabel(proc)}</span>
-                                                {/* Per-process bulk assign */}
-                                                <div className="wdd" style={{ position: 'relative', width: '100%' }}>
-                                                    <button type="button" className="wdd-trigger compact" onClick={() => { setOpenDropdown(openDropdown === `hdr-${proc}` ? null : `hdr-${proc}`); setWorkerSearch(''); }}>
-                                                        <span className="wdd-label">Svima</span>
-                                                        <span className="material-icons-round wdd-arrow">expand_more</span>
-                                                    </button>
-                                                    {openDropdown === `hdr-${proc}` && (
-                                                        <div className="wdd-menu">
-                                                            <div className="wdd-search">
-                                                                <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
-                                                                <input autoFocus placeholder="Traži..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
-                                                            </div>
-                                                            <div className="wdd-options">
-                                                                {workers.filter(w => w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
-                                                                    <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAll(proc, w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
-                                                                        <span className="wdd-name">{w.Name}</span>
-                                                                        {w.Role && <span className="wdd-role">{w.Role}</span>}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="mw-body">
-                                        {selectedProducts.map(prod => (
-                                            <div key={prod.Product_ID} className="m-row">
-                                                <div className="m-col product">
-                                                    <strong>{prod.Product_Name}</strong>
-                                                    <small>{prod.Project_Name}</small>
-                                                </div>
-                                                {selectedProcesses.map(proc => {
-                                                    const mainWorkerId = prod.assignments[proc];
-                                                    const helpers = prod.helperAssignments?.[proc] || [];
-                                                    const mainWorker = workers.find(w => w.Worker_ID === mainWorkerId);
-                                                    const dropdownId = `${prod.Product_ID}-${proc}`;
-                                                    const helperDropdownId = `${prod.Product_ID}-${proc}-helpers`;
-
-                                                    return (
-                                                        <div key={proc} className="m-col process" style={{ gap: '4px' }}>
-                                                            {/* Main worker searchable dropdown */}
-                                                            <div className="wdd" style={{ position: 'relative', width: '100%' }}>
-                                                                <button type="button" className={`wdd-trigger compact ${mainWorkerId ? 'filled' : ''}`}
-                                                                    onClick={() => { setOpenDropdown(openDropdown === dropdownId ? null : dropdownId); setWorkerSearch(''); }}>
-                                                                    <span className="wdd-label">{mainWorker ? mainWorker.Name : 'Odaberi'}</span>
-                                                                    <span className="material-icons-round wdd-arrow">expand_more</span>
-                                                                </button>
-                                                                {openDropdown === dropdownId && (
-                                                                    <div className="wdd-menu">
-                                                                        <div className="wdd-search">
-                                                                            <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
-                                                                            <input autoFocus placeholder="Traži radnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
-                                                                        </div>
-                                                                        <div className="wdd-options">
-                                                                            <button type="button" className="wdd-option wdd-option-clear" onClick={() => { assignWorker(prod.Product_ID, proc, ''); setOpenDropdown(null); setWorkerSearch(''); }}>
-                                                                                <span className="material-icons-round" style={{ fontSize: 14, color: '#94a3b8' }}>close</span>
-                                                                                <span className="wdd-name" style={{ color: '#94a3b8' }}>Ukloni odabir</span>
-                                                                            </button>
-                                                                            {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
-                                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${w.Worker_ID === mainWorkerId ? 'selected' : ''}`}
-                                                                                    onClick={() => { assignWorker(prod.Product_ID, proc, w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
+                                                    <div className="wdd" data-wdd="bulk-helpers">
+                                                        <button type="button" className="wdd-trigger compact" onClick={() => toggle('bulk-helpers')}>
+                                                            <span className="material-icons-round wdd-icon">group</span>
+                                                            <span className="wdd-label">Pomoćnici{bulkHelpers.length ? ` · ${bulkHelpers.length}` : ''}</span>
+                                                            <span className="material-icons-round wdd-arrow">expand_more</span>
+                                                        </button>
+                                                        {openDropdown === 'bulk-helpers' && (
+                                                            <FloatingMenu anchorId="bulk-helpers" minWidth={240}>
+                                                                <div className="wdd-menu floating">
+                                                                    {search('Traži pomoćnika...')}
+                                                                    <div className="wdd-options">
+                                                                        {workers.filter(hit).map(w => {
+                                                                            const isSelected = bulkHelpers.includes(w.Worker_ID);
+                                                                            return (
+                                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${isSelected ? 'selected' : ''}`}
+                                                                                    onClick={() => assignHelpersToAllProcesses(isSelected
+                                                                                        ? bulkHelpers.filter((id: string) => id !== w.Worker_ID)
+                                                                                        : [...bulkHelpers, w.Worker_ID])}>
+                                                                                    <span className="wdd-check">{isSelected ? '✓' : ''}</span>
                                                                                     <span className="wdd-name">{w.Name}</span>
                                                                                     {w.Role && <span className="wdd-role">{w.Role}</span>}
                                                                                 </button>
-                                                                            ))}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-
-                                                            {/* Helper pills + add button */}
-                                                            {mainWorkerId && (
-                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
-                                                                    {helpers.map(hId => {
-                                                                        const h = workers.find(w => w.Worker_ID === hId);
-                                                                        return h ? (
-                                                                            <span key={hId} className="helper-pill">
-                                                                                {h.Name.split(' ')[0]}
-                                                                                <button type="button" onClick={() => toggleHelper(prod.Product_ID, proc, hId)}>×</button>
-                                                                            </span>
-                                                                        ) : null;
-                                                                    })}
-                                                                    <div className="wdd" style={{ position: 'relative' }}>
-                                                                        <button type="button" className="helper-add-btn"
-                                                                            onClick={() => { setOpenDropdown(openDropdown === helperDropdownId ? null : helperDropdownId); setWorkerSearch(''); }}>
-                                                                            +
-                                                                        </button>
-                                                                        {openDropdown === helperDropdownId && (
-                                                                            <div className="wdd-menu" style={{ minWidth: 200 }}>
-                                                                                <div className="wdd-search">
-                                                                                    <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
-                                                                                    <input autoFocus placeholder="Traži pomoćnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
-                                                                                </div>
-                                                                                <div className="wdd-options">
-                                                                                    {workers.filter(w => w.Worker_ID !== mainWorkerId && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => {
-                                                                                        const isH = helpers.includes(w.Worker_ID);
-                                                                                        return (
-                                                                                            <button key={w.Worker_ID} type="button" className={`wdd-option ${isH ? 'selected' : ''}`}
-                                                                                                onClick={() => toggleHelper(prod.Product_ID, proc, w.Worker_ID)}>
-                                                                                                <span className="wdd-check">{isH ? '✓' : ''}</span>
-                                                                                                <span className="wdd-name">{w.Name}</span>
-                                                                                            </button>
-                                                                                        );
-                                                                                    })}
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
+                                                                            );
+                                                                        })}
+                                                                        {empty(workers.filter(hit))}
                                                                     </div>
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
+                                                            </FloatingMenu>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                    </div>
 
-                                    {/* Zadaci uz nalog — dno kolone (vežu se čim nalog nastane) */}
-                                    <div className="wz-panel wz-tasks-panel">
-                                        <TaskAttachEditor
-                                            value={taskSelection}
-                                            onChange={setTaskSelection}
-                                            tasks={tasks}
-                                            workers={workers}
-                                            products={selectedProducts.map(p => ({ Product_ID: p.Product_ID, Product_Name: p.Product_Name }))}
-                                            suggestedIds={suggestedTaskIds}
-                                            pickerZIndex={2000}
-                                        />
+                                            {/* Montaža: kolona po koraku, s „svima" po koraku */}
+                                            {!singleCrew && (
+                                                <div className="mw-header">
+                                                    <div className="m-col product">Proizvod</div>
+                                                    {selectedProcesses.map(proc => (
+                                                        <div key={proc} className="m-col process">
+                                                            <span className="process-header-title">{procLabel(proc)}</span>
+                                                            <div className="wdd" data-wdd={`hdr-${proc}`} style={{ width: '100%' }}>
+                                                                <button type="button" className="wdd-trigger compact" onClick={() => toggle(`hdr-${proc}`)}>
+                                                                    <span className="wdd-label">Svima</span>
+                                                                    <span className="material-icons-round wdd-arrow">expand_more</span>
+                                                                </button>
+                                                                {openDropdown === `hdr-${proc}` && (
+                                                                    <FloatingMenu anchorId={`hdr-${proc}`}>
+                                                                        <div className="wdd-menu floating">
+                                                                            {search('Traži...')}
+                                                                            <div className="wdd-options">
+                                                                                {workers.filter(hit).map(w => (
+                                                                                    <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAll(proc, w.Worker_ID); close(); }}>
+                                                                                        <span className="wdd-name">{w.Name}</span>
+                                                                                        {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                                    </button>
+                                                                                ))}
+                                                                                {empty(workers.filter(hit))}
+                                                                            </div>
+                                                                        </div>
+                                                                    </FloatingMenu>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <div className="mw-body">
+                                                {selectedProducts.map(prod => (
+                                                    <div key={prod.Product_ID} className={`m-row${singleCrew ? ' single' : ''}`}>
+                                                        <div className="m-col product">
+                                                            <strong title={prod.Product_Name}>{prod.Product_Name}</strong>
+                                                            <small>{prod.Project_Name}{prod.Work_Order_Quantity ? ` · ${prod.Work_Order_Quantity} kom` : ''}</small>
+                                                        </div>
+                                                        {selectedProcesses.map(proc => crewCell(prod, proc))}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                            {/* Zadaci uz nalog (vežu se čim nalog nastane) */}
+                                            <div className="wz-panel wz-tasks-panel">
+                                                <TaskAttachEditor
+                                                    value={taskSelection}
+                                                    onChange={setTaskSelection}
+                                                    tasks={tasks}
+                                                    workers={workers}
+                                                    products={selectedProducts.map(p => ({ Product_ID: p.Product_ID, Product_Name: p.Product_Name }))}
+                                                    suggestedIds={suggestedTaskIds}
+                                                    pickerZIndex={2000}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Šta nalog nosi: finansije, narudžbe, upozorenja */}
+                                        <aside className="wz-side">
+                                            {wizardFin && (
+                                                <div className="wz-panel wz-fin">
+                                                    <div className="wz-side-head">
+                                                        <b>Finansije</b>
+                                                        {wizardFin.priced < wizardFin.total && <span>{wizardFin.priced} od {wizardFin.total} s prihvaćenom ponudom</span>}
+                                                    </div>
+                                                    <div className="wz-fin-row"><span>Vrijednost</span><b>{fmtKM(wizardFin.value)}</b></div>
+                                                    <div className="wz-fin-row"><span>Materijal</span><b>{fmtKM(wizardFin.material)}</b></div>
+                                                    <div className="wz-fin-row"><span>Planirani rad{totalPlannedDays > 0 ? ` · ${formatDays(totalPlannedDays)} d` : ''}</span><b>{fmtKM(wizardFin.plannedLabor)}</b></div>
+                                                    <div className={`wz-fin-row total ${wizardFin.profit >= 0 ? 'pos' : 'neg'}`}><span>Procijenjeno ostaje</span><b>{fmtKM(wizardFin.profit)}</b></div>
+                                                </div>
+                                            )}
+
+                                            {mode === 'production' && (
+                                                <label className="wz-panel wz-toggle">
+                                                    <input type="checkbox" checked={createMaterialOrders} onChange={e => setCreateMaterialOrders(e.target.checked)} />
+                                                    <span className="wz-toggle-txt">
+                                                        <b>Predloži narudžbe materijala</b>
+                                                        <span>Poslije kreiranja biraš dobavljače i materijale — ništa se ne naručuje samo.</span>
+                                                    </span>
+                                                </label>
+                                            )}
+
+                                            {showAdvisory && (
+                                                <div className="wz-panel wz-advisory">
+                                                    <div className="wz-adv-head"><span className="material-icons-round">info</span>Prije pokretanja</div>
+                                                    <ul>
+                                                        {noWorker && (
+                                                            <li><span className="b" /><span><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</span></li>
+                                                        )}
+                                                        {unpricedProducts.length > 0 && (
+                                                            <li><span className="b" /><span><b>Bez prihvaćene ponude:</b> {unpricedProducts.join(', ')} — nalog možeš pokrenuti; profit i troškovi se ne računaju dok ponuda ne bude prihvaćena, onda se povežu sami.</span></li>
+                                                        )}
+                                                        {undatedProducts.length > 0 && (
+                                                            <li><span className="b" /><span><b>Bez planiranih dana u ponudi:</b> {undatedProducts.join(', ')} — predloženi rok ih ne uključuje.</span></li>
+                                                        )}
+                                                    </ul>
+                                                </div>
+                                            )}
+
+                                        </aside>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
                     </div>
                 </div>
             </Modal>
@@ -749,7 +812,8 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
 
             <style jsx>{`
                 /* Wizard Layout */
-                .wizard-container { display: flex; flex-direction: column; height: 100vh; background: #f5f5f7; overflow: hidden; }
+                /* Visina = tijelo modala (ne 100vh: to je preko naslova modala davalo dupli skrol) */
+                .wizard-container { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; background: #f5f5f7; overflow: hidden; }
                 
                 /* HEADER */
                 .wizard-header {
@@ -764,8 +828,12 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                     height: 60px;
                 }
 
-                .header-left { display: flex; justify-content: flex-start; }
-                .header-right { display: flex; justify-content: flex-end; }
+                .header-left { display: flex; justify-content: flex-start; align-items: center; min-width: 0; }
+                .header-right { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+                .wz-title { margin: 0; font-size: 16px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .wz-close { width: 36px; height: 36px; border-radius: 50%; border: none; background: transparent; color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 4px; }
+                .wz-close:hover { background: var(--surface-hover); color: var(--text-primary); }
+                .wz-close .material-icons-round { font-size: 20px; }
 
                 .steps-indicator { display: flex; align-items: center; justify-content: center; gap: 8px; }
                 .step-item { display: flex; align-items: center; gap: 8px; transition: all 0.2s; }
@@ -802,10 +870,11 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                 .btn-nav .material-icons-round { font-size: 16px; }
 
                 /* Body - NO SCROLL (individual steps manage their own) */
-                .wizard-body { 
-                    flex: 1; 
-                    overflow: hidden; 
-                    padding: 20px; 
+                .wizard-body {
+                    flex: 1;
+                    min-height: 0;
+                    overflow: hidden;
+                    padding: 14px 16px;
                     display: flex; 
                     justify-content: center; 
                     align-items: flex-start; 
@@ -1017,123 +1086,118 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                 }
                 .add-process-row button:hover { background: #0056b3; transform: scale(1.02); }
 
-                /* Step "Radnik & rok" — centrirana kolona poravnatih traka */
-                .step-details { height: 100%; overflow-y: auto; overflow-x: hidden; }
-                .wz-col { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+                /* Step "Radnik & rok" — jedan ekran bez skrolanja (laptop 15"):
+                   red postavki, ispod ekipa (lijevo, vlastiti skrol) i bočna kolona. */
+                .step-details { height: 100%; max-width: 1440px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 
                 .wz-panel { background: var(--background); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); box-shadow: var(--cm-shadow-card); }
-                .wz-panel-pad { padding: 16px; }
 
+                /* Postavke: naziv / početak / rok / napomena u jednom poravnatom redu */
+                .wz-settings { flex-shrink: 0; display: grid; grid-template-columns: minmax(0, 1.3fr) 158px 172px minmax(0, 1.7fr); gap: 12px; padding: 12px 14px; }
                 /* Polje: FIKSNA visina labele → svi inputi ostaju u istoj liniji (labela se ne lomi) */
-                .wz-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-                .wz-field label { height: 16px; line-height: 16px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: normal; }
+                .wz-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+                .wz-field label { height: 16px; line-height: 16px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: normal; margin: 0; }
                 .wz-field label em { font-style: normal; font-weight: 400; color: var(--text-tertiary); }
                 .wz-field input {
-                    width: 100%; height: 40px; box-sizing: border-box; padding: 0 12px;
+                    width: 100%; height: 38px; box-sizing: border-box; padding: 0 12px;
                     border: 1px solid var(--border); border-radius: var(--cm-r-control);
                     font-size: var(--cm-fs-md); color: var(--text-primary); background: var(--background);
                     outline: none; transition: var(--transition);
                 }
                 .wz-field input:focus { border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
-                .wz-band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-                .wz-c2 { grid-column: span 2; }
-                .wz-suggest { align-self: flex-start; margin-top: 10px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; }
+                .wz-label-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 16px; }
+                .wz-suggest { display: inline-flex; align-items: center; gap: 3px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; line-height: 16px; white-space: nowrap; }
                 .wz-suggest:hover { text-decoration: underline; }
 
-                /* Finansije — horizontalni strip, poravnate ćelije */
-                .wz-fin { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); overflow: hidden; box-shadow: var(--cm-shadow-card); }
-                .wz-fin-cell { padding: 11px 14px; border-right: 1px solid var(--border-light); display: flex; flex-direction: column; gap: 3px; background: var(--background); }
-                .wz-fin-cell:last-child { border-right: none; }
-                .wz-fin-cell .k { font-size: var(--cm-fs-xs); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .wz-fin-cell .v { font-size: var(--cm-fs-lg); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-                .wz-fin-cell.total { background: var(--success-bg); }
-                .wz-fin-cell.total .k { color: #1a7f37; font-weight: 600; }
-                .wz-fin-cell.total .v { color: #1a7f37; font-weight: 800; }
-                .wz-fin-cell.total.neg { background: var(--error-bg); }
-                .wz-fin-cell.total.neg .k, .wz-fin-cell.total.neg .v { color: #b3261e; }
+                .wz-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; }
 
-                /* Toggle + upozorenje u jednom redu */
-                .wz-subrow { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
-                .wz-subrow.one { grid-template-columns: 1fr; }
-                .wz-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; cursor: pointer; }
-                .wz-toggle input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); flex-shrink: 0; }
+                /* Lijeva kolona: ekipa (raste, vlastiti skrol) + zadaci uz nalog */
+                .wz-left { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+                .wz-left > .wz-tasks-panel { flex-shrink: 0; max-height: 45%; overflow-y: auto; }
+
+                /* EKIPA */
+                .wz-crew { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+                .wz-crew-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--border-light); }
+                .wz-crew-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+                .wz-crew-title b { font-size: var(--cm-fs-md); font-weight: 700; color: var(--text-primary); }
+                .wz-crew-title span { font-size: var(--cm-fs-xs); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .wz-crew-bulk { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+                .wz-crew-bulk .wdd { width: 190px; }
+                .bulk-label { display: flex; align-items: center; gap: 4px; font-size: var(--cm-fs-xs); font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+                .bulk-label .material-icons-round { color: var(--accent); }
+
+                /* Bočna kolona: šta nalog nosi */
+                .wz-side { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 2px; }
+                .wz-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+                .wz-side-head b { font-size: var(--cm-fs-sm); font-weight: 700; color: var(--text-primary); }
+                .wz-side-head span { font-size: var(--cm-fs-xs); color: var(--text-secondary); text-align: right; }
+                .wz-fin { padding: 10px 14px; display: flex; flex-direction: column; gap: 0; }
+                .wz-fin-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: var(--cm-fs-sm); }
+                .wz-fin-row span { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .wz-fin-row b { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+                .wz-fin-row.total { margin-top: 4px; padding: 6px 10px; border-radius: var(--cm-r-control); background: var(--success-bg); }
+                .wz-fin-row.total span, .wz-fin-row.total b { color: #1a7f37; font-weight: 700; }
+                .wz-fin-row.total.neg { background: var(--error-bg); }
+                .wz-fin-row.total.neg span, .wz-fin-row.total.neg b { color: #b3261e; }
+
+                .wz-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 9px 14px; cursor: pointer; margin: 0; }
+                .wz-toggle input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--accent); flex-shrink: 0; }
                 .wz-toggle-txt { display: flex; flex-direction: column; gap: 2px; }
-                .wz-toggle-txt b { font-size: var(--cm-fs-sm); font-weight: 600; color: var(--text-primary); }
-                .wz-toggle-txt span { font-size: var(--cm-fs-xs); color: var(--text-secondary); line-height: 1.4; }
+                .wz-toggle-txt b { font-size: var(--cm-fs-sm); font-weight: 600; color: var(--text-primary); text-transform: none; letter-spacing: normal; }
+                .wz-toggle-txt span { font-size: var(--cm-fs-xs); color: var(--text-secondary); line-height: 1.4; text-transform: none; letter-spacing: normal; }
 
-                .wz-advisory { padding: 12px 14px; background: var(--warning-bg); border-color: #f0d79a; }
-                .wz-adv-head { display: flex; align-items: center; gap: 7px; font-size: var(--cm-fs-sm); font-weight: 700; color: var(--cm-warn-text); margin-bottom: 8px; }
+                .wz-advisory { padding: 11px 14px; background: var(--warning-bg); border-color: #f0d79a; }
+                .wz-adv-head { display: flex; align-items: center; gap: 7px; font-size: var(--cm-fs-sm); font-weight: 700; color: var(--cm-warn-text); margin-bottom: 6px; }
                 .wz-adv-head .material-icons-round { font-size: 17px; color: var(--warning); }
                 .wz-advisory ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
                 .wz-advisory li { display: flex; gap: 8px; font-size: var(--cm-fs-xs); color: var(--cm-warn-text); line-height: 1.45; }
                 .wz-advisory li .b { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); flex-shrink: 0; margin-top: 6px; }
 
-                /* Dodjela radnika — panel s horizontalnim trakama (bez okvira-u-okviru) */
-                .wz-assign { display: flex; flex-direction: column; overflow: hidden; }
-                .wz-assign-head { padding: 14px 18px; border-bottom: 1px solid var(--border-light); }
-                .wz-assign-head b { display: block; font-size: var(--cm-fs-md); font-weight: 700; color: var(--text-primary); }
-                .wz-assign-head span { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
-                .wz-tasks-panel { padding: 12px 16px; }
+                .wz-tasks-panel { padding: 10px 14px; }
 
-                /* Bulk Assignment Bar — mirna alatna traka, puna širina panela */
-                .bulk-assign-bar {
-                    display: flex; align-items: center; gap: 12px;
-                    margin: 0; padding: 10px 18px;
-                    background: var(--surface); border: none;
-                    border-bottom: 1px solid var(--border-light); border-radius: 0;
-                }
-                .bulk-label { display: flex; align-items: center; gap: 6px; font-size: var(--cm-fs-xs); font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
-                .bulk-label .material-icons-round { color: var(--accent); }
-                .bulk-controls { display: flex; gap: 10px; flex: 1; }
-
-                /* Matrix Container */
-                .matrix-wrapper.full-height {
-                    display: flex;
-                    flex-direction: column;
-                    margin: 0;
-                    background: transparent;
-                    border: none;
-                    border-radius: 0;
-                    overflow: visible;
-                    box-shadow: none;
-                }
+                /* Matrica ekipe — red po proizvodu; lista se skrola unutar panela */
                 .mw-header {
+                    flex-shrink: 0;
                     display: flex;
-                    background: var(--background);
+                    background: var(--surface);
                     border-bottom: 1px solid var(--border-light);
-                    position: sticky;
-                    top: 0;
-                    z-index: 5;
                 }
-                .mw-body { flex: 1; overflow-y: auto; }
-                .m-row { display: flex; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.15s; }
+                .mw-body { flex: 1; min-height: 0; overflow-y: auto; }
+                .m-row { display: flex; border-bottom: 1px solid var(--border-light); transition: background 0.15s; }
                 .m-row:hover { background: #f8f9fb; }
                 .m-row:last-child { border-bottom: none; }
-                .m-col { 
-                    padding: 14px 16px; 
-                    border-right: 1px solid rgba(0,0,0,0.04); 
-                    display: flex; 
-                    align-items: center; 
+                .m-col {
+                    padding: 10px 14px;
+                    border-right: 1px solid rgba(0,0,0,0.04);
+                    display: flex;
+                    align-items: center;
+                    min-width: 0;
                 }
                 .m-col:last-child { border-right: none; }
                 .m-col.product {
-                    width: 280px;
+                    width: 260px;
                     flex-shrink: 0;
                     flex-direction: column;
                     align-items: flex-start;
                     justify-content: center;
-                    gap: 3px;
-                    background: transparent;
+                    gap: 2px;
                 }
-                .m-col.product strong { font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.1px; }
-                .m-col.product small { font-size: 11px; color: var(--text-secondary); font-weight: 400; }
-                .m-col.process { 
-                    flex: 1; 
-                    min-width: 160px; 
-                    justify-content: center; 
-                    flex-direction: column; 
-                    gap: 6px; 
+                .m-col.product strong { max-width: 100%; font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .m-col.product small { max-width: 100%; font-size: 11px; color: var(--text-secondary); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .m-col.process {
+                    flex: 1;
+                    min-width: 160px;
+                    justify-content: center;
+                    flex-direction: column;
+                    align-items: stretch;
+                    gap: 6px;
                 }
+                /* Proizvodnja (jedna ekipa): proizvod | glavni radnik | pomoćnici u jednoj liniji */
+                .m-row.single .m-col.product { flex: 1 1 0; width: auto; }
+                .m-col.process.single { flex: 0 0 auto; width: min(460px, 58%); flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; }
+                .m-col.process.single .wdd-main { width: 200px; flex-shrink: 0; }
+                .wz-helpers { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+                .wz-helpers-hint { font-size: 11px; color: var(--text-tertiary); }
                 /* Process header titles in matrix */
                 .process-header-title {
                     font-size: var(--cm-fs-xs);
@@ -1141,16 +1205,13 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                     color: var(--text-secondary);
                     letter-spacing: -0.01em;
                 }
-                .mw-header .m-col.process {
-                    padding: 12px 12px;
-                    gap: 8px;
-                }
+                .mw-header .m-col.process { padding: 8px 12px; gap: 6px; }
                 .mw-header .m-col.product {
                     font-size: var(--cm-fs-xs);
                     font-weight: 700;
                     color: var(--text-secondary);
                     letter-spacing: -0.01em;
-                    padding: 12px 16px;
+                    padding: 8px 14px;
                 }
 
                 /* Worker Dropdown (wdd) — Modern Design */
@@ -1224,6 +1285,8 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                     overflow: hidden;
                     animation: wddFadeIn 0.15s ease-out;
                 }
+                /* U portalu (FloatingMenu) poziciju drži omotač */
+                .wdd-menu.floating { position: static; min-width: 0; }
                 @keyframes wddFadeIn {
                     from { opacity: 0; transform: translateY(-6px) scale(0.98); }
                     to { opacity: 1; transform: translateY(0) scale(1); }
@@ -1347,11 +1410,20 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                 }
 
 
-                /* Uske širine: trake se lome na manje kolona */
+                /* Ispod laptopa: kolone jedna ispod druge, korak se skrola kao cjelina */
+                @media (max-width: 1100px) {
+                    .step-details { overflow-y: auto; }
+                    .wz-main { grid-template-columns: 1fr; flex: none; }
+                    .wz-crew, .wz-side { overflow: visible; }
+                    .wz-left > .wz-tasks-panel { max-height: none; }
+                    .mw-body { overflow: visible; }
+                }
                 @media (max-width: 820px) {
-                    .wz-band { grid-template-columns: 1fr 1fr; }
-                    .wz-fin { grid-template-columns: 1fr 1fr; }
-                    .wz-subrow { grid-template-columns: 1fr; }
+                    .wz-settings { grid-template-columns: 1fr 1fr; }
+                    .wz-crew-head { flex-direction: column; align-items: stretch; }
+                    .wz-crew-bulk .wdd { flex: 1; width: auto; }
+                    .m-col.process.single { width: auto; flex: 1; flex-direction: column; align-items: stretch; }
+                    .m-col.process.single .wdd-main { width: 100%; }
                 }
 
                 /* TABLET RESPONSIVE (768px - 1024px) */
@@ -1421,6 +1493,11 @@ export default function WorkOrderWizard(props: WorkOrderWizardProps) {
                     .m-col.product { width: 150px; font-size: 12px; }
                     .m-col.process { min-width: 120px; }
                 }
+            `}</style>
+            {/* Modal je portal izvan ovog stabla — njegove klase se biraju globalno, samo uz .wz-modal */}
+            <style jsx global>{`
+                .modal.wz-modal { width: 96%; max-width: 1480px; height: 94vh; max-height: 94vh; }
+                .modal.wz-modal .modal-body { flex: 1; min-height: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
             `}</style>
         </>
     );

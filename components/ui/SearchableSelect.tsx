@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { searchTokens, matchesSearch, highlightRanges } from '@/lib/searchMatch';
+import { searchTokens, searchScore, highlightRanges } from '@/lib/searchMatch';
 
 // ════════════════════════════════════════════════════════════════════
 // PRETRAŽIVI IZBORNIK
@@ -27,6 +27,8 @@ interface SearchableSelectProps {
     onChange: (value: string) => void;
     placeholder?: string;
     label?: string;
+    /** Lista otvorena odmah po prikazu (npr. prvi korak „Nova ponuda": izbor projekta je jedini posao). */
+    autoOpen?: boolean;
 }
 
 /** Lista nikad uža od ovoga — uski okidač ne smije zgnječiti nazive opcija. */
@@ -48,8 +50,14 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }): ReactN
     return <>{out}</>;
 }
 
-export function SearchableSelect({ options, value, onChange, placeholder = 'Pretraži...', label }: SearchableSelectProps) {
+export function SearchableSelect({ options, value, onChange, placeholder = 'Pretraži...', label, autoOpen }: SearchableSelectProps) {
     const [isOpen, setIsOpen] = useState(false);
+    // Poslije animacije otvaranja modala (scale 0.95 → 1), inače lista sjedne pomaknuta.
+    useEffect(() => {
+        if (!autoOpen) return;
+        const t = setTimeout(() => setIsOpen(true), 220);
+        return () => clearTimeout(t);
+    }, [autoOpen]);
     const [searchQuery, setSearchQuery] = useState('');
     const [active, setActive] = useState(0);
     // Otvorena prema gore lista se sidri DONJOM ivicom (bottom), da s malo opcija
@@ -62,11 +70,16 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
 
     const tokens = useMemo(() => searchTokens(searchQuery), [searchQuery]);
 
-    // Svi termini moraju postojati (redoslijed nebitan), bez obzira na kvačice.
-    const filteredOptions = useMemo(
-        () => (tokens.length === 0 ? options : options.filter(o => matchesSearch(tokens, o.label, o.subLabel))),
-        [options, tokens]
-    );
+    // Svi termini moraju postojati (redoslijed riječi, kvačice, crtice i razmaci nebitni);
+    // bolji pogoci prvi (tačan → početak riječi → bilo gdje), da je Enter predvidiv.
+    const filteredOptions = useMemo(() => {
+        if (tokens.length === 0) return options;
+        return options
+            .map((o, i) => ({ o, i, score: searchScore(tokens, o.label, o.subLabel) }))
+            .filter(x => x.score > 0)
+            .sort((a, b) => b.score - a.score || a.i - b.i)
+            .map(x => x.o);
+    }, [options, tokens]);
 
     const selectedOption = options.find(o => o.value === value);
 

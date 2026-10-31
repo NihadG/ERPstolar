@@ -15,7 +15,8 @@ import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { MONTAZA_STEPS } from '@/lib/types';
 import { createWorkOrder, getAllAttendanceByMonth } from '@/lib/services';
-import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
+import { workOrderDueDate, todayISO, buildSaturdayChecker, offerWorkDays } from '@/lib/planning';
+import { buildFinanceBasis } from '@/lib/projectFinance';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
 import { emptyTaskSelection, taskSelectionCount, taskProductIds, isTaskOpen, type TaskAttachSelection } from '@/lib/workOrderTasks';
 import { acceptedOfferProduct } from '@/lib/offerProductionLink';
@@ -178,17 +179,18 @@ export function useWorkOrderWizard({
     }, [tasks, selectedProducts]);
 
     // ── AUTO-ROK: rok = danas + Σ planiranih radnih dana po proizvodu (iz ponude) ──
-    // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
+    // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Dani u ponudi su PO KOMADU,
+    // pa se množe količinom u nalogu (0,2 dana × 50 kom = 10 dana). Subota se računa,
     // nedjelje se preskaču, A subote uvažavaju ROTACIJU po radniku iz šihtarice (vidi lib/planning.ts).
     const totalPlannedDays = useMemo(() => {
         // Montaža: stavke se kreiraju s NULIRANIM planiranim danima (isMontazaMode),
         // pa proizvodni Labor_Days iz ponude NE smiju hraniti prijedlog roka montaže.
         if (mode === 'montaza') return 0;
-        return selectedProducts.reduce((sum, p) => {
+        return offerWorkDays(selectedProducts.map(p => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
             const op = acceptedOfferProduct(project?.offers, p.Product_ID);
-            return sum + (op?.Labor_Days || 0);
-        }, 0);
+            return { days: op?.Labor_Days, quantity: p.Work_Order_Quantity };
+        })).days;
     }, [selectedProducts, projects, mode]);
 
     // Dodijeljeni radnici (glavni + pomoćnici) — za subotnju rotaciju u roku.
@@ -232,42 +234,52 @@ export function useWorkOrderWizard({
         }
     }, [activeStep, suggestedDueDate, dueDate, mode]);
 
-    // Finansijski sažetak odabira (isti izvori kao handleCreateWorkOrder) — korisnik
-    // vidi šta kreira PRIJE klika na "Kreiraj"; bez ponude → upozorenje odmah, ne post-hoc toast.
-    // "Ostaje" ovdje oduzima i PLANIRANI rad (procjena), za razliku od početnog WO profita.
+    // Finansijski sažetak odabira — korisnik vidi šta nalog nosi PRIJE klika na „Kreiraj".
+    // Isti model kao lib/projectFinance (prihod iz prihvaćene ponude, živa sastavnica + dodaci,
+    // rad iz ponude × količina). Proizvod BEZ prihvaćene ponude se ne broji ni u prihod ni u
+    // troškove: nalog za njega smije krenuti (nalog prije ponude), a cijena i profit se povežu
+    // sami kad ponuda bude prihvaćena — prije toga bi „ostaje" bio samo minus materijala.
+    // null = nema nijednog proizvoda s prihvaćenom ponudom → finansije se ne prikazuju.
     const wizardFin = useMemo(() => {
         if (mode === 'montaza' || selectedProducts.length === 0) return null;
-        let value = 0, material = 0, transport = 0, services = 0, plannedLabor = 0;
+        const involved = projects.filter(pr => selectedProducts.some(p => p.Project_ID === pr.Project_ID));
+        const basis = buildFinanceBasis(
+            involved.flatMap(pr => pr.products || []),
+            involved.flatMap(pr => (pr.offers || []).map(o => ({ ...o, Project_ID: o.Project_ID || pr.Project_ID }))),
+        );
+        let value = 0, material = 0, plannedLabor = 0, priced = 0;
         selectedProducts.forEach(p => {
-            const project = projects.find(proj => proj.Project_ID === p.Project_ID);
-            const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
-            const offerProduct = acceptedOfferProduct(project?.offers, p.Product_ID);
-            if (offerProduct?.Selling_Price) value += offerProduct.Selling_Price * p.Work_Order_Quantity;
-            transport += offerProduct?.Transport_Share || 0;
-            services += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
-            if (product?.materials) {
-                material += product.materials.reduce((sum, m) => sum + (m.Unit_Price * m.Quantity), 0) * p.Work_Order_Quantity;
-            }
-            plannedLabor += offerProduct
-                ? (offerProduct.Labor_Workers || 1) * (offerProduct.Labor_Days || 0) * (offerProduct.Labor_Daily_Rate || 0)
-                : 0;
+            const line = basis.offerLines.get(p.Product_ID);
+            if (!line || !(line.unitPrice > 0)) return;
+            const qty = p.Work_Order_Quantity || 1;
+            priced++;
+            value += line.unitPrice * qty;
+            material += ((basis.products.get(p.Product_ID)?.unitMaterial || 0) + line.unitExtras) * qty;
+            plannedLabor += line.unitLaborPlan * qty;
         });
-        const profit = value - material - transport - services - plannedLabor;
-        return { value, material, transport, services, plannedLabor, profit, missingPrice: value <= 0 };
+        if (priced === 0) return null;
+        return { value, material, plannedLabor, profit: value - material - plannedLabor, priced, total: selectedProducts.length };
     }, [mode, selectedProducts, projects]);
     const fmtKM = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} KM`;
 
-    // Per-product advisory: proizvod bez cijene i/ili planiranih dana u prihvaćenoj ponudi.
-    // Inkrementalni tok (dopunjavanje ponude proizvod-po-proizvod) je namjerno dozvoljen —
-    // ovo je samo neblokirajuće upozorenje da će rok/profit za TAJ proizvod biti potcijenjeni.
-    const undefinedProducts = useMemo(() => {
-        if (mode === 'montaza' || selectedProducts.length === 0) return [];
-        return selectedProducts.filter(p => {
+    // Per-product advisory. Inkrementalni tok (dopunjavanje ponude proizvod-po-proizvod) je
+    // namjerno dozvoljen — ovo su neblokirajuće napomene:
+    //  • unpricedProducts — nema prihvaćene ponude s cijenom → izvan finansija dok se ponuda ne prihvati;
+    //  • undatedProducts  — cijena postoji, ali nema planiranih dana → rok je za njih potcijenjen.
+    const offerCoverage = useMemo(() => {
+        const unpriced: string[] = [], undated: string[] = [];
+        if (mode === 'montaza') return { unpriced, undated };
+        selectedProducts.forEach(p => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
             const op = acceptedOfferProduct(project?.offers, p.Product_ID);
-            return !op ||!((op.Selling_Price || 0) > 0) || !((op.Labor_Days || 0) > 0);
-        }).map(p => p.Product_Name);
+            if (!op || !((op.Selling_Price || 0) > 0)) unpriced.push(p.Product_Name);
+            else if (!((op.Labor_Days || 0) > 0)) undated.push(p.Product_Name);
+        });
+        return { unpriced, undated };
     }, [mode, selectedProducts, projects]);
+    const unpricedProducts = offerCoverage.unpriced;
+    const undatedProducts = offerCoverage.undated;
+    const undefinedProducts = useMemo(() => [...unpricedProducts, ...undatedProducts], [unpricedProducts, undatedProducts]);
 
     // Reset pri SVAKOM otvaranju: mode-specifični defaulti + eventualna predselekcija
     // proizvoda iz ProjectsTab (tada se preskače korak odabira → pravo na "Radnik & rok").
@@ -946,6 +958,8 @@ export function useWorkOrderWizard({
         wizardFin,
         fmtKM,
         undefinedProducts,
+        unpricedProducts,
+        undatedProducts,
         eligibleProducts,
         eligibleMontazaProducts,
         steps,

@@ -77,6 +77,7 @@ const NEED_BY: Record<string, string[]> = {
     masiv: ['Priprema masive', 'Izrada rešetke baze'],
     jela: ['Priprema masive', 'Izrada podkonstrukcije od jele/smreke', 'Izrada cokla', 'Izrada rešetke baze'],
     iveral: ['Krojenje iverala'],
+    cjevasta: ['Krojenje cjevaste iverice', 'Ramovi i cjevasta iverica'],
     mdf: ['Krojenje MDF-a'],
     sper: ['Krojenje šperploče', 'Izrada zaobljenih dijelova'],
     oblikovna: ['Izrada zaobljenih dijelova', 'Krojenje šperploče'],
@@ -85,7 +86,7 @@ const NEED_BY: Record<string, string[]> = {
     furnir: ['Priprema furnira', 'Furniranje'],
     kerrock: ['Krojenje Kerrocka'],
     corian: ['Krojenje Coriana'],
-    kant: ['Kantiranje iverala', 'Kantiranje furnira'],
+    kant: ['Kantiranje iverala', 'Kantiranje furnira', 'Kantiranje krila'],
     hdf: ['Krojenje leđa', 'Postavljanje leđa', 'Sklapanje kutija'],
     lak: ['Lakiranje', 'Farbanje'],
     boja: ['Farbanje', 'Lakiranje'],
@@ -116,7 +117,7 @@ export function materialRole(name: string, catalog?: GateCatalog): MaterialRole 
 
     let candidates = type ? [...(NEED_BY[type] || [])] : [];
     // Kant traka za furnir („KT / Furnir hrast") ide na kantiranje furnira.
-    if (type === 'kant' && all.includes('furnir')) candidates = ['Kantiranje furnira', 'Kantiranje iverala'];
+    if (type === 'kant' && all.includes('furnir')) candidates = ['Kantiranje furnira', 'Kantiranje krila', 'Kantiranje iverala'];
     if (catalog?.Need_By_Process?.trim()) candidates = [catalog.Need_By_Process.trim(), ...candidates];
     return { type, candidates, longLead: !!type && LONG_LEAD.has(type) };
 }

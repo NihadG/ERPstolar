@@ -42,6 +42,10 @@ export interface MaterialType {
 export const MATERIAL_TYPES: MaterialType[] = [
     // HPL ima dekore (i drvo) — „HPL / Hrast" je HPL, ne furnir, pa ide prvi.
     { key: 'hpl', label: 'HPL', patterns: ['hpl'] },
+    // Cjevasta (ekstrudirana, šuplja) iverica = ispuna rama vrata, NIJE iveral (nema kantiranja iverala).
+    // Ispred iverala namjerno: „Extrudirana iverica" ne smije pasti ni u jedan iveral pattern.
+    // Samo uz „iver": „ekstrudirani alu profil" ostaje alu.
+    { key: 'cjevasta', label: 'Cjevasta iverica (ekstrudirana)', patterns: ['cjevast', 'ekstrudirana iver', 'extrudirana iver', 'šuplja iver', 'suplja iver'] },
     { key: 'iveral', label: 'Iveral', patterns: ['iveral', 'ivera', 'univer'] },
     // OSB = podkonstrukcija (krojenje OSB-a, izrada podkonstrukcije).
     { key: 'osb', label: 'OSB', patterns: ['osb'] },

@@ -1,4 +1,4 @@
-import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker, plannedVsActualDays, weeklyCapacity, itemsWithoutPlannedDays } from '../planning';
+import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker, plannedVsActualDays, weeklyCapacity, itemsWithoutPlannedDays, offerWorkDays, itemPlannedDays, formatDays } from '../planning';
 
 // Kalendarski sidro (potvrđeno iz aplikacije): 2026-06-22 = ponedjeljak, 21 = nedjelja, 20 = subota.
 describe('isWorkingDay', () => {
@@ -249,5 +249,25 @@ describe('itemsWithoutPlannedDays — advisory za nedopunjenu ponudu (inkrementa
     });
     test('prazna lista → 0', () => {
         expect(itemsWithoutPlannedDays([])).toBe(0);
+    });
+});
+
+describe('dani po komadu × količina (ispravke 30.10.)', () => {
+    test('ukupno dana ponude uzima količinu; dijelovi dana su dozvoljeni', () => {
+        const r = offerWorkDays([
+            { days: 1, quantity: 15, workers: 1 },
+            { days: 0.2, quantity: 50, workers: 1 },
+            { days: 1, quantity: 7, workers: 2 },
+            { days: 0, quantity: 9 },
+        ]);
+        expect(r.days).toBe(32);          // 15 + 10 + 7
+        expect(r.workerDays).toBe(39);    // 15 + 10 + 14
+    });
+    test('stavka naloga i prikaz', () => {
+        expect(itemPlannedDays({ Planned_Labor_Days: 0.5, Quantity: 7 })).toBe(3.5);
+        expect(itemPlannedDays({ Planned_Labor_Days: 2 })).toBe(2);
+        expect(plannedVsActualDays([{ ID: 'a', Planned_Labor_Days: 0.5, Quantity: 4, Planned_Labor_Workers: 2 }]).planned).toBe(4);
+        expect(formatDays(12.5)).toBe('12,5');
+        expect(formatDays(7)).toBe('7');
     });
 });

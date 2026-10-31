@@ -12,6 +12,7 @@
 
 import type { PlanScenario, PlanBlock, Worker, WorkOrder, WorkerAttendance } from '../types';
 import { addDays, isWorkDay, blockDurationDays } from './model';
+import { itemPlannedDays } from '../planning';
 
 /** Statusi koji oduzimaju dan. Ostali (Prisutan/Teren) ga garantuju. */
 const ABSENT = new Set(['Odsutan', 'Bolovanje', 'Odmor', 'Vikend', 'Praznik']);
@@ -96,7 +97,7 @@ export function dailyCapacity(
                 if (p.Worker_ID) workerIds.add(p.Worker_ID);
                 (p.Helpers || []).forEach(h => h.Worker_ID && workerIds.add(h.Worker_ID));
             });
-            const d = item.Planned_Labor_Days || 0;
+            const d = itemPlannedDays(item);
             if (d > 0) plannedWorkerDays += d * (item.Planned_Labor_Workers || 1);
         }
 

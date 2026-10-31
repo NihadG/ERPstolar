@@ -25,7 +25,7 @@ import type { ProcessCatalogItem, ProcessMaterialRule } from './types';
  * Pravila koja standard upiše nose je (Standard_Version); Auto prijedlog primijeni
  * standard ponovo čim baza ima stariju verziju („zadnja pravila aplikacije").
  */
-export const STANDARD_VERSION = '2026-10-29.1';
+export const STANDARD_VERSION = '2026-10-30.1';
 
 /** Kanonski redoslijed proizvodnje. Procesi van liste ostaju u katalogu, iza ovih. */
 export const STANDARD_CATALOG: string[] = [
@@ -76,7 +76,8 @@ export const STANDARD_CATALOG: string[] = [
 export const STANDARD_RENAMES: { canonical: string; members: string[] }[] = [
     { canonical: 'Krojenje iverala', members: ['Krojenje Iverala'] },
     { canonical: 'Krojenje MDF-a', members: ['Krojenje MDF'] },
-    { canonical: 'Priprema furnira', members: ['Krojenje furnira', 'Priprema Furnira'] },
+    // Jedna priprema furnira hrani krila, štokove i lajsne (30.10.: „dvije pripreme furnira" kod vrata).
+    { canonical: 'Priprema furnira', members: ['Krojenje furnira', 'Priprema Furnira', 'Priprema furnira za lajsne i štokove'] },
     { canonical: 'Srezivanje na tačnu mjeru', members: ['Srezivanje elemenata iz prese na tačne mjere'] },
     { canonical: 'Lijepljenje i obrada masive', members: ['Lijepljenje masive'] },
     { canonical: 'Brušenje', members: ['Brušenje furniranih elemenata'] },
@@ -186,10 +187,80 @@ export const STANDARD_RULES: StandardRule[] = [
     rule(['corian'], ['Krojenje Coriana', 'Lijepljenje Coriana', 'Brušenje Coriana', 'Montaža Coriana'], 'Corian — isto kao Kerrock'),
 ];
 
-/** Vrste proizvoda: šablon toka (po nazivu šablona) i riječi naziva proizvoda koje ga biraju. */
-export const STANDARD_TEMPLATE_KEYWORDS: { template: string; keywords: string[]; note: string }[] = [
-    { template: 'Furnirana vrata (obična)', keywords: ['vrata'], note: 'Tok sa Šišić vrata: krila, štokovi, lajsne' },
+/**
+ * Sobna vrata: krilo, štok i lajsne kao tri grane (lanci kao u pravilima; isti proces = jedan čvor).
+ * Štok se lijepi od iskrojenog MDF-a, pa je cijela grana štoka fazu iza krila. Jedna priprema
+ * furnira hrani sve tri grane. „Kantiranje krila", ne „iverala": vrata nemaju iveral, a
+ * cjevasta (ekstrudirana) iverica u ramu je drugi materijal. Ispravke korisnika 30.10.2026.
+ */
+const VRATA_TOK: string[][] = [
+    ['Priprema masive (ramova)', 'Ramovi i cjevasta iverica'],
+    ['Krojenje cjevaste iverice', 'Ramovi i cjevasta iverica'],
+    ['Krojenje MDF-a', 'Ramovi i cjevasta iverica', 'Furniranje', 'Srezivanje krila na mjeru', 'Kantiranje krila', 'Obrada na CNC', 'Brušenje', 'Lakiranje', 'Okivanje'],
+    ['Priprema furnira', 'Furniranje'],
+    ['Krojenje MDF-a', 'Priprema štokova', 'Furniranje štokova', 'Srezivanje štokova', 'Kantiranje štokova', 'Falcanje štokova', 'Brušenje'],
+    ['Priprema furnira', 'Furniranje štokova'],
+    ['Krojenje MDF za lajsne', 'Furniranje lajsni', 'Srezivanje lajsni', 'Kantiranje lajsni', 'Lakiranje'],
+    ['Priprema furnira', 'Furniranje lajsni'],
 ];
+
+export interface StandardTemplate {
+    template: string;
+    keywords: string[];
+    note: string;
+    /** Tok koji standard upisuje u šablon (zamjenjuje zatečeni). Bez njega standard dodaje samo riječi. */
+    chains?: string[][];
+    /**
+     * Stari nazivi u planovima proizvoda ove vrste → novi. Samo za RUČNO uređene planove (automatski
+     * se preračunaju iz šablona); globalno se ne smije: „Kantiranje iverala" je ispravno kod kuhinja.
+     */
+    planRenames?: Record<string, string>;
+}
+
+/** Vrste proizvoda: šablon toka (po nazivu šablona) i riječi naziva proizvoda koje ga biraju. */
+export const STANDARD_TEMPLATE_KEYWORDS: StandardTemplate[] = [
+    {
+        template: 'Furnirana vrata (obična)', keywords: ['vrata'], note: 'Krila, štokovi (fazu iza krila) i lajsne; jedna priprema furnira',
+        chains: VRATA_TOK,
+        planRenames: { 'Kantiranje iverala': 'Kantiranje krila' },
+    },
+];
+
+/** Šablon toka iz lanaca: čvor po nazivu (stabilan ID), ivice uzastopnih procesa bez duplikata. */
+export function flowFromChains(chains: string[][]): { nodes: { id: string; name: string }[]; edges: { id: string; source: string; target: string }[] } {
+    const idOf = (name: string) => `std-${normKey(name).replace(/đ/g, 'dj').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-')}`;
+    const nodes = new Map<string, { id: string; name: string }>();
+    const edges = new Map<string, { id: string; source: string; target: string }>();
+    for (const chain of chains) {
+        const names = chain.map(n => n.trim()).filter(Boolean);
+        names.forEach((name, i) => {
+            const id = idOf(name);
+            if (!nodes.has(id)) nodes.set(id, { id, name });
+            if (i === 0) return;
+            const source = idOf(names[i - 1]);
+            if (source !== id && !edges.has(`${source}>${id}`)) edges.set(`${source}>${id}`, { id: `e-${source}-${id}`, source, target: id });
+        });
+    }
+    return { nodes: Array.from(nodes.values()), edges: Array.from(edges.values()) };
+}
+
+/**
+ * Proizvod ove vrste čiji plan treba uskladiti s novim šablonom: ima plan i (a) nosi stari naziv
+ * iz planRenames ili (b) je automatski, a faze mu se razlikuju od faza šablona.
+ */
+export function needsStandardPlanUpdate(
+    plan: { stages: string[][]; source?: string },
+    tpl: Pick<StandardTemplate, 'planRenames'>,
+    templateStages: string[][],
+): boolean {
+    const names = plan.stages.flat();
+    if (!names.length) return false;
+    const old = Object.keys(tpl.planRenames || {}).map(normKey);
+    if (names.some(n => old.includes(normKey(n)))) return true;
+    if (plan.source === 'manual') return false;
+    const key = (st: string[][]) => JSON.stringify(st.map(s => s.map(normKey).sort()));
+    return key(plan.stages) !== key(templateStages);
+}
 
 // ─── Koja pravila standard zamjenjuje ─────────────────────────────────
 
@@ -226,8 +297,8 @@ export interface StandardizationPlan {
     order: string[];
     rulesToRemove: number;
     rulesToAdd: StandardRule[];
-    /** Šabloni vrste proizvoda koji postoje i dobijaju ključne riječi. */
-    templates: { template: string; keywords: string[]; note: string }[];
+    /** Šabloni vrste proizvoda koji dobijaju ključne riječi (i tok, kad ga standard propisuje). */
+    templates: StandardTemplate[];
 }
 
 /**
@@ -260,7 +331,8 @@ export function planStandardization(
         order: [...STANDARD_CATALOG, ...others],
         rulesToRemove: ruleCount,
         rulesToAdd: STANDARD_RULES,
-        templates: STANDARD_TEMPLATE_KEYWORDS.filter(t => flowTemplateNames.some(n => normKey(n) === normKey(t.template))),
+        // Šablon s tokom u standardu se upisuje i kad ne postoji; ostalim se samo dodaju riječi.
+        templates: STANDARD_TEMPLATE_KEYWORDS.filter(t => t.chains?.length || flowTemplateNames.some(n => normKey(n) === normKey(t.template))),
     };
 }
 
