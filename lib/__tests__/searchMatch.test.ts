@@ -56,3 +56,11 @@ test('podebljanje spaja preklapajuće pogotke i nalazi svako ponavljanje', () =>
     expect(highlightRanges('bilo šta', searchTokens(''))).toEqual([]);
     expect(highlightRanges('', searchTokens('a'))).toEqual([]);
 });
+
+test('crtice i razmaci se zanemaruju (izbor projekta u ponudi)', () => {
+    expect(matchesSearch(searchTokens('park-residence'), 'Park Residence - Recepcija')).toBe(true);
+    expect(matchesSearch(searchTokens('cve105'), 'Ahmed - CV E105')).toBe(true);
+    expect(matchesSearch(searchTokens('recepcija park'), 'Park Residence - Recepcija')).toBe(true);
+    expect(matchesSearch(searchTokens('corluka kuca'), 'Jerko Čorluka - Kuća')).toBe(true);
+    expect(matchesSearch(searchTokens('kuhinja'), 'Jerko Čorluka - Kuća')).toBe(false);
+});

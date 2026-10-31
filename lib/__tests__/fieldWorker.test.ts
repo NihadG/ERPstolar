@@ -212,7 +212,7 @@ describe('buildWorkerEfficiency — suptilan uvid', () => {
     it('Tempo drži planirano/utrošeno/moj-udio odvojeno', () => {
         const eff = buildWorkerEfficiency(effInput());
         expect(eff.tempo).toHaveLength(1);
-        expect(eff.tempo[0].plannedDays).toBe(4);   // 2 dana × 2 radnika
+        expect(eff.tempo[0].plannedDays).toBe(12);  // 2 dana po komadu × 3 kom × 2 radnika
         expect(eff.tempo[0].actualDays).toBe(3);    // 2 (Mujo) + 1 (Haso)
         expect(eff.tempo[0].myDays).toBe(2);        // samo Mujo
     });

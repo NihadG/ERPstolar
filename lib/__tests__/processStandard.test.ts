@@ -2,6 +2,7 @@ import { buildGraphFromRules, ruleMaterialTypes, ruleMatches, materialTypeFromNa
 import { buildAutoPlan } from '../processAutoPlan';
 import {
     planStandardization, STANDARD_CATALOG, STANDARD_RULES, STANDARD_VERSION, standardRulesIn, standardIsCurrent, canonicalProcessName,
+    STANDARD_TEMPLATE_KEYWORDS, flowFromChains, needsStandardPlanUpdate,
 } from '../processStandard';
 
 const catalog = STANDARD_CATALOG.map((Name, i) => ({ Name, Order: i + 1 }));
@@ -314,6 +315,54 @@ describe('vrsta proizvoda → šablon toka (vrata)', () => {
     it('čarobnjak naloga uzima faze iz šablona', () => {
         const r = buildAutoPlan(materials, STANDARD_RULES, catalog, [], { name: 'Sobna vrata', flowTemplates: [doors] });
         expect(r).toMatchObject({ source: 'template', stages: [['Priprema masive (ramova)'], ['Ramovi i cjevasta iverica'], ['Okivanje']] });
+    });
+});
+
+describe('standardni tok vrata (ispravke 30.10.)', () => {
+    const tpl = STANDARD_TEMPLATE_KEYWORDS.find(t => t.template === 'Furnirana vrata (obična)')!;
+    const flow = flowFromChains(tpl.chains!);
+    const stages = stagesFromGraph({ nodes: flow.nodes.map(n => ({ ...n, itemIds: [] })), edges: flow.edges });
+    const phaseOf = (name: string) => stages.findIndex(s => s.includes(name)) + 1;
+
+    it('štok je fazu iza krila: priprema u 2., furniranje u 3. fazi', () => {
+        expect(phaseOf('Ramovi i cjevasta iverica')).toBe(2);
+        expect(phaseOf('Priprema štokova')).toBe(2);
+        expect(phaseOf('Furniranje')).toBe(3);
+        expect(phaseOf('Furniranje štokova')).toBe(3);
+        expect(phaseOf('Kantiranje štokova')).toBe(phaseOf('Kantiranje krila'));
+        expect(phaseOf('Falcanje štokova')).toBe(phaseOf('Obrada na CNC'));
+        expect(phaseOf('Brušenje')).toBe(phaseOf('Obrada na CNC') + 1);
+    });
+
+    it('jedna priprema furnira i bez kantiranja iverala', () => {
+        const names = stages.flat();
+        expect(names.filter(n => /priprema furnira/i.test(n))).toEqual(['Priprema furnira']);
+        expect(names).not.toContain('Kantiranje iverala');
+        expect(names).toContain('Kantiranje krila');
+        expect(canonicalProcessName('Priprema furnira za lajsne i štokove')).toBe('Priprema furnira');
+    });
+
+    it('stabilni ID-evi čvorova i bez duplih ivica', () => {
+        expect(new Set(flow.nodes.map(n => n.id)).size).toBe(flow.nodes.length);
+        expect(flow.nodes.find(n => n.name === 'Priprema štokova')?.id).toBe('std-priprema-stokova');
+        expect(new Set(flow.edges.map(e => `${e.source}>${e.target}`)).size).toBe(flow.edges.length);
+    });
+
+    it('koji planovi vrata se usklađuju', () => {
+        expect(needsStandardPlanUpdate({ stages: [['Kantiranje iverala']], source: 'manual' }, tpl, stages)).toBe(true);
+        expect(needsStandardPlanUpdate({ stages: [['Krojenje MDF-a'], ['Okivanje']], source: 'manual' }, tpl, stages)).toBe(false);
+        expect(needsStandardPlanUpdate({ stages: [['Krojenje MDF-a'], ['Okivanje']], source: 'auto' }, tpl, stages)).toBe(true);
+        expect(needsStandardPlanUpdate({ stages, source: 'auto' }, tpl, stages)).toBe(false);
+        expect(needsStandardPlanUpdate({ stages: [], source: 'auto' }, tpl, stages)).toBe(false);
+    });
+});
+
+describe('cjevasta (ekstrudirana) iverica nije iveral', () => {
+    it('vlastiti tip materijala i kapija na krojenju cjevaste iverice', () => {
+        expect(materialTypeFromName('Extrudirana iverica (Šuplja)')).toBe('cjevasta');
+        expect(materialTypeFromName('Cjevasta iverica 38mm')).toBe('cjevasta');
+        expect(ruleMaterialTypes(M('Extrudirana iverica (Šuplja)')).has('iveral')).toBe(false);
+        expect(materialTypeFromName('Iveral U702')).toBe('iveral');
     });
 });
 

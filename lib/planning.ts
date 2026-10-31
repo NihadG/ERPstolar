@@ -261,9 +261,40 @@ export function weeklyCapacity(
 }
 
 // ════════════════════════════════════════════════════════════════════
+// PLANIRANI DANI — dani iz ponude su PO KOMADU (kao i trošak rada:
+// radnici × dani × dnevnica × količina), pa je posao proizvoda dani × količina.
+// Jedno mjesto za ponudu, auto-rok, planer i karticu naloga (ispravke 30.10.2026).
+// ════════════════════════════════════════════════════════════════════
+
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Ukupno dana i radnik-dana za redove ponude/naloga (dani po komadu × količina). */
+export function offerWorkDays(rows: { days?: number; quantity?: number; workers?: number }[]): { days: number; workerDays: number } {
+    let days = 0, workerDays = 0;
+    for (const r of rows) {
+        const d = (r.days || 0) * (r.quantity || 1);
+        if (d <= 0) continue;
+        days += d;
+        workerDays += d * (r.workers || 1);
+    }
+    return { days: r1(days), workerDays: r1(workerDays) };
+}
+
+/** Planirani dani stavke naloga: Planned_Labor_Days (po komadu) × količina stavke. */
+export function itemPlannedDays(item: { Planned_Labor_Days?: number; Quantity?: number }): number {
+    const d = item.Planned_Labor_Days || 0;
+    return d > 0 ? d * (item.Quantity || 1) : 0;
+}
+
+/** „12,5" — dani s najviše jednom decimalom, bez suvišne nule. */
+export function formatDays(n: number): string {
+    return r1(n).toLocaleString('bs-BA', { maximumFractionDigits: 1 });
+}
+
+// ════════════════════════════════════════════════════════════════════
 // PLANIRANO vs POTROŠENO RADNIK-DANA
 // Jedinica poređenja = RADNIK-DAN (direktno skalira trošak rada):
-//   planirano = Σ (Planned_Labor_Workers||1) × Planned_Labor_Days po stavci
+//   planirano = Σ (Planned_Labor_Workers||1) × Planned_Labor_Days × Quantity po stavci
 //   potrošeno = Σ Day_Fraction iz work logova (= Σ Actual_Labor_Days sync-ovano
 //               kroz recalculateWorkOrder kad logovi nisu pri ruci)
 // ════════════════════════════════════════════════════════════════════
@@ -273,6 +304,7 @@ export interface DaysProgressItem {
     Planned_Labor_Days?: number;
     Planned_Labor_Workers?: number;
     Actual_Labor_Days?: number;
+    Quantity?: number;
 }
 
 export interface DaysProgressLog {
@@ -292,11 +324,7 @@ export interface DaysProgress {
  * inače koristi `Actual_Labor_Days` sync-ovan na stavkama (recalculateWorkOrder).
  */
 export function plannedVsActualDays(items: DaysProgressItem[], workLogs?: DaysProgressLog[]): DaysProgress {
-    const planned = items.reduce((s, it) => {
-        const days = it.Planned_Labor_Days || 0;
-        if (days <= 0) return s;
-        return s + days * (it.Planned_Labor_Workers || 1);
-    }, 0);
+    const planned = items.reduce((s, it) => s + itemPlannedDays(it) * (it.Planned_Labor_Workers || 1), 0);
     let actual: number;
     if (workLogs) {
         const itemIds = new Set(items.map(it => it.ID).filter(Boolean));

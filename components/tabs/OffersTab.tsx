@@ -7,6 +7,9 @@ import { useData } from '@/context/DataContext';
 import { buildOfferPrintDocument } from '@/lib/print/offerDocument';
 import { exportHTMLToPDFBlob, exportHTMLToPDFFile } from '@/lib/pdfExport';
 import Modal from '@/components/ui/Modal';
+import DecimalInput from '@/components/ui/DecimalInput';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { offerWorkDays, formatDays } from '@/lib/planning';
 import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { offerPriceChanges, isOfferStale, flattenProjectProducts } from '@/lib/offerPricing';
@@ -323,6 +326,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const selectedProject = useMemo(() => {
         return projects.find(p => p.Project_ID === selectedProjectId);
     }, [selectedProjectId, projects]);
+
+    // Izbor projekta za ponudu: bez arhiviranih (Hidden), osim onog koji je već izabran.
+    const projectOptions = useMemo(() => projects
+        .filter(p => !p.Hidden || p.Project_ID === selectedProjectId)
+        .map(p => {
+            const n = p.products?.length || 0;
+            return {
+                value: p.Project_ID,
+                label: p.Name || p.Client_Name || 'Projekat',
+                subLabel: [p.Name ? p.Client_Name : '', `${n} ${n === 1 ? 'proizvod' : 'proizvoda'}`].filter(Boolean).join(' · '),
+                badge: p.Status ? { text: p.Status, tone: (p.Status === 'U proizvodnji' ? 'active' : 'neutral') as 'active' | 'neutral' } : undefined,
+            };
+        }), [projects, selectedProjectId]);
 
     function getDefaultValidDate(): string {
         const date = new Date();
@@ -1487,9 +1503,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             // Planirani TROŠKOVI iz ponude (svaki × količina) + broj radnih dana.
                             const materialTotal = inc.reduce((s, p) => s + (p.Material_Cost || 0) * (p.Quantity || 1), 0);
                             const uslugeTotal = inc.reduce((s, p) => s + (p.extras || []).reduce((a, e) => a + (e.total || 0), 0) * (p.Quantity || 1), 0);
-                            // Trošak rada = radnici × dani × dnevnica (× količina); broj radnih dana = Σ dana.
+                            // Trošak rada = radnici × dani × dnevnica × količina; dani su po komadu,
+                            // pa je ukupno potrebnih dana Σ dani × količina (i radnik-dana uz radnike).
                             const plannedLabor = inc.reduce((s, p) => s + (p.laborWorkers || 0) * (p.laborDays || 0) * (p.laborDailyRate || 0) * (p.Quantity || 1), 0);
-                            const workDays = inc.reduce((s, p) => s + (p.laborDays || 0), 0);
+                            const work = offerWorkDays(inc.map(p => ({ days: p.laborDays, quantity: p.Quantity, workers: p.laborWorkers })));
                             const km = (n: number) => n.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             const costChip: import('react').CSSProperties = {
                                 display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -1510,9 +1527,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         <span className="material-icons-round" style={{ fontSize: '16px', color: '#0891b2' }}>build</span>
                                         Usluge {km(uslugeTotal)} KM
                                     </span>
-                                    <span style={costChip} title="Planirani trošak rada = radnici × dani × dnevnica; broj radnih dana = Σ dana">
+                                    <span style={costChip} title={`Planirani trošak rada = radnici × dani × dnevnica × količina. Dani su po komadu: ukupno ${formatDays(work.days)} dana (Σ dani × količina), ${formatDays(work.workerDays)} radnik-dana.`}>
                                         <span className="material-icons-round" style={{ fontSize: '16px', color: '#d97706' }}>engineering</span>
-                                        Rad {km(plannedLabor)} KM · {workDays} {workDays === 1 ? 'dan' : 'dana'}
+                                        Rad {km(plannedLabor)} KM · {formatDays(work.days)} {work.days === 1 ? 'dan' : 'dana'}
                                     </span>
                                     <span style={{
                                         display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -1527,8 +1544,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             );
                         })()}
                     </span>
-                ) : 'Nova Ponuda'}
-                size="xl"
+                ) : 'Nova ponuda'}
+                // Dok projekat nije izabran prozor ima samo dva polja — mali, bez praznog platna.
+                size={!isEditMode && !selectedProjectId ? 'large' : 'xl'}
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={handleCloseOfferModal}>Otkaži</button>
@@ -1612,17 +1630,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                 </div>
                                 <div className="offer-project-select">
                                     <label>Projekat</label>
-                                    <select
+                                    {/* Pretraga bez obzira na redoslijed riječi, kvačice, crtice i razmake;
+                                        arhivirani projekti se ne nude (osim već izabranog). */}
+                                    <SearchableSelect
+                                        options={projectOptions}
                                         value={selectedProjectId}
-                                        onChange={(e) => loadProjectForOffer(e.target.value)}
-                                    >
-                                        <option value="">-- Odaberi projekat --</option>
-                                        {projects.map(project => (
-                                            <option key={project.Project_ID} value={project.Project_ID}>
-                                                {project.Name ? `${project.Name} — ${project.Client_Name}` : project.Client_Name} ({project.products?.length || 0} proizvoda)
-                                            </option>
-                                        ))}
-                                    </select>
+                                        onChange={(id) => {
+                                            const proj = projects.find(p => p.Project_ID === id);
+                                            if (!offerName.trim() && proj) setOfferName(proj.Name || proj.Client_Name || '');
+                                            loadProjectForOffer(id);
+                                        }}
+                                        placeholder="Odaberi projekat…"
+                                        autoOpen={!isEditMode && !selectedProjectId}
+                                    />
                                 </div>
                             </div>
 
@@ -1929,19 +1949,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                 />
                                                             </td>
                                                             <td className="input-cell" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>
-                                                                <input
-                                                                    type="number"
+                                                                {/* Dani PO KOMADU, i dijelovi dana (0,1–0,9) — ne treba svaki proizvod cijeli dan. */}
+                                                                <DecimalInput
                                                                     className="sheet-input text-center"
                                                                     style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}
-                                                                    value={product.laborDays === 0 ? '' : (product.laborDays || '')}
-                                                                    onChange={(e) => {
+                                                                    value={product.laborDays || 0}
+                                                                    onChange={(n) => {
                                                                         const updated = [...offerProducts];
-                                                                        updated[index].laborDays = e.target.value === '' ? 0 : parseInt(e.target.value);
+                                                                        updated[index].laborDays = n;
                                                                         setOfferProducts(updated);
                                                                     }}
-                                                                    min="0"
+                                                                    decimals={2}
+                                                                    title="Dana po komadu (npr. 0,5)"
                                                                     disabled={!product.included || product.locked}
-                                                                    placeholder="0"
                                                                 />
                                                             </td>
                                                             <td className="input-cell" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>

@@ -163,6 +163,8 @@ export interface ProductMaterial {
 
 export interface GlassItem {
     ID: string;
+    /** Obavezno pri upisu — pravila (hasValidOrgId) odbijaju stavku bez organizacije. */
+    Organization_ID?: string;
     Product_Material_ID: string;
     Order_ID: string;
     Qty: number;
@@ -177,6 +179,8 @@ export interface GlassItem {
 
 export interface AluDoorItem {
     ID: string;
+    /** Obavezno pri upisu — pravila (hasValidOrgId) odbijaju stavku bez organizacije. */
+    Organization_ID?: string;
     Product_Material_ID: string;
     Order_ID: string;
     Qty: number;

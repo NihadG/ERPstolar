@@ -89,6 +89,7 @@ function getDb() {
 // ============================================
 
 import { COLLECTIONS } from './services/shared/collections';
+import { deepStripUndefined } from './services/shared/firestoreClient';
 
 // ============================================
 // HELPER FUNCTIONS
@@ -2498,6 +2499,7 @@ export async function addGlassMaterialToProduct(data: AddGlassMaterialData, orga
                 Edge_Processing: hasEdge,
                 Note: item.Note || '',
                 Status: 'Nije naručeno',
+                Organization_ID: organizationId,
             };
 
             await addDoc(collection(db, COLLECTIONS.GLASS_ITEMS), glassItem);
@@ -2580,6 +2582,7 @@ export async function updateGlassMaterial(data: UpdateGlassMaterialData, organiz
                     Edge_Processing: hasEdge,
                     Note: item.Note || '',
                     Status: 'Nije naručeno',
+                    Organization_ID: organizationId,
                 };
 
                 await addDoc(collection(db, COLLECTIONS.GLASS_ITEMS), glassItem);
@@ -2733,6 +2736,7 @@ export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData, 
                 Total_Price: Math.round(itemPrice * 100) / 100,
                 Note: item.Note || '',
                 Status: 'Nije naručeno',
+                Organization_ID: organizationId,
             };
 
             await addDoc(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), aluDoorItem);
@@ -2834,6 +2838,7 @@ export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData, org
                     Total_Price: Math.round(itemPrice * 100) / 100,
                     Note: item.Note || '',
                     Status: 'Nije naručeno',
+                    Organization_ID: organizationId,
                 };
 
                 await addDoc(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), aluDoorItem);
@@ -3529,9 +3534,9 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
         // (ned. preskočena, sub. radna — ista logika kao auto-rok u wizardu), a ne paušalnih +7.
         let fallbackEndDate = new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0];
         if (!workOrderData.Due_Date) {
-            const totalPlannedDays = itemsSnap.docs.reduce((sum, d) => sum + ((d.data() as WorkOrderItem).Planned_Labor_Days || 0), 0);
+            const { workOrderDueDate, itemPlannedDays } = await import('./planning');
+            const totalPlannedDays = itemsSnap.docs.reduce((sum, d) => sum + itemPlannedDays(d.data() as WorkOrderItem), 0);
             if (totalPlannedDays > 0) {
-                const { workOrderDueDate } = await import('./planning');
                 fallbackEndDate = workOrderDueDate(effectiveStartDate, totalPlannedDays);
             }
         }
@@ -5725,9 +5730,26 @@ export async function applyStandardProcesses(
 
         at('Vrste proizvoda');
         const flowTemplates = await listProcessTemplates(organizationId);
+        const { flowFromChains } = await import('./processStandard');
+        const { layoutProcessGraph } = await import('./processLayout');
         for (const t of STANDARD_TEMPLATE_KEYWORDS) {
             const tpl = flowTemplates.find(x => normKey(x.name) === normKey(t.template));
-            if (tpl) await updateProcessTemplateKeywords(tpl.id, t.keywords, organizationId);
+            if (!t.chains?.length) {
+                if (tpl) await updateProcessTemplateKeywords(tpl.id, t.keywords, organizationId);
+                continue;
+            }
+            // Tok iz standarda zamjenjuje zatečeni: stari se kvario globalnim preimenovanjima
+            // („Kantiranje" krila je postalo „Kantiranje iverala").
+            const flow = flowFromChains(t.chains);
+            const pos = layoutProcessGraph(flow.nodes, flow.edges);
+            const data = {
+                nodes: flow.nodes.map(n => ({ ...n, position: pos[n.id] || { x: 24, y: 24 } })),
+                edges: flow.edges,
+                Product_Keywords: t.keywords,
+            };
+            const tplSnap = tpl ? await getDocs(query(collection(db, PROCESS_TEMPLATES), where('id', '==', tpl.id), where('Organization_ID', '==', organizationId))) : null;
+            if (tplSnap && !tplSnap.empty) await updateDoc(tplSnap.docs[0].ref, data);
+            else await addDoc(collection(db, PROCESS_TEMPLATES), { id: generateUUID(), Organization_ID: organizationId, name: t.template, ...data, Created_At: new Date().toISOString() });
         }
 
         at('Katalog procesa');
@@ -5749,6 +5771,9 @@ export async function applyStandardProcesses(
         const reordered = await reorderProcessCatalog(ordered.map(x => x.c.ID), organizationId);
         if (!reordered.success) return { success: false, message: `${step}: ${reordered.message}` };
 
+        at('Planovi vrsta proizvoda (vrata)');
+        const typePlans = await syncStandardTemplatePlans(organizationId);
+
         let recomputed = 0;
         if (opts.recomputeAutoPlans) {
             at('Automatski planovi proizvoda');
@@ -5762,12 +5787,64 @@ export async function applyStandardProcesses(
         }
         return {
             success: true, recomputed,
-            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila${keptRules ? ` (+${keptRules} tvojih ostaje)` : ''}, ${STANDARD_CATALOG.length} procesa u katalogu${consolidated.stats ? `, ${consolidated.stats.workLogsUpdated + consolidated.stats.workOrdersUpdated + consolidated.stats.productsUpdated} zapisa preimenovano` : ''}${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
+            message: `Standard primijenjen: ${STANDARD_RULES.length} pravila${keptRules ? ` (+${keptRules} tvojih ostaje)` : ''}, ${STANDARD_CATALOG.length} procesa u katalogu${consolidated.stats ? `, ${consolidated.stats.workLogsUpdated + consolidated.stats.workOrdersUpdated + consolidated.stats.productsUpdated} zapisa preimenovano` : ''}${typePlans ? `, ${typePlans} planova vrata usklađeno` : ''}${recomputed ? `, ${recomputed} planova preračunato` : ''}.`,
         };
     } catch (e) {
         console.error('applyStandardProcesses error:', step, e);
         return { success: false, message: `Greška (${step}): ${e instanceof Error ? e.message : String(e)}` };
     }
+}
+
+/**
+ * Planovi proizvoda čija vrsta ima standardni tok (vrata) usklađeni s novim šablonom:
+ * automatski se preračunaju iz šablona, ručno uređenima se samo zamijene stari nazivi
+ * (planRenames) — raspored ostaje korisnikov. U oba slučaja i stavke u nalozima u toku.
+ * Greška jednog proizvoda ne ruši ostale.
+ */
+async function syncStandardTemplatePlans(organizationId: string): Promise<number> {
+    const db = getDb();
+    const { STANDARD_TEMPLATE_KEYWORDS, flowFromChains, needsStandardPlanUpdate } = await import('./processStandard');
+    const { nameHasKeyword, stagesFromGraph, planToStages, flattenStages } = await import('./productProcesses');
+    const { buildRenameMap, renameStages, renameGraphNodes } = await import('./processConsolidation');
+    const { graphFromStages } = await import('./workDiary');
+    const withFlow = STANDARD_TEMPLATE_KEYWORDS
+        .filter(t => t.chains?.length)
+        .map(t => {
+            const flow = flowFromChains(t.chains!);
+            return { t, stages: stagesFromGraph({ nodes: flow.nodes.map(n => ({ ...n, itemIds: [] })), edges: flow.edges }) };
+        });
+    if (!withFlow.length) return 0;
+    const prodSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Organization_ID', '==', organizationId)));
+    let updated = 0;
+    for (const d of prodSnap.docs) {
+        const p = d.data() as Product;
+        if (p.Status === 'Otkazano') continue;
+        const hit = withFlow.find(x => nameHasKeyword(p.Name, x.t.keywords));
+        if (!hit) continue;
+        const stages = planToStages(p.Process_Stages, p.Process_Plan);
+        if (!needsStandardPlanUpdate({ stages, source: p.Process_Plan_Source }, hit.t, hit.stages)) continue;
+        try {
+            if (p.Process_Plan_Source !== 'manual') {
+                const res = await applyAutoProcessPlan(p.Product_ID, organizationId, { syncWorkOrders: true });
+                if (res.success) updated++;
+                continue;
+            }
+            const map = buildRenameMap(Object.entries(hit.t.planRenames || {}).map(([from, to]) => ({ canonical: to, members: [from] })));
+            const renamed = renameStages(stages, map);
+            const data: Record<string, unknown> = {
+                Process_Stages: renamed.map(s => ({ processes: s })),
+                Process_Plan: flattenStages(renamed),
+            };
+            if (p.Process_Graph?.nodes?.length) {
+                const g = renameGraphNodes(p.Process_Graph, map);
+                if (g.changed) data.Process_Graph = JSON.parse(JSON.stringify(g.graph));
+            }
+            await updateDoc(d.ref, data);
+            await syncProductPlanToWorkOrders(p.Product_ID, organizationId, graphFromStages(renamed));
+            updated++;
+        } catch (e) { console.error('syncStandardTemplatePlans:', p.Name, e); }
+    }
+    return updated;
 }
 
 /**
@@ -6213,11 +6290,13 @@ export async function createProductionSnapshot(
         // Zadrži postojeći Snapshot_ID → vanjske reference (Rezime naloga) ostaju važeće
         const snapshotId = (keep?.data().Snapshot_ID as string) || generateUUID();
 
-        const snapshot = buildProductionSnapshot({
+        // Firestore odbija `undefined` bilo gdje u dokumentu (npr. Material_Type_Coverage
+        // kad nalog nema materijala s poznatim tipom) — takva polja se izostave.
+        const snapshot = deepStripUndefined(buildProductionSnapshot({
             workOrder, project, offer, offerProducts, workLogs, workers,
             productsById, materialsByProduct, materialCatalogById,
             graph, productTypes: taxonomy, materialTypes: matTaxonomy, snapshotId,
-        });
+        }));
 
         if (keep) {
             // setDoc bez merge = PUNA zamjena: polja koja v3 više ne piše ne smiju

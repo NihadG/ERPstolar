@@ -11,7 +11,7 @@ import {
     toggleItemPause,
     getAllAttendanceByMonth,
 } from '@/lib/services';
-import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
+import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, itemsWithoutPlannedDays, itemPlannedDays, formatDays, type AttendanceLite } from '@/lib/planning';
 import { itemFinance, sumItemFinance, liveLogs, type ItemFinance } from '@/lib/projectFinance';
 import { useFinanceBasis } from '@/context/FinanceBasisContext';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog, Task } from '@/lib/types';
@@ -168,7 +168,7 @@ export default function WorkOrderExpandedDetail({
     // Predviđeni rok iz planiranih dana (isti model kao wizard: Σ dana sekvencijalno, subotnja rotacija)
     const dueSuggestion = useMemo(() => {
         if (workOrder.Status === 'Završeno' || workOrder.Status === 'Otkazano') return null;
-        const totalDays = (workOrder.items || []).reduce((s, it) => s + (it.Planned_Labor_Days || 0), 0);
+        const totalDays = (workOrder.items || []).reduce((s, it) => s + itemPlannedDays(it), 0);
         if (totalDays <= 0) return null;
         const startISO = (workOrder.Started_At || (workOrder as any).Planned_Start_Date || todayISO()).split('T')[0];
         const workerIds = Array.from(new Set(
@@ -615,7 +615,7 @@ export default function WorkOrderExpandedDetail({
                 {dueSuggestion && !dueSuggestionDismissed && (
                     <div className="wo-advisory">
                         <Clock size={14} />
-                        <span>Prema planu ({dueSuggestion.totalDays} radnih dana od {formatDate(dueSuggestion.startISO)}) predviđeni rok je <strong>{formatDate(dueSuggestion.suggested)}</strong>.</span>
+                        <span>Prema planu ({formatDays(dueSuggestion.totalDays)} radnih dana od {formatDate(dueSuggestion.startISO)}) predviđeni rok je <strong>{formatDate(dueSuggestion.suggested)}</strong>.</span>
                         <div className="wo-advisory-actions">
                             <button className="wo-advisory-btn" onClick={applySuggestedDue}>Ažuriraj rok</button>
                             <button className="wo-advisory-btn ghost" onClick={() => setDueSuggestionDismissed(true)}>Zanemari</button>

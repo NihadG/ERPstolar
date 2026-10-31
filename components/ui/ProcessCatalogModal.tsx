@@ -654,7 +654,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                         {stdPlan.templates.length > 0 && (<>
                             <h4>Vrste proizvoda</h4>
                             <ul>
-                                {stdPlan.templates.map(t => <li key={t.template}>Naziv sadrži <b>{t.keywords.join(', ')}</b> <ArrowRight size={12} className="pcm2-arrow" /> šablon „{t.template}" <span className="pcm2-dim">· {t.note}</span></li>)}
+                                {stdPlan.templates.map(t => <li key={t.template}>Naziv sadrži <b>{t.keywords.join(', ')}</b> <ArrowRight size={12} className="pcm2-arrow" /> šablon „{t.template}"{t.chains?.length ? ' (tok iz standarda)' : ''} <span className="pcm2-dim">· {t.note}</span></li>)}
                             </ul>
                         </>)}
                         {stdBusy && (

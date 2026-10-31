@@ -22,6 +22,7 @@ import {
 import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { MONTAZA_STEPS } from '@/lib/types';
 import { planToStages } from '@/lib/productProcesses';
+import { formatDays } from '@/lib/planning';
 import {
     useWorkOrderWizard, CREW_KEY, procLabel,
     type WizardMode, type WizardInitialProducts, type WorkOrderWizardState,
@@ -509,7 +510,7 @@ function CrewStep({ w, isMontaza, workers, tasks, onPicker, onCrewFor }: {
                 <FieldRow label="Početak">
                     <input type="date" value={w.startDate} onChange={e => w.setStartDate(e.target.value)} />
                 </FieldRow>
-                <FieldRow label="Rok" hint={w.totalPlannedDays > 0 ? `${w.totalPlannedDays} radnih dana` : undefined}>
+                <FieldRow label="Rok" hint={w.totalPlannedDays > 0 ? `${formatDays(w.totalPlannedDays)} radnih dana` : undefined}>
                     <input type="date" value={w.dueDate} onChange={e => w.setDueDate(e.target.value)} />
                 </FieldRow>
                 <FieldRow label="Napomena" hint="opciono">
@@ -518,7 +519,7 @@ function CrewStep({ w, isMontaza, workers, tasks, onPicker, onCrewFor }: {
             </MList>
             {w.suggestedDueDate && w.suggestedDueDate !== w.dueDate && (
                 <button type="button" className="mwz-suggest" onClick={() => w.setDueDate(w.suggestedDueDate)}>
-                    Predloženi rok {shortDate(w.suggestedDueDate)} — iz {w.totalPlannedDays} planiranih dana · Primijeni
+                    Predloženi rok {shortDate(w.suggestedDueDate)} — iz {formatDays(w.totalPlannedDays)} planiranih dana · Primijeni
                 </button>
             )}
 
@@ -591,24 +592,24 @@ function CrewStep({ w, isMontaza, workers, tasks, onPicker, onCrewFor }: {
                     <AlertTriangle size={16} />
                     <div>
                         {noWorker && <p><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</p>}
-                        {w.undefinedProducts.length > 0 && (
-                            <p><b>Nedefinisani proizvodi</b> (cijena/rok): {w.undefinedProducts.join(', ')} — nalog možeš pokrenuti; cijena i profit se povežu sami kad ponuda bude prihvaćena ili dopunjena.</p>
+                        {w.unpricedProducts.length > 0 && (
+                            <p><b>Bez prihvaćene ponude:</b> {w.unpricedProducts.join(', ')} — nalog možeš pokrenuti; profit se ne računa dok ponuda ne bude prihvaćena, onda se poveže sam.</p>
+                        )}
+                        {w.undatedProducts.length > 0 && (
+                            <p><b>Bez planiranih dana u ponudi:</b> {w.undatedProducts.join(', ')} — predloženi rok ih ne uključuje.</p>
                         )}
                     </div>
                 </div>
             )}
 
-            {/* ── Finansije (proizvodnja) ── */}
+            {/* ── Finansije (proizvodnja) — samo proizvodi s prihvaćenom ponudom ── */}
             {w.wizardFin && (
                 <>
-                    <MSection title="Finansije naloga" />
+                    <MSection title={w.wizardFin.priced < w.wizardFin.total ? `Finansije · ${w.wizardFin.priced} od ${w.wizardFin.total} s ponudom` : 'Finansije naloga'} />
                     <MList>
                         <FinRow label="Vrijednost" value={w.fmtKM(w.wizardFin.value)} />
                         <FinRow label="Materijal" value={w.fmtKM(w.wizardFin.material)} />
-                        <FinRow label={`Planirani rad${w.totalPlannedDays > 0 ? ` · ${w.totalPlannedDays} d` : ''}`} value={w.fmtKM(w.wizardFin.plannedLabor)} />
-                        {(w.wizardFin.transport > 0 || w.wizardFin.services > 0) && (
-                            <FinRow label="Transport + usluge" value={w.fmtKM(w.wizardFin.transport + w.wizardFin.services)} />
-                        )}
+                        <FinRow label={`Planirani rad${w.totalPlannedDays > 0 ? ` · ${formatDays(w.totalPlannedDays)} d` : ''}`} value={w.fmtKM(w.wizardFin.plannedLabor)} />
                         <MItem>
                             <MCell>
                                 <MText title={<b>Procijenjeno ostaje</b>} />
