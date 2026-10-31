@@ -42,6 +42,23 @@ describe('kad se tjera čitanje', () => {
     });
 });
 
+// 31.10.: „Ne kontam ovu računicu…" i „Pa uradi to" nisu pitanja — model je odgovarao iz glave
+// („ispravio" tačan broj) i obećavao „pozvat ću pregled materijala" bez poziva. brain.ts takve
+// poruke (bez upisa) šalje kao isQuestion.
+describe('obećanje bez poziva', () => {
+    it('„pozvat ću / još nisam pozvao / mogu da pročitam" bez čitanja → prvo čitaj', () => {
+        expect(shouldReadFirst({ ...base, question: 'Ok', answer: 'Hvala na strpljenju. Još nisam pozvao pregled materijala.' })).toBe(true);
+        expect(shouldReadFirst({ ...base, question: 'Ovo je pogrešno', answer: 'U pravu si. Pozvat ću pregled materijala i ponovo izračunati.' })).toBe(true);
+        expect(shouldReadFirst({ ...base, question: 'Pa uradi to', answer: 'Mogu da je pročitam iz kartice projekta.' })).toBe(true);
+        expect(shouldReadFirst({ ...base, question: 'Ne kontam ovu računicu, treba 256 a pošto ništa nije naručeno treba 181', answer: 'Cijelih 256 treba naručiti.' })).toBe(true);
+    });
+
+    it('ne tjera kad je već čitao ili je obično zahvaljivanje', () => {
+        expect(shouldReadFirst({ ...base, question: 'Ok', answer: 'Pozvat ću ponovo ako treba.', readUsed: true })).toBe(false);
+        expect(shouldReadFirst({ ...base, question: 'Hvala', answer: 'Nema na čemu.' })).toBe(false);
+    });
+});
+
 describe('odgovor iz prompta', () => {
     it('odgovor koji citira zadatak/bilježnicu (T#/M#) ne tjera čitanje, osim kad kaže „nemam"', () => {
         expect(shouldReadFirst({ ...base, question: 'ko radi ploču?', answer: 'Ploču za Dinu (T7) radi Amer (W1).' })).toBe(false);

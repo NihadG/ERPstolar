@@ -42,6 +42,31 @@ function terms(text: string): string[] {
     return text.split(/\s+/).map(cleanTerm).filter(t => t && !/^(or|and|around)$/i.test(t)).slice(0, 8);
 }
 
+// ── Padeži (31.10.): „staklo za Dinu" → mail „Narudzba stakala - Dino Kuća".
+// Gmail traži tačnu riječ, pa ERP riječ proširi na njene oblike:
+// osnova bez padežnog nastavka + česti nastavci, i nepostojano a
+// („stakl-o" → „stakala"). Šifre i brojevi („A406", „2257x110") ostaju tačni.
+
+const ENDINGS = ['ima', 'ama', 'om', 'em', 'a', 'e', 'i', 'o', 'u'];
+const FORMS = ['', 'a', 'e', 'i', 'o', 'u', 'om', 'ima'];
+
+/** Oblici jedne riječi; riječ koja nije obična (šifra, broj, kratka) → samo ona. */
+export function wordForms(word: string): string[] {
+    const w = word.toLowerCase();
+    if (w.length < 4 || !/^[a-zčćšžđ]+$/.test(w)) return [word];
+    const end = ENDINGS.find(e => w.endsWith(e) && w.length - e.length >= 3);
+    const stem = end ? w.slice(0, -end.length) : w;
+    const forms = FORMS.map(f => stem + f);
+    // Nepostojano a u genitivu množine: stakl → stakala, ogledal → (ništa).
+    if (/[^aeiou][lrnkmtvd]$/.test(stem) && !/(nj|lj|dž)$/.test(stem)) forms.push(`${stem.slice(0, -1)}a${stem.slice(-1)}a`);
+    return Array.from(new Set([w, ...forms]));
+}
+
+function wordTerm(word: string): string {
+    const forms = wordForms(word);
+    return forms.length === 1 ? forms[0] : `{${forms.join(' ')}}`;
+}
+
 const email = (a: string) => /^[^\s@{}()"<>:]+@[^\s@{}()"<>:]+\.[a-z]{2,}$/i.test(a) ? a.toLowerCase() : '';
 const domain = (d: string) => /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i.test(d) ? d.toLowerCase() : '';
 const name = (n: string) => cleanTerm(n).split(/\s+/)[0].toLowerCase();
@@ -58,7 +83,7 @@ export function gmailQuery(s: MailSearch): string {
     const phrase = terms(s.phrase || '').join(' ');
     if (!words.length && !people.length && !names.length && !phrase) return '';
 
-    parts.push(...words);
+    parts.push(...words.map(wordTerm));
     const who: string[] = [];
     const sides = [...people, ...names];
     if (sides.length) {

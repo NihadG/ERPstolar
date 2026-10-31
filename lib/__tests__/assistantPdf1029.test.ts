@@ -226,7 +226,20 @@ describe('3. Koji iveral je išao za Švicarsku / umivaonike', () => {
         const res: any = await runTool(env('Koji iveral smo koristili za umivaonike'), 'product_materials', { orders: ['R2'], material: 'iveral' });
         expect(res.ok).toBe(true);
         expect(res.materials).toHaveLength(1);
-        expect(res.materials[0]).toMatch(/^Iveral \/ U960 ST9 Onyx siva — 0.4 Kom · Na stanju · Elgrad · proizvodi: WHG 0.1 Waschtisch Bad/);
+        expect(res.materials[0]).toMatch(/^Iveral \/ U960 ST9 Onyx siva — 0.4 Kom · za naručiti 0, pokriveno 0.4 · Na stanju · Elgrad · proizvodi: WHG 0.1 Waschtisch Bad: 0.4 ✓ Na stanju/);
+    });
+
+    // 31.10.: „Koliko treba furnira" → „treba 256, ništa nije naručeno, za naručiti 181" bez objašnjenja;
+    // na „ne kontam" model se „ispravio" na 256. ERP sad kaže koliko je po proizvodu i šta je pokriveno.
+    it('vrsta materijala: ukupno, za naručiti i pokriveni proizvodi (završena uzglavlja na stanju)', async () => {
+        store.set('products/p-u2', { Product_ID: 'p-u2', Organization_ID: ORG, Project_ID: 'ps', Name: 'Uzglavlje kreveta', Quantity: 10 });
+        store.set('product_materials/m5', { ID: 'm5', Organization_ID: ORG, Product_ID: 'p-u2', Material_Name: 'Furnir / Hrast', Quantity: 1.5, Unit: 'm2', Unit_Price: 0, Total_Price: 0, Status: 'Na stanju' });
+        const res: any = await runTool(env('Koliko treba furnira za Švicarsku'), 'product_materials', { project: 'P2', material: 'furnir' });
+        expect(res.materials).toHaveLength(1);
+        expect(res.materials[0]).toMatch(/^Furnir \/ Hrast — 16.5 m2 · za naručiti 1.5, pokriveno 15 · /);
+        expect(res.materials[0]).toContain('WHG 0.1 Waschtisch Bad: 1.5');
+        expect(res.materials[0]).toContain('Uzglavlje kreveta ×10: 15 (1.5/kom) ✓ Na stanju');
+        expect(res.note).toContain('Za naručiti');
     });
 
     it('kant je zasebna vrsta, a pogrešan proizvod nudi popis proizvoda', async () => {

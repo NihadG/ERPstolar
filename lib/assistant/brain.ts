@@ -501,7 +501,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             if (!uses.length) {
                 const text = plainText(textOf(res));
                 // Pitanje o podacima ili „nemam / ne vidim" bez ijednog čitanja ERP-a → prvo čitaj (lib/assistant/readGuard).
-                if (shouldReadFirst({ isQuestion, readUsed, readAsked, changed: env.changes.length > 0, question: pre.text, answer: textOf(res) })) {
+                // I poruka bez upisa („ne kontam ovu računicu", „pa uradi to") — inače model „ispravlja" iz glave.
+                if (shouldReadFirst({ isQuestion: isQuestion || (!intent.expectsWrite && !asksBack(text)), readUsed, readAsked, changed: env.changes.length > 0, question: pre.text, answer: textOf(res) })) {
                     readAsked = true;
                     sig.readGuard = true;
                     forceTool = true;

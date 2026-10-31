@@ -16,6 +16,12 @@ import { foldText } from '@/lib/voice/text';
 /** Odgovor „nemam podatak": bez čitanja je to pogađanje. */
 export const NO_DATA = /\b(nemam|ne znam|nije zapisan\w*|nisam nasao|nisam pronasao|ne vidim|nema podatak\w*|nema evidencij\w*|nemam evidencij\w*|nisam siguran|ne mogu (sigurno )?(odrediti|reci|znati)|ne pokazuje)\b/;
 
+/**
+ * Obećanje bez poziva (31.10.): „pozvat ću pregled materijala…", pa na „Ok"
+ * „još nisam pozvao". Ko kaže da će pogledati, a nije, mora pogledati sad.
+ */
+export const PROMISE = /\b(pozvat cu|pozvacu|provjerit cu|provjericu|pogledat cu|pogledacu|pretrazit cu|pretrazicu|procitat cu|procitacu|izracunat cu|izracunacu|ponovo izracunati|nisam (jos )?(pozvao|pogledao|provjerio|procitao|izracunao|pretrazio)|mogu (da )?(je |ga |to )?(procitam|pogledam|provjerim|pretrazim))\b/;
+
 /** Pitanje traži podatke iz ERP-a (sastavnica, narudžbe, nalozi, Knjiga rada, isporuke). */
 const DATA_TERMS = /\b(iveral\w*|dekor\w*|materijal\w*|kant\w*|mdf|hdf|furnir\w*|lak\w*|okov\w*|sark\w*|vodilic\w*|ladic\w*|ogledal\w*|stakl\w*|ploc\w*|narudzb\w*|narucen\w*|naruci\w*|nalog\w*|proizvod\w*|projek\w*|radio|radili|radila|radjen\w*|krojio|krojil\w*|poce\w*|pocel\w*|zavrs\w*|gotov\w*|stig\w*|spremn\w*|dobavljac\w*|isporuc\w*|koliko|kad smo|kada smo|ko je)\b/;
 
@@ -28,8 +34,10 @@ export function asksForData(question: string): boolean {
 }
 
 /**
- * Treba li natjerati model da prvo čita: pitanje, nije čitao, nije upisivao,
- * nije već tjeran — i ili pita podatke ili odgovara „nemam / ne vidim".
+ * Treba li natjerati model da prvo čita: pitanje (ili poruka koja ne traži
+ * upis — „ne kontam ovu računicu", „pa uradi to"), nije čitao, nije upisivao,
+ * nije već tjeran — i ili pita podatke, ili odgovara „nemam / ne vidim", ili
+ * obećava da će pogledati.
  */
 export function shouldReadFirst(s: {
     isQuestion: boolean; readUsed: boolean; readAsked: boolean; changed: boolean; question: string;
@@ -37,7 +45,7 @@ export function shouldReadFirst(s: {
     answer: string;
 }): boolean {
     if (!s.isQuestion || s.readUsed || s.readAsked || s.changed) return false;
-    if (NO_DATA.test(foldText(s.answer))) return true;
+    if (NO_DATA.test(foldText(s.answer)) || PROMISE.test(foldText(s.answer))) return true;
     // Odgovor iz zadataka/bilježnice koji su već u promptu („Ploču za Dinu (T7) radi Amer") — čitanje ne treba.
     if (/\b[TM]\d+\b/.test(s.answer)) return false;
     return asksForData(s.question);
