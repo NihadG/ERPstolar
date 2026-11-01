@@ -60,6 +60,8 @@ export function mergeSignals(prev: string[] | undefined, turn: string[]): string
 
 const CORRECTION_START = /^(ne|nije|nisi|nisam|pogresno|pogresan|krivo|zasto|kako ne|kako nisi|opet|ponovo|nije tacno|nije to|ma ne|ali ne|ali nisi|ali ima|ali je|trebao si|trebas|a sta je sa|ima u mailu|ima u posti)\b/;
 
+const COMPLAINT = /\b(los|losa|lose|loso|losija|ne valja|nevalja|ne valjaju|pogresn\w*|kakve veze|nema veze|nije dobr\w*|ne stima|nije tacn\w*|sta je ovo|glupost\w*|uzas)\b/;
+
 const words = (t: string) => new Set(foldText(t).split(/\s+/).filter(w => w.length >= 3));
 
 /**
@@ -69,6 +71,8 @@ const words = (t: string) => new Set(foldText(t).split(/\s+/).filter(w => w.leng
 export function isCorrection(text: string, previous: string): boolean {
     const t = foldText(text).trim();
     if (CORRECTION_START.test(t)) return true;
+    // Pritužba bilo gdje na početku poruke („Tabela loša, u C lameli…", „Kakve veze ima hodnik…").
+    if (COMPLAINT.test(t.split(/\s+/).slice(0, 6).join(' '))) return true;
     const a = words(text), b = words(previous);
     if (a.size < 3 || b.size < 3) return false;
     const same = Array.from(a).filter(w => b.has(w)).length;

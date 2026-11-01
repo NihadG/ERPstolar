@@ -31,6 +31,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 30.10.2026 ponavljanje 12 palih i susjednih poslije P-008 | 12 | 6 | 3 | 2 | 1 | 0 | — | — | — |
 | 31.10.2026 (101 poruka od 17.10.; problemi iz jednog razgovora 08:21–08:43) | 101 | 31 | 32 | 1 | 1 | 6 | 9 | 0 | 25.207 |
 | 01.11.2026 ponavljanje istih 45, sve na Haiku (trošak: $0,55 → $0,07) | 45 | 27 | 15 | 1 | 2 | 0 | — | — | 12.409 |
+| 01.11.2026 (17 poruka od 31.10. 18:08; prvi test tabela 11:49–11:52) | 17 | 9 | 8 | 0 | 0 | 0 | 1 | 0 | 26.774 |
 
 ## Otvorene potrebe
 
@@ -54,6 +55,10 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | P-016 | „Naruči sada jedan komad“ (ponovi narudžbu iz maila) → ERP narudžba s krivim materijalom, kom → m², i dopisano u sastavnicu | 31.10. `de1c35f7`: 1 kom stakla 2257×110×8 → „1 m² Staklo / Flutes“ na drugom proizvodu, +0,52 m² u sastavnicu | argumenti | otvoreno — stavka iz maila nije materijal iz sastavnice; treba pitati dugmadima ili napraviti stavku bez sastavnice | — |
 | P-017 | Nacrt maila: osoba je u imeniku pošte, ali ne u Kontaktima → `email_contact` pada; „ne treba PDF“ ignorisano | 31.10. `528aacc3`, `79f35c10` | integracija | otvoreno — Kontakti dobavljača dopunjeni 31.10.; ostaje imenik kao rezerva za nacrt i „bez PDF-a“ = `email_contact` | — |
 | P-018 | Ime iz diktata („Sijerku“ umjesto „Jerku“) i zadatak vezan za nasumičnu narudžbu | 31.10. `0f359344` | argumenti | otvoreno | — |
+| P-019 | Tabela: ERP pogrešno pročita kolone iz poruke i pregazi modelove tačne | 01.11. `128fb37c`: „razvrstaj u kolone, stan ogledalo/umivaonik, fali/nije montirano/ima u stanu, dimenzije, komada“ → „stan ogledalo/umivaonik“ (bez zareza) postala jedna kolona predmeta, a „fali/nije montirano/ima u stanu“ odbačena kao preduga (31 znak) → tabela bez Stana i bez stanja. Model je poslao tačnih 5 kolona. Usput: „sva ogledala“ bez količine piše „1 kom“, „š 800“ ostaje u predmetu | argumenti (ERP parser) | urađeno na grani `feature/tabele-temelj`: kolone po nazivu i vrijednostima iz podataka, razlaganje bez zareza, ništa ne nestaje tiho; prazna količina; „š 800" | — |
+| P-020 | Tabela: stvar na hodniku za stan druge lamele ide pod lamelu hodnika | 01.11. `c75cac29` „u C lameli ima i od E lamele“: umivaonik za E501 stoji na Hodniku C5 → svrstan u C; kolona Stan pokazuje hodnik, ne stan za koji je | pravilo (ERP) | urađeno na grani: stan = stan za koji je stvar, uz „(Hodnik C5)"; važi i za spisak | — |
+| P-021 | Tabela zadataka (lista za provjeru) ne postoji; model napravi tabelu iz bilježnice s predmetom koji nije rečen | 01.11. `db94e5f7` „tabelu šta sve trebam kod Selima provjeriti“ → bilježnica, predmet „umivaonik“, 1 red s hodnika; `0b87700e` „napravi ispravnu tabelu“ → „alat čita samo bilježnicu i materijale“ | mogućnost + argumenti | dijelom: nerečen filter se odbija (model dobije razlog); izvor „zadaci" je sljedeći korak | — |
+| P-022 | Pritužba bez „ne/nije“ na početku ne daje signal, pa je revizija ne vidi | 01.11. „Tabela loša, u C lameli…“, „Kakve veze ima hodnik sa Selimom“ — trijaža: 0 signala za tabele | mogućnost (signali) | urađeno na grani: „loša", „ne valja", „kakve veze"… daju signal ispravke | — |
 
 ## Urađeno
 
