@@ -173,12 +173,25 @@ export interface NotebookFilter {
     state?: string;
 }
 
-/** Lamela stavke: slovo lokacije, a za stvar na hodniku/u kombiju — stan za koji je („za C502"). */
-export function letterOf(m: MemoryItem): string {
+/**
+ * Stan za koji je stvar: stan u kojem stoji, a za stvar na hodniku/u kombiju — stan iz
+ * naslova („Umivaonik za E501" na Hodniku C5 je za E501, lamela E). Bez stana → gdje stoji.
+ */
+export function targetOf(m: MemoryItem): { stan: string; letter: string; elsewhere: boolean } {
     const own = parseLoc(m.Location || '');
-    if (own?.letter) return own.letter;
-    const target = /\bza ([a-z])\s?-?(\d{1,4})\b/.exec(foldText(m.Title || ''));
-    return target ? target[1].toUpperCase() : '';
+    const isFlat = !!own && !own.kind && !own.other && !!own.letter;
+    if (isFlat) return { stan: format(own!), letter: own!.letter, elsewhere: false };
+    const t = /\bza ([a-z])?\s?-?(\d{2,4})\b/.exec(foldText(m.Title || ''));
+    if (t) {
+        const letter = (t[1] || own?.letter || '').toUpperCase();
+        return { stan: `${letter}${t[2]}`, letter, elsewhere: !!m.Location };
+    }
+    return { stan: m.Location || '', letter: own?.letter || '', elsewhere: false };
+}
+
+/** Lamela stavke = lamela stana za koji je (targetOf). */
+export function letterOf(m: MemoryItem): string {
+    return targetOf(m).letter;
 }
 
 export function filterNotebook(items: MemoryItem[], f: NotebookFilter): MemoryItem[] {

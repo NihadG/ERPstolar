@@ -59,8 +59,11 @@ import { createContactDraft, createOrderDraft, DraftError, loadContacts } from '
 import { GmailError } from '@/lib/server/gmail';
 import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
 import { queryTokens } from '@/lib/command/search';
-import { requestedColumns, type TableDoc } from '@/lib/tables/table';
-import { MATERIAL_STATUSES, TABLE_SOURCES, materialsTable, notebookTable } from '@/lib/tables/sources';
+import type { TableDoc } from '@/lib/tables/table';
+import { requestedColumns } from '@/lib/tables/columns';
+import type { EngineResult } from '@/lib/tables/engine';
+import { groundedScope, saidIn } from '@/lib/tables/grounding';
+import { MATERIAL_STATUSES, TABLE_SOURCES, materialsTable, notebookTable, type MaterialStatus, type TableAsk } from '@/lib/tables/sources';
 import { loadTableMaterials } from '@/lib/server/tableData';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
@@ -410,12 +413,19 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'make_table',
-        description: 'TABELA kao PDF u chat („napravi tabelu…", „u tabeli…", „u kolonama…"). ERP učita podatke, složi kolone, redove i zbir i pošalje PDF — ti ne pišeš redove i ne prepričavaš. Izvori: biljeska (stvari po stanovima: predmet, mjere, količina, stanje) i materijali (sastavnice projekata: za naručiti, naručeno, stiglo). Tabela iz nečega drugog → reci da za sada postoje te dvije.',
+        description: 'TABELA kao PDF u chat („napravi tabelu…", „u tabeli…", „u kolonama…"). ERP učita podatke, složi kolone, redove i zbir i pošalje PDF — ti ne pišeš redove i ne prepričavaš. Izvori: biljeska (stvari po stanovima — polja: stan, lamela, gdje stoji, predmet, mjere, količina, stanje, napomena, upisano, oznake) i materijali (sastavnice projekata — materijal, količina, jedinica, dobavljač, projekat, proizvod, potrebno, naručeno, primljeno, na stanju, u nacrtu, cijena, iznos, status). Filtere stavljaj SAMO s riječima koje je korisnik rekao. Tabela iz nečega drugog (zadaci, narudžbe…) → reci da za sada postoje te dvije, ne pravi zamjensku.',
         input_schema: {
             type: 'object',
             properties: {
                 source: enumOf(['biljeska', 'materijali']),
                 columns: { ...strList, description: 'Kolone tačno kako ih je korisnik rekao, istim redom („stan", „umivaonik/ogledalo", „dimenzije"). Bez toga = podrazumijevane.' },
+                filters: {
+                    type: 'array',
+                    description: 'Ostali filteri po bilo kojem polju izvora: {field: „dobavljač", values: ["Blum"]}; not=true = bez toga.',
+                    items: { type: 'object', properties: { field: str, values: strList, not: bool }, required: ['field', 'values'] },
+                },
+                group_by: { ...str, description: 'Grupisanje kad je rečeno („po dobavljaču"); „ništa" = bez grupa.' },
+                sort: { ...str, description: 'Redoslijed kad je rečen („po stanu", „po količini").' },
                 subjects: { ...strList, description: 'biljeska: predmeti u osnovnom obliku (["ogledalo", "umivaonik"]). Bez toga = sve stvari.' },
                 locations: { ...strList, description: 'biljeska: lamele (["E", "C"]) ili tačne lokacije (["E308", "kombi"]).' },
                 state: { ...enumOf(['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS]), description: 'biljeska: otvoreno (podrazumijevano) = nije postavljeno.' },
@@ -2730,33 +2740,48 @@ async function listNotebookTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 }
 
 /**
- * Tabela kao PDF: model kaže izvor i filter, ERP učita, složi i pošalje. Kolone ERP
- * čita iz poruke („u kolonama …"); modelove samo kad ih u poruci ne nađe.
+ * Tabela kao PDF: model kaže izvor i filter, ERP učita, složi i pošalje (lib/tables).
+ * Kolone: iz poruke ili modelove — šta pokrije više riječi. Filter s vrijednošću koju
+ * korisnik nije rekao se odbija; nerečeno stanje → podrazumijevano, uz napomenu.
  */
 async function makeTableTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const source = TABLE_SOURCES.find(s => s === a.source);
     if (!source) return { ok: false, error: 'Izvor tabele: biljeska ili materijali.' };
     const list = (v: unknown, max: number, len: number) => (Array.isArray(v) ? v.map(x => text(x, len)).filter(Boolean).slice(0, max) : []);
-    const fromText = requestedColumns(env.messageText || '');
-    const columns = fromText.length ? fromText : list(a.columns, 12, 40);
+    const spoken = env.groundText ?? env.messageText ?? '';
+    const ask: TableAsk = {
+        textColumns: requestedColumns(env.messageText || ''),
+        modelColumns: list(a.columns, 12, 60),
+        filters: (Array.isArray(a.filters) ? a.filters : []).slice(0, 8).flatMap(f => {
+            const x = (f || {}) as Args;
+            const field = text(x.field, 40);
+            return field ? [{ field, values: list(x.values, 12, 60), not: x.not === true }] : [];
+        }),
+        groupBy: text(a.group_by, 40) || undefined,
+        sort: text(a.sort, 40) || undefined,
+        said: saidIn(spoken),
+    };
     const day = toZoned(env.now.toISOString(), env.tz).date;
 
-    let table: TableDoc;
+    let res: EngineResult;
     if (source === 'biljeska') {
-        const state = typeof a.state === 'string' && ['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS].includes(a.state) ? a.state : 'otvoreno';
-        const all = await listMemory(env.orgId, env.uid, state !== 'otvoreno');
-        table = notebookTable(all, { subjects: list(a.subjects, 8, 60), locations: list(a.locations, 12, 40), state }, columns,
-            { since: iso => shortDay(iso, env.tz), day });
+        const wanted = typeof a.state === 'string' && ['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS].includes(a.state) ? a.state : 'otvoreno';
+        const state = groundedScope('biljeska', wanted, 'otvoreno', spoken);
+        const all = await listMemory(env.orgId, env.uid, state.value !== 'otvoreno');
+        res = notebookTable(all, { subjects: list(a.subjects, 8, 60), locations: list(a.locations, 12, 40), state: state.value }, ask,
+            { since: iso => shortDay(iso, env.tz), day, notes: state.note ? [state.note] : [] });
     } else {
         const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
         if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
-        const status = MATERIAL_STATUSES.find(s => s === a.status) || 'za_naruciti';
+        const status = groundedScope('materijali', MATERIAL_STATUSES.find(s => s === a.status) || 'za_naruciti', 'za_naruciti', spoken);
         const { rows, projects } = await loadTableMaterials(env.orgId, project ? [project.id] : null);
-        table = materialsTable(rows, {
-            status, supplier: text(a.supplier, 80) || undefined, material: text(a.material, 60) || undefined,
+        res = materialsTable(rows, {
+            status: status.value as MaterialStatus, supplier: text(a.supplier, 80) || undefined, material: text(a.material, 60) || undefined,
             scope: project ? projectLabel(project) : `projekti na kojima se radi (${projects})`,
-        }, columns, { day });
+        }, ask, { day, notes: status.note ? [status.note] : [] });
     }
+    if (!res.ok) return { ok: false, error: res.error };
+    const table = res.table;
 
     if (!table.rowCount) {
         env.summaries.push(`📋 ${table.title} — ${table.subtitle.replace(/ · 0 redova/, '')}: nema ničega.`);
