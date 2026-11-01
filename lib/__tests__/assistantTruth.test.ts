@@ -150,13 +150,14 @@ describe('faza C: podsjetnici i zadaci (stvarne poruke 23.10.)', () => {
         session = { history: [], pending: null };
     });
 
-    it('„Neka imer napravi Dini dasku" — model samo odgovori → ERP traži upis (jači model) → zadatak za Imera', async () => {
+    it('„Neka imer napravi Dini dasku" — model samo odgovori → ERP traži upis (isti Haiku, 01.11.) → zadatak za Imera', async () => {
         const out = await say('Neka imer napravi Dini dasku', [
             { text: 'U redu, prenijeću.' },
             { calls: [{ name: 'create_task', args: { title: 'Napraviti dasku za Dinu', category: 'manufacturing', worker: 'W2' } }] },
         ]);
         expect(mockSent[0].messages.at(-1).content).toMatch(/vrsta: zadatak za radnika .*; radnici: Imer Plećan \(W2\)/);
-        expect(mockSent[1]).toMatchObject({ model: 'claude-sonnet-5-5', tool_choice: { type: 'any' } });
+        // Jači krug je zadano isti Haiku (ponavljanje 45 poruka: isti kvalitet, ~87% jeftinije); ASSISTANT_MODEL_STRONG ga mijenja.
+        expect(mockSent[1]).toMatchObject({ model: 'claude-haiku-5-5', tool_choice: { type: 'any' } });
         expect(mockSent[1].messages.at(-1).content).toMatch(/ERP: poruka traži upis \(task\)/);
         expect(tasks().map(t => `${t.Title}|${t.Assigned_Worker_Name}`)).toEqual(['Napraviti dasku za Dinu|Imer Plećan']);
         expect(out.outcome).toBe('written');

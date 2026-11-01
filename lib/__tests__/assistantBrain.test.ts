@@ -384,7 +384,8 @@ describe('narudžbe preko asistenta', () => {
         const [item] = orderItems(order.Order_ID);
         expect(item).toMatchObject({ Quantity: 5, Unit: 'kom', Status: 'Na čekanju', Project_ID: 'p-grb', Expected_Price: 10 });
         expect(Object.values(item.Product_Material_Quantities).reduce((s: number, n: any) => s + n, 0)).toBe(5);
-        expect(out.reply).toMatch(/🧾 Narudžba N2026-10\/\w+ · Häfele \(nacrt\)\n• 5 kom Baglama ravna — .* \(ostaje još 20 kom\)/);
+        // Broj narudžbe nosi stvarni mjesec (N2026-11/…), ne datum poruke — test ne smije zavisiti od dana pokretanja.
+        expect(out.reply).toMatch(/🧾 Narudžba N\d{4}-\d{2}\/\w+ · Häfele \(nacrt\)\n• 5 kom Baglama ravna — .* \(ostaje još 20 kom\)/);
         expect(out.documents).toEqual([{ orderId: order.Order_ID, draft: true }]);
         // Materijali se pri nacrtu ne diraju (kao u ERP-u).
         expect(docs('product_materials').every(m => !m.Ordered_Quantity)).toBe(true);
@@ -413,7 +414,7 @@ describe('narudžbe preko asistenta', () => {
 
     it('„Poslano" pomjera materijale i status; ostatak ostaje za naručivanje', async () => {
         const result = await sendOrder('org1', firstOrderId);
-        expect(result).toEqual({ ok: true, orderNumber: expect.stringMatching(/^N2026-10\//), materials: 2 });
+        expect(result).toEqual({ ok: true, orderNumber: expect.stringMatching(/^N\d{4}-\d{2}\//), materials: 2 });
         const mats = docs('product_materials').filter(m => m.Product_ID === 'pr-kuh' || m.Product_ID === 'pr-hod');
         expect(mats.reduce((s, m) => s + (m.Ordered_Quantity || 0), 0)).toBe(5);
         expect(mats.every(m => m.Status === 'Naručeno' && m.Order_ID === firstOrderId)).toBe(true);
@@ -428,7 +429,7 @@ describe('narudžbe preko asistenta', () => {
 
     it('poslana narudžba se ne briše na ↩️ Poništi', async () => {
         const labels = await undoTurn(firstTurn, 'u1');
-        expect(labels).toEqual([expect.stringMatching(/^ništa — narudžba N2026-10\/\w+ je već poslana/)]);
+        expect(labels).toEqual([expect.stringMatching(/^ništa — narudžba N\d{4}-\d{2}\/\w+ je već poslana/)]);
         expect(docs('orders').some(o => o.Order_ID === firstOrderId)).toBe(true);
         expect(orderItems(firstOrderId)).toHaveLength(1);
     });

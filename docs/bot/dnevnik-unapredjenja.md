@@ -30,6 +30,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 30.10.2026 ponavljanje istih 45 kroz novog bota (#38–#46) | 45 | 24 | 12 | 3 | 0 | 6 | — | — | 12.292 |
 | 30.10.2026 ponavljanje 12 palih i susjednih poslije P-008 | 12 | 6 | 3 | 2 | 1 | 0 | — | — | — |
 | 31.10.2026 (101 poruka od 17.10.; problemi iz jednog razgovora 08:21–08:43) | 101 | 31 | 32 | 1 | 1 | 6 | 9 | 0 | 25.207 |
+| 01.11.2026 ponavljanje istih 45, sve na Haiku (trošak: $0,55 → $0,07) | 45 | 27 | 15 | 1 | 2 | 0 | — | — | 12.409 |
 
 ## Otvorene potrebe
 
@@ -40,7 +41,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | P-003 | Greške bez PDF-a sa slikama ekrana | PDF-ovi 28.10., 29.10., 30.10. | mogućnost | spojeno, čeka prvu napomenu „loše: …“ | #45 |
 | P-004 | Revizija na komandu i ovaj dnevnik | PDF 30.10., str. 1 | mogućnost | u PR-u | ovaj |
 | P-005 | Gmail povezan, Kontakti uvezeni | bez toga pošta radi samo preko domena dobavljača i imenika; 31.10. nacrt za osobu iz Stakloreza pao jer nije bila u Kontaktima | podatak | Gmail povezan; 31.10. dodane sve adrese šest dobavljača (ne samo info@) | — |
-| P-006 | Ponavljanje 45 stvarnih poruka (korak 6) | izvoz postoji lokalno | — | **čeka tebe**: `ANTHROPIC_API_KEY` u `.env.local` | — |
+| P-006 | Ponavljanje 45 stvarnih poruka (korak 6) | izvoz postoji lokalno | — | urađeno 30.10. i 01.11. (ključ u `.env.local`) | #47 |
 | P-007 | Izmjena toka procesa porukom, „Zapamti“, procenat urađenog | PDF 29.10. | mogućnost | otvoreno | — |
 | P-008 | „AI se trenutno ne javlja“ kad ERP traži obavezan alat | ponavljanje 30.10.: 6 od 45 poruka pada s 400 „tool_choice … not supported“ na jačem modelu (Sonnet 5.5); isto u produkciji 30.10. ujutro | model | popravljeno: bez prisile kad je model odbije, pamti se po modelu; ponovljeno 6/6 bez greške | ovaj PR |
 | P-009 | „Sumiraj zadnja 3 maila od [dobavljača]“ se tumači kao slanje maila (nacrt), ne kao čitanje pošte | ponavljanje 30.10. | alat | otvoreno — `intent.ts` (mail = slanje) i pravilo za `search_mail` | — |
@@ -63,6 +64,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 30.10.2026 | Kartica projekta (`project_brief`): sve o projektu u jednom pozivu | #40 |
 | 30.10.2026 | Pretraga pošte na zahtjev (`search_mail`) | #41 |
 | 30.10.2026 | Manji skup alata po vrsti poruke; ERP prepoznaje projekat i nalog | #42 |
+| 01.11.2026 | Jeftiniji bot: „jači" krug je zadano isti Haiku, ne Sonnet. Ponavljanje 45 poruka: $0,55 → $0,07 (~87% manje); 13 težih poruka u dva prolaza jednako ili bolje (npr. „kad smo počeli Čorluku" tačno, „provjeriti kod Anesa…" tačno). Sonnet se vraća s `ASSISTANT_MODEL_STRONG` bez izmjene koda | ovaj PR |
 
 ## Odbijeno
 
