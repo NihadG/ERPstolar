@@ -14,7 +14,7 @@
 import { foldText } from '@/lib/voice/text';
 import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
 
-export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'question';
+export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'table' | 'question';
 
 export interface MessageIntent {
     kinds: MessageKind[];
@@ -82,9 +82,15 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         kinds.clear();
         kinds.add('chat');
     }
+    // Tabela („napravi tabelu nenaručenih materijala", „u tabeli stan, dimenzije…"): čitanje
+    // i PDF, ne upis — „naručen" ili „u stanu" u njoj nisu narudžba ni bilježnica.
+    if (/\btabel\w*/.test(t) && !kinds.has('email') && !kinds.has('chat')) {
+        kinds.clear();
+        kinds.add('table');
+    }
     if (question) kinds.add('question');
 
-    const writeKinds = Array.from(kinds).filter(k => k !== 'question');
+    const writeKinds = Array.from(kinds).filter(k => k !== 'question' && k !== 'table');
     return {
         kinds: Array.from(kinds),
         // Pitanje može i upisati („…, šta još fali?"), ali tad ne tjeramo upis.
@@ -101,7 +107,8 @@ const KIND_LABEL: Record<MessageKind, string> = {
     progress: 'stanje procesa bez radnika (set_progress; nazive procesa uzmi iz TOK NALOGA)', presence: 'prisustvo (set_presence)',
     order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)',
     email: 'mail (email_order za narudžbu, email_contact za ostalo — samo NACRT, šalje korisnik dugmetom)',
-    chat: 'poruka na Viber/WhatsApp (chat_message; vrijeme ide u send_at, sadržaj u text — nije narudžba ni zadatak)', question: 'pitanje (odgovor, bez upisa)',
+    chat: 'poruka na Viber/WhatsApp (chat_message; vrijeme ide u send_at, sadržaj u text — nije narudžba ni zadatak)',
+    table: 'tabela (make_table — ERP složi i pošalje PDF; bez upisa)', question: 'pitanje (odgovor, bez upisa)',
 };
 
 /** Dio napomene za model: vrsta poruke, rečeni radnici (i nadimci) i vrijeme. */

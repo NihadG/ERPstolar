@@ -20,6 +20,7 @@ import {
     answerCallbackQuery, downloadFile, editMessageText, sendMessage, sendTyping, tg,
 } from '@/lib/telegram/api';
 import { sendOrderPdf } from './orderDocuments';
+import { sendTablePdf } from './tableDocuments';
 import { consumeDraftText, handleEmailButton, sendDraftToChat } from './emailButtons';
 import { handleMailButton } from './mailButtons';
 import { handleFollowButton, openMailFor } from '@/lib/server/mailFollow';
@@ -269,6 +270,14 @@ async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOu
             } catch (e) {
                 console.error('[assistant] PDF narudžbe pao:', e);
                 await sendMessage(chatId, '📄 Narudžba je sačuvana, ali PDF nije uspio. Otvori je u ERP-u → Narudžbe.');
+            }
+        }),
+        ...(out.tables || []).map(async table => {
+            try {
+                await sendTablePdf(chatId, link.orgId, table, assistantTimezone());
+            } catch (e) {
+                console.error('[assistant] PDF tabele pao:', e);
+                await sendMessage(chatId, '📄 Tabelu nisam uspio napraviti kao PDF — pokušaj ponovo za minut.');
             }
         }),
     ]);

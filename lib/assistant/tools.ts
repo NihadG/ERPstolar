@@ -59,6 +59,9 @@ import { createContactDraft, createOrderDraft, DraftError, loadContacts } from '
 import { GmailError } from '@/lib/server/gmail';
 import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
 import { queryTokens } from '@/lib/command/search';
+import { requestedColumns, type TableDoc } from '@/lib/tables/table';
+import { MATERIAL_STATUSES, TABLE_SOURCES, materialsTable, notebookTable } from '@/lib/tables/sources';
+import { loadTableMaterials } from '@/lib/server/tableData';
 
 const CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -406,6 +409,25 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'make_table',
+        description: 'TABELA kao PDF u chat („napravi tabelu…", „u tabeli…", „u kolonama…"). ERP učita podatke, složi kolone, redove i zbir i pošalje PDF — ti ne pišeš redove i ne prepričavaš. Izvori: biljeska (stvari po stanovima: predmet, mjere, količina, stanje) i materijali (sastavnice projekata: za naručiti, naručeno, stiglo). Tabela iz nečega drugog → reci da za sada postoje te dvije.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                source: enumOf(['biljeska', 'materijali']),
+                columns: { ...strList, description: 'Kolone tačno kako ih je korisnik rekao, istim redom („stan", „umivaonik/ogledalo", „dimenzije"). Bez toga = podrazumijevane.' },
+                subjects: { ...strList, description: 'biljeska: predmeti u osnovnom obliku (["ogledalo", "umivaonik"]). Bez toga = sve stvari.' },
+                locations: { ...strList, description: 'biljeska: lamele (["E", "C"]) ili tačne lokacije (["E308", "kombi"]).' },
+                state: { ...enumOf(['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS]), description: 'biljeska: otvoreno (podrazumijevano) = nije postavljeno.' },
+                status: { ...enumOf([...MATERIAL_STATUSES]), description: 'materijali: za_naruciti (podrazumijevano, „nenaručeni", „šta fali"), naruceno (čeka se), stiglo, sve.' },
+                project: { ...str, description: 'materijali: oznaka P# (bez toga = svi projekti na kojima se radi).' },
+                supplier: { ...str, description: 'materijali: dobavljač.' },
+                material: { ...str, description: 'materijali: vrsta ili dio naziva („iveral", „šarke").' },
+            },
+            required: ['source'],
+        },
+    },
+    {
         name: 'email_order',
         description: 'Narudžba MAILOM („pošalji Amri narudžbu ogledala mailom", „pošalji ovu narudžbu Zaimu", „pošalji L24 na ime@firma.ba"). ERP napravi NACRT: PDF narudžbe, naslov i potpis, s dugmetom „Pošalji" — ti ništa ne šalješ i NIKAD ne kažeš da je poslano. Narudžba: broj, projekat ili dobavljač; „ova/ta/ista narudžba" ili bez oznake = NARUDŽBA IZ RAZGOVORA (ne pitaj koja). Primalac: kad je korisnik rekao kome (ime, firma ili adresa) — to ide u to, inače ERP uzme glavnog kontakta dobavljača. text samo kad korisnik traži da se nešto doda.',
         input_schema: {
@@ -591,6 +613,10 @@ export interface ToolEnv {
     chatCards?: { taskId: string; message: TaskChatMessage }[];
     /** Narudžbe čiji PDF ide korisniku poslije odgovora (`draft` = dugme „Poslano"). */
     documents?: { orderId: string; draft: boolean }[];
+    /** Tabele (make_table) koje idu korisniku kao PDF poslije odgovora. */
+    tables?: TableDoc[];
+    /** Samo ova poruka (normalizovana) — kolone tabele ERP čita iz nje, ne iz ranijih poruka. */
+    messageText?: string;
     /** Kandidati naloga (R#) kad dnevni upis nije znao koji nalog. */
     diaryCandidates?: Aliased<string>[];
     /** „O3 Baglama ravna · Kuhinja Grbavica" — legenda oznaka ove poruke za istoriju modela. */
@@ -638,10 +664,10 @@ export interface OrderGroup {
 export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact', 'chat_message']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
-export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'find_contact', 'search_mail']);
+export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail']);
 
-/** Spisak koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
-export const DISPLAY_TOOLS = new Set(['list_notebook']);
+/** Spisak (i tabela) koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
+export const DISPLAY_TOOLS = new Set(['list_notebook', 'make_table']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -2703,6 +2729,44 @@ async function listNotebookTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, count: items.length };
 }
 
+/**
+ * Tabela kao PDF: model kaže izvor i filter, ERP učita, složi i pošalje. Kolone ERP
+ * čita iz poruke („u kolonama …"); modelove samo kad ih u poruci ne nađe.
+ */
+async function makeTableTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const source = TABLE_SOURCES.find(s => s === a.source);
+    if (!source) return { ok: false, error: 'Izvor tabele: biljeska ili materijali.' };
+    const list = (v: unknown, max: number, len: number) => (Array.isArray(v) ? v.map(x => text(x, len)).filter(Boolean).slice(0, max) : []);
+    const fromText = requestedColumns(env.messageText || '');
+    const columns = fromText.length ? fromText : list(a.columns, 12, 40);
+    const day = toZoned(env.now.toISOString(), env.tz).date;
+
+    let table: TableDoc;
+    if (source === 'biljeska') {
+        const state = typeof a.state === 'string' && ['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS].includes(a.state) ? a.state : 'otvoreno';
+        const all = await listMemory(env.orgId, env.uid, state !== 'otvoreno');
+        table = notebookTable(all, { subjects: list(a.subjects, 8, 60), locations: list(a.locations, 12, 40), state }, columns,
+            { since: iso => shortDay(iso, env.tz), day });
+    } else {
+        const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+        if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+        const status = MATERIAL_STATUSES.find(s => s === a.status) || 'za_naruciti';
+        const { rows, projects } = await loadTableMaterials(env.orgId, project ? [project.id] : null);
+        table = materialsTable(rows, {
+            status, supplier: text(a.supplier, 80) || undefined, material: text(a.material, 60) || undefined,
+            scope: project ? projectLabel(project) : `projekti na kojima se radi (${projects})`,
+        }, columns, { day });
+    }
+
+    if (!table.rowCount) {
+        env.summaries.push(`📋 ${table.title} — ${table.subtitle.replace(/ · 0 redova/, '')}: nema ničega.`);
+        return { ok: true, count: 0 };
+    }
+    (env.tables ||= []).push(table);
+    env.summaries.push([`📄 ${table.title} — ${table.subtitle}. PDF stiže ispod.`, ...table.notes].join('\n'));
+    return { ok: true, count: table.rowCount };
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
     const question = stripAliases(text(a.question, 300));
     const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
@@ -2748,6 +2812,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'project_brief': return await projectBriefTool(env, args);
             case 'project_history': return await projectHistoryTool(env, args);
             case 'list_notebook': return await listNotebookTool(env, args);
+            case 'make_table': return await makeTableTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }
