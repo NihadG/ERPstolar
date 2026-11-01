@@ -61,9 +61,17 @@ const FOCUS_MINUTES = 20;
 /** Narudžba iz razgovora važi duže — „pošalji je i Zaimu" stiže i poslije pola sata. */
 const ORDER_FOCUS_MINUTES = 60;
 
-/** Jači model: teška poruka i ponovni krug poslije greške (samo taj poziv). */
+/**
+ * „Jači" model: teška poruka i ponovni krug poslije greške. Zadano je ISTI
+ * Haiku. Ponavljanje 45 stvarnih poruka (01.11.2026): sve na Haiku je koštalo
+ * $0,07 umjesto $0,55 (Sonnet je bio ~93% troška, najviše upis keša), a 13
+ * težih poruka Haiku je u dva prolaza riješio jednako ili bolje — kartica
+ * projekta i čuvari (readGuard/mailGuard) nose posao koji je ranije tražio
+ * jači model. Isti model u svakom krugu ne lomi ni keš usred poruke.
+ * ASSISTANT_MODEL_STRONG=claude-sonnet-5-5 vraća stari raspored bez izmjene koda.
+ */
 function strongModel(): string {
-    return process.env.ASSISTANT_MODEL_STRONG?.trim() || 'claude-sonnet-5-5';
+    return process.env.ASSISTANT_MODEL_STRONG?.trim() || model();
 }
 
 function model(): string {
