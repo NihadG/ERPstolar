@@ -15,6 +15,7 @@ import { toZoned, zonedToUtcMs } from './datetime';
 import { buildTodayDigest } from './digest';
 import { createProposalMessage, gapsForDigest, isWorkingDayFor } from './dayProposals';
 import { materialDigest } from './materialAlerts';
+import { chatCardButtons, chatCardText } from './chatMessage';
 import { getLinkByUid, listLinks, setDigestDate, setProposalDate, type AssistantLink } from './store';
 import type { Task } from '@/lib/types';
 
@@ -78,7 +79,9 @@ export async function sendDueReminders(now: Date, tz: string): Promise<{ sent: n
             continue;
         }
         try {
-            await sendMessage(link.chatId, reminderText(t), reminderButtons(t.Task_ID));
+            // Poruka za Viber/WhatsApp stiže kao kartica s gotovim tekstom i dugmadima.
+            if (t.Chat_Message) await sendMessage(link.chatId, `⏰ Vrijeme je za poruku\n${chatCardText(t.Chat_Message)}`, chatCardButtons(t.Chat_Message, t.Task_ID));
+            else await sendMessage(link.chatId, reminderText(t), reminderButtons(t.Task_ID));
             await doc.ref.update({ Reminder_Pending: false, Reminder_Sent_At: nowIso });
             sent++;
         } catch (e) {

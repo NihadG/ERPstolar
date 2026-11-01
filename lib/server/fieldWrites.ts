@@ -154,6 +154,8 @@ export interface CreateTaskInput {
     links?: Task['Links'];
     /** ISO UTC; postavlja i `Reminder_Pending` da ga tick pošalje. */
     reminderAt?: string;
+    /** Poruka za Viber/WhatsApp koju bot donese s dugmadima (lib/assistant/chatMessage.ts). */
+    chatMessage?: Task['Chat_Message'];
     source?: TaskSource;
     sourceEntryId?: string;
     createdByUid?: string;
@@ -217,6 +219,7 @@ export async function createTask(orgId: string, input: CreateTaskInput): Promise
                 .map(text => ({ id: uuidv4(), text, completed: false })),
         } : {}),
         ...(input.reminderAt ? { Reminder_At: input.reminderAt, Reminder_Pending: true } : {}),
+        ...(input.chatMessage ? { Chat_Message: input.chatMessage } : {}),
         ...(input.source ? { Source: input.source } : {}),
         ...(input.sourceEntryId ? { Source_Entry_ID: input.sourceEntryId } : {}),
         ...(input.createdByUid ? { Created_By_UID: input.createdByUid } : {}),

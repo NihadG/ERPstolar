@@ -14,7 +14,7 @@
 import { foldText } from '@/lib/voice/text';
 import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
 
-export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'question';
+export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'question';
 
 export interface MessageIntent {
     kinds: MessageKind[];
@@ -74,6 +74,14 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         kinds.clear();
         kinds.add(mailReport ? 'question' : 'email');
     }
+    // Viber/WhatsApp („pošalji poruku Zaimu na viber sutra u 10, naruči baglame"): sadržaj poruke
+    // nije narudžba ni podsjetnik u ERP-u — sve ide u jednu karticu (chat_message).
+    // „Pošalji MI poruku u 8" je podsjetnik meni, ne Viber.
+    if (/\b(viber\w*|vajber\w*|whats ?app\w*|vocap\w*|vatsap\w*)\b/.test(t)
+        || (/\b(posalji|napisi|posaljite)\s+(\w+\s+)?poruk\w*/.test(t) && !/\b(posalji|napisi)\s+mi\b/.test(t) && !/\bporuk\w*\s+(meni|mi)\b/.test(t))) {
+        kinds.clear();
+        kinds.add('chat');
+    }
     if (question) kinds.add('question');
 
     const writeKinds = Array.from(kinds).filter(k => k !== 'question');
@@ -92,7 +100,8 @@ const KIND_LABEL: Record<MessageKind, string> = {
     notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)',
     progress: 'stanje procesa bez radnika (set_progress; nazive procesa uzmi iz TOK NALOGA)', presence: 'prisustvo (set_presence)',
     order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)',
-    email: 'mail (email_order za narudžbu, email_contact za ostalo — samo NACRT, šalje korisnik dugmetom)', question: 'pitanje (odgovor, bez upisa)',
+    email: 'mail (email_order za narudžbu, email_contact za ostalo — samo NACRT, šalje korisnik dugmetom)',
+    chat: 'poruka na Viber/WhatsApp (chat_message; vrijeme ide u send_at, sadržaj u text — nije narudžba ni zadatak)', question: 'pitanje (odgovor, bez upisa)',
 };
 
 /** Dio napomene za model: vrsta poruke, rečeni radnici (i nadimci) i vrijeme. */

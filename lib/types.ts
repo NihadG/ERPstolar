@@ -815,6 +815,12 @@ export interface Task {
     /** true dok podsjetnik čeka slanje — po ovom polju tick traži (indeks). */
     Reminder_Pending?: boolean;
     Reminder_Sent_At?: string;
+    /**
+     * PORUKA ZA VIBER/WHATSAPP (od 11/2026): zadatak je „pošalji ovo tom čovjeku".
+     * Kad dođe vrijeme (ili odmah), bot pošalje gotov tekst s dugmadima koja
+     * otvore Viber/WhatsApp — šalje korisnik, ERP ništa ne šalje sam.
+     */
+    Chat_Message?: TaskChatMessage;
 
     // POREKLO
     Source?: TaskSource;
@@ -824,6 +830,17 @@ export interface Task {
 }
 
 export type TaskSource = 'app' | 'voice' | 'telegram';
+
+export type ChatChannel = 'viber' | 'whatsapp';
+
+export interface TaskChatMessage {
+    Channel: ChatChannel;
+    /** Kome: „Zaim Heto (Schachermayer)". */
+    To_Name: string;
+    /** Međunarodni broj bez + („38761234567"); prazno = korisnik bira osobu u aplikaciji. */
+    Phone?: string;
+    Text: string;
+}
 
 // ============================================
 // BILJEŽNICA — „druga memorija" asistenta (od 10/2026)

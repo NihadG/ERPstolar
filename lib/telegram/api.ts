@@ -40,10 +40,16 @@ export async function tg<T = unknown>(method: string, payload: Record<string, un
     return data.result as T;
 }
 
-/** Dugme u poruci. `data` je najviše 64 bajta (ograničenje Telegrama). */
+/**
+ * Dugme u poruci. `data` je najviše 64 bajta (ograničenje Telegrama).
+ * `url` otvara link (WhatsApp, stranica za Viber), `copy` kopira tekst (do 256 znakova) —
+ * tad se `data` ne šalje i dugme ne dolazi nazad botu.
+ */
 export interface InlineButton {
     text: string;
     data: string;
+    url?: string;
+    copy?: string;
 }
 
 export type ButtonRows = InlineButton[][];
@@ -51,7 +57,9 @@ export type ButtonRows = InlineButton[][];
 function keyboard(rows?: ButtonRows) {
     if (!rows?.length) return undefined;
     return {
-        inline_keyboard: rows.map(r => r.map(b => ({ text: b.text, callback_data: b.data.slice(0, 64) }))),
+        inline_keyboard: rows.map(r => r.map(b => b.url ? { text: b.text, url: b.url }
+            : b.copy ? { text: b.text, copy_text: { text: b.copy.slice(0, 256) } }
+            : { text: b.text, callback_data: b.data.slice(0, 64) })),
     };
 }
 
