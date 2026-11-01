@@ -174,7 +174,7 @@ export interface NotebookFilter {
 }
 
 /** Lamela stavke: slovo lokacije, a za stvar na hodniku/u kombiju — stan za koji je („za C502"). */
-function letterOf(m: MemoryItem): string {
+export function letterOf(m: MemoryItem): string {
     const own = parseLoc(m.Location || '');
     if (own?.letter) return own.letter;
     const target = /\bza ([a-z])\s?-?(\d{1,4})\b/.exec(foldText(m.Title || ''));

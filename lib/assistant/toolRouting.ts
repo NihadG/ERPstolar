@@ -43,7 +43,8 @@ const EMAIL_TOOLS = new Set([
  */
 export function toolSetFor(kinds: MessageKind[], opts: { answeringQuestion?: boolean } = {}): ToolSet {
     if (opts.answeringQuestion || !kinds.length) return 'full';
-    if (kinds.length === 1 && kinds[0] === 'question') return 'question';
+    // Tabela je čitanje: make_table je u skupu za pitanje.
+    if (kinds.every(k => k === 'question' || k === 'table')) return 'question';
     if (kinds.includes('email') && kinds.every(k => k === 'email' || k === 'question')) return 'email';
     return 'full';
 }

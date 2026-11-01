@@ -58,6 +58,9 @@ export interface OrderableRow {
     inDrafts: number;
     /** Koliko se još može naručiti za projekat: preostalo minus nacrti. */
     available: number;
+    /** Još nenaručeno (lib/materialCoverage) — nacrti se ne oduzimaju, nisu poslani. */
+    toOrder: number;
+    status: string;
 }
 
 /** Svi materijali proizvoda tih projekata, s računicom šta je ostalo za naručiti. */
@@ -89,6 +92,8 @@ export async function loadProjectMaterials(orgId: string, projectIds: string[]):
             received: c.received,
             inDrafts,
             available: Math.max(0, roundQty(c.toOrder - inDrafts)),
+            toOrder: c.toOrder,
+            status: m.Status || 'Nije naručeno',
         }];
     });
 }

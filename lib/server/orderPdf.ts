@@ -41,6 +41,16 @@ function fonts(): { regular: string; bold: string } {
     return fontCache;
 }
 
+/** DejaVu (č, ć, đ) u dokument — dijele ga svi PDF-ovi sa servera. */
+export function registerPdfFonts(doc: jsPDF): string {
+    const f = fonts();
+    doc.addFileToVFS('DejaVuSans.ttf', f.regular);
+    doc.addFont('DejaVuSans.ttf', FONT, 'normal');
+    doc.addFileToVFS('DejaVuSans-Bold.ttf', f.bold);
+    doc.addFont('DejaVuSans-Bold.ttf', FONT, 'bold');
+    return FONT;
+}
+
 const PAGE_W = 210;
 const PAGE_H = 297;
 const M = 14;                       // margina
@@ -58,11 +68,7 @@ export function buildOrderPdf(input: { order: Order; supplier?: Supplier; specs:
     const { regular, glass, aluDoors } = classifyOrderItems(order, projects);
 
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const f = fonts();
-    doc.addFileToVFS('DejaVuSans.ttf', f.regular);
-    doc.addFont('DejaVuSans.ttf', FONT, 'normal');
-    doc.addFileToVFS('DejaVuSans-Bold.ttf', f.bold);
-    doc.addFont('DejaVuSans-Bold.ttf', FONT, 'bold');
+    registerPdfFonts(doc);
 
     let y = M;
     const font = (size: number, style: 'normal' | 'bold' = 'normal', color = INK) => {
