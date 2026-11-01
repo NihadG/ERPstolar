@@ -44,7 +44,7 @@ export interface TgMessage {
     forward_from?: TgUser;
     forward_sender_name?: string;
     forward_date?: number;
-    reply_markup?: { inline_keyboard?: { text: string; callback_data?: string }[][] };
+    reply_markup?: { inline_keyboard?: { text: string; callback_data?: string; url?: string; copy_text?: { text: string } }[][] };
 }
 
 export interface TgCallbackQuery {
@@ -139,7 +139,10 @@ export function normalizeUpdate(u: TgUpdate): Incoming {
             data: q.data || '',
             messageId: q.message?.message_id || 0,
             messageText: q.message?.text || '',
-            buttons: q.message?.reply_markup?.inline_keyboard?.map(r => r.map(b => ({ text: b.text, data: b.callback_data || '' }))),
+            buttons: q.message?.reply_markup?.inline_keyboard?.map(r => r.map(b => ({
+                text: b.text, data: b.callback_data || '',
+                ...(b.url ? { url: b.url } : {}), ...(b.copy_text ? { copy: b.copy_text.text } : {}),
+            }))),
         };
     }
 

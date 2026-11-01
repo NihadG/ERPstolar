@@ -94,7 +94,8 @@ run('ponavljanje stvarnih poruka (pravi model, lažna baza)', () => {
                 id: e.id, at: e.at, text: e.text,
                 prod: prodSide(e),
                 next: {
-                    outcome: out.outcome, reply: out.reply,
+                    // Kartica Viber/WhatsApp ide posebnom porukom — u izvještaju se vidi i njen tekst.
+                    outcome: out.outcome, reply: [out.reply, ...(out.chatCards || []).map(c => `[kartica → ${c.message.To_Name}] ${c.message.Text}`)].join('\n'),
                     tools: (out.toolCalls || []).filter(t => t.ok).map(t => t.name),
                     billed: out.usage ? billedTokens(out.usage) : 0, calls: out.usage?.calls || 0, toolSet: out.usage?.toolSet,
                 },

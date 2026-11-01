@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="bs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Poruka za Viber</title>
+<!--
+  Telegram dugme ne otvara viber:// linkove, pa bot šalje ovamo.
+  Broj i tekst su iza # — ne idu na server, stranica ih samo prikaže.
+  Jedan dodir: tekst se kopira i otvori se razgovor u Viberu → zalijepi i pošalji.
+-->
+<style>
+  :root { --bg: #f6f6f8; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --accent: #7360f2; --border: #e3e3e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111114; --card: #1c1c20; --text: #f2f2f5; --muted: #a1a1a8; --border: #2c2c32; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.45 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 480px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .msg { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; white-space: pre-wrap; word-wrap: break-word; }
+  button { display: block; width: 100%; margin-top: 12px; padding: 14px; border-radius: 12px; border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+  .main { background: var(--accent); color: #fff; }
+  .alt { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+  p.note { color: var(--muted); font-size: 14px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Poruka za Viber</h1>
+  <div class="msg" id="msg"></div>
+  <button class="main" id="go">Kopiraj i otvori Viber</button>
+  <button class="alt" id="fwd">Otvori Viber s upisanim tekstom (biraš kome)</button>
+  <p class="note" id="note">Kad se Viber otvori, dugo pritisni polje za poruku → Zalijepi → pošalji.</p>
+</main>
+<script>
+  (function () {
+    var p = new URLSearchParams(location.hash.slice(1));
+    var text = p.get('t') || '';
+    var number = (p.get('n') || '').replace(/\D/g, '');
+    document.getElementById('msg').textContent = text || '(nema teksta)';
+    var go = document.getElementById('go');
+    if (!number) {
+      go.textContent = 'Kopiraj i otvori Viber';
+      document.getElementById('note').textContent = 'Broja nema u ERP-u: u Viberu izaberi osobu, pa zalijepi tekst.';
+    }
+
+    function copy(s) {
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(s).catch(fallback);
+      fallback();
+      return Promise.resolve();
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = s; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ništa */ }
+        document.body.removeChild(ta);
+      }
+    }
+
+    go.addEventListener('click', function () {
+      copy(text).then(function () {
+        go.textContent = 'Kopirano ✓ — otvaram Viber…';
+        location.href = number ? 'viber://chat?number=%2B' + number : 'viber://forward?text=' + encodeURIComponent(text);
+      });
+    });
+    document.getElementById('fwd').addEventListener('click', function () {
+      location.href = 'viber://forward?text=' + encodeURIComponent(text);
+    });
+  })();
+</script>
+</body>
+</html>

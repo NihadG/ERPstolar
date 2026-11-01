@@ -53,7 +53,8 @@ import {
     type MemoryStateKey,
 } from './memoryRules';
 import { materialTypeFromName } from '@/lib/productProcesses';
-import type { Contact, Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import type { Contact, Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskChatMessage, TaskLink, TaskPriority } from '@/lib/types';
+import { CHAT_STYLE, chatChannelOf, cleanChatText, isMobile, matchDiacritics, normalizePhone, sendTimeSaid } from './chatMessage';
 import { createContactDraft, createOrderDraft, DraftError, loadContacts } from '@/lib/server/emailDrafts';
 import { GmailError } from '@/lib/server/gmail';
 import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
@@ -434,6 +435,21 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'chat_message',
+        description: `Poruka na VIBER ili WHATSAPP („pošalji poruku Zaimu na viber sutra u 10, naruči baglame", „javi Kerimu na whatsapp da dođe ranije"). Bot NE šalje sam: ERP napravi karticu s gotovim tekstom i dugmadima koja otvore Viber/WhatsApp, odmah ili u rečeno vrijeme (send_at) — korisnik pošalje jednim dodirom. NIKAD ne kaži da je poslano. Pozovi ODMAH, i kad osobe nema u listi radnika ni u Kontaktima: ERP sam traži radnike, Kontakte i dobavljače, a nepoznatom napravi karticu bez broja (korisnik bira u aplikaciji) — ne pitaj za broj. Ne koristi create_task za ovo. Mail ide kroz email_contact. Tekst (text): ${CHAT_STYLE}`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                to: { ...str, description: 'Kome: ime u nominativu („Zaim"), ime i firma, ili firma. Radnik: oznaka W#.' },
+                channel: { type: 'string', enum: ['viber', 'whatsapp'], description: 'Rečeni kanal; bez kanala viber.' },
+                text: { ...str, description: 'Cijela poruka, s pozdravom imenom i „Hvala." na kraju.' },
+                send_at: { ...str, description: 'Kad treba poslati, lokalno YYYY-MM-DDTHH:MM (iz kalendara). Bez vremena = odmah.' },
+                project: { ...str, description: 'Oznaka P# kad je projekat rečen.' },
+            },
+            required: ['to', 'text'],
+        },
+    },
+    {
         name: 'find_contact',
         description: 'Ko je ko u Kontaktima: „koji je mail od Stakla?", „ko je komercijalista u Pločama?", „imam li Selminu adresu?".',
         input_schema: {
@@ -571,6 +587,8 @@ export interface ToolEnv {
     touchedOrder?: { id: string; number: string; supplier: string };
     /** Nacrti mailova koji idu korisniku poslije odgovora, s dugmetom „Pošalji" (šalje se samo na klik). */
     emailDrafts?: string[];
+    /** Poruke za Viber/WhatsApp „odmah": kartica s dugmadima ide poslije odgovora. */
+    chatCards?: { taskId: string; message: TaskChatMessage }[];
     /** Narudžbe čiji PDF ide korisniku poslije odgovora (`draft` = dugme „Poslano"). */
     documents?: { orderId: string; draft: boolean }[];
     /** Kandidati naloga (R#) kad dnevni upis nije znao koji nalog. */
@@ -617,7 +635,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact', 'chat_message']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
 export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'find_contact', 'search_mail']);
@@ -2143,6 +2161,110 @@ async function findContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     };
 }
 
+/**
+ * Poruka za Viber/WhatsApp: zadatak s gotovim tekstom (Task.Chat_Message).
+ * Bez send_at kartica s dugmadima ide odmah poslije odgovora; sa send_at je
+ * donese podsjetnik (tick). ERP ništa ne šalje — šalje korisnik iz aplikacije.
+ */
+async function chatMessageTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const to = text(a.to, 120);
+    // Ova poruka (dateText), ne cijeli razgovor: kanal, kvačice i vrijeme slanja ne smiju doći iz prethodne poruke.
+    const userText = env.dateText;
+    const body = matchDiacritics(cleanChatText(text(a.text, 1000)), userText);
+    if (!to || !body) return { ok: false, error: 'Treba kome i tekst poruke.' };
+    // Broj u poruci (količina, mjera, sat) mora biti iz korisnikove poruke — model ne izmišlja.
+    if (env.groundText !== undefined) {
+        const said = new Set(env.groundText.match(/\d+/g) || []);
+        const invented = (body.match(/\d+/g) || []).filter(n => !said.has(n));
+        if (invented.length) return { ok: false, error: `Broj ${invented.join(', ')} nije iz poruke korisnika — u tekst stavi samo rečeno.` };
+    }
+    const named = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !named) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
+    const project = named && projectSaid(env, named) ? named : null;
+
+    const who = await chatRecipient(env, to);
+    if ('error' in who) return { ok: false, error: who.error };
+    const channel = chatChannelOf(a.channel, userText);
+    const message: TaskChatMessage = { Channel: channel, To_Name: who.name, ...(who.phone ? { Phone: who.phone } : {}), Text: body };
+
+    // „Javi Kerimu da sutra dođe u 7": vrijeme je sadržaj poruke, kartica ide odmah.
+    const sendAt = sendTimeSaid(userText) ? text(a.send_at) : '';
+    const reminder = sendAt ? resolveReminderAt({ text: env.dateText, now: env.now, tz: env.tz, modelLocal: sendAt }) : null;
+    if (sendAt && !reminder) return { ok: false, error: 'Vrijeme slanja je nejasno ili u prošlosti. Pitaj korisnika kada (ask_user).' };
+
+    const channelLabel = channel === 'viber' ? 'Viber' : 'WhatsApp';
+    const title = `${channelLabel} poruka: ${who.name}`;
+    const taskId = await createTask(env.orgId, {
+        title,
+        description: body,
+        category: 'reminder',
+        priority: 'medium',
+        dueDate: reminder?.date ?? toZoned(env.now, env.tz).date,
+        links: project ? [projectLink(project)] : [],
+        reminderAt: reminder?.iso,
+        chatMessage: message,
+        source: 'telegram',
+        sourceEntryId: env.entryId,
+        createdByUid: env.uid,
+    });
+    const ref = await taskRef(env.orgId, taskId);
+    await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before: null, label: `poruka za ${who.name}` });
+    env.created.taskIds.push(taskId);
+    const when = reminder ? formatReminder(reminder.iso, env.tz, env.now) : '';
+    env.changes.push(`${channelLabel} poruka za ${who.name}${when ? ` (${when})` : ''}`);
+    const noPhone = 'unknown' in who && who.unknown ? `\n(${who.name} nije u ERP-u — u aplikaciji ćeš izabrati kome)`
+        : who.phone && isMobile(who.phone) ? '' : '\n(nema mobilnog broja u ERP-u — u aplikaciji ćeš izabrati kome)';
+    if (reminder) {
+        env.summaries.push(`💬 ${channelLabel} poruka za ${who.name} — stiže ti ${when}, s dugmadima:\n\n${body}${noPhone}`);
+    } else {
+        env.chatCards = [...(env.chatCards || []), { taskId, message }];
+        env.summaries.push(`💬 ${channelLabel} poruka za ${who.name} je ispod — otvori i pošalji.`);
+    }
+    return clean({
+        ok: true, to: who.name, channel, send_label: when || 'odmah', text: body,
+        note: 'Poruka NIJE poslana — korisnik je šalje dugmetom iz Vibera/WhatsAppa.',
+    });
+}
+
+/** Kome ide poruka: radnik (W# ili ime), kontakt, pa firma. Više kandidata → model pita. */
+async function chatRecipient(env: ToolEnv, to: string): Promise<{ name: string; phone?: string; unknown?: boolean } | { error: string }> {
+    const db = adminDb();
+    const workerPhone = async (id: string) => {
+        const snap = await db.collection('workers').where('Organization_ID', '==', env.orgId).where('Worker_ID', '==', id).limit(1).get();
+        return normalizePhone(snap.empty ? '' : String(snap.docs[0].data().Phone || '')) || undefined;
+    };
+    const alias = resolveAlias(env.ctx.workers, to);
+    if (alias) return { name: alias.name, phone: await workerPhone(alias.id) };
+
+    const stems = tokens(foldText(to)).filter(t => t.length >= 3).map(stem);
+    const nameHit = (name: string) => {
+        const words = tokens(foldText(name)).map(stem);
+        // „Sakibu" ≠ „Saka": kraća riječ smije biti bez najviše jednog slova (padež), ne pola imena.
+        return stems.length > 0 && stems.every(s => words.some(w => w.startsWith(s) || (s.startsWith(w) && w.length >= Math.max(3, s.length - 1))));
+    };
+    const workers = env.ctx.workers.map(w => w.value).filter(w => nameHit(w.name));
+    const contacts = await loadContacts(env.orgId);
+    const supplierName = await supplierNamesOf(env.orgId);
+    const people = searchContacts(contacts, to, supplierName);
+    const candidates = [
+        ...workers.map(w => ({ label: `${w.name} (radnik)`, pick: async () => ({ name: w.name, phone: await workerPhone(w.id) }) })),
+        ...people.map(c => {
+            const firm = (c.Supplier_ID && supplierName(c.Supplier_ID)) || c.Company || '';
+            const name = [c.First_Name, c.Last_Name].filter(Boolean).join(' ') || c.Email;
+            const label = firm ? `${name} (${firm})` : name;
+            return { label, pick: async () => ({ name: label, phone: normalizePhone(c.Phone) || undefined }) };
+        }),
+    ];
+    if (candidates.length === 1) return candidates[0].pick();
+    if (candidates.length > 1) {
+        return { error: `Više osoba odgovara „${to}": ${candidates.slice(0, 4).map(c => c.label).join(' / ')}. Pitaj korisnika kojoj (ask_user s tim opcijama), pa pozovi chat_message s punim imenom.` };
+    }
+    const firm = searchFirms(await suppliersOf(env.orgId), to)[0];
+    if (firm) return { name: firm.Name, phone: normalizePhone(firm.Phone) || undefined };
+    // Nepoznat (nije u ERP-u): kartica ipak ide — Viber/WhatsApp otvori izbor osobe.
+    return { name: to.charAt(0).toUpperCase() + to.slice(1), unknown: true };
+}
+
 async function saveContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const email = normalizeEmail(text(a.email, 120));
     if (!isValidEmail(email)) return { ok: false, error: 'Neispravna adresa.' };
@@ -2617,6 +2739,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'email_order': return await emailOrderTool(env, args);
             case 'email_contact': return await emailContactTool(env, args);
             case 'find_contact': return await findContactTool(env, args);
+            case 'chat_message': return await chatMessageTool(env, args);
             case 'search_mail': return await searchMailTool(env, args);
             case 'save_contact': return await saveContactTool(env, args);
             case 'learn_name': return await learnNameTool(env, args);

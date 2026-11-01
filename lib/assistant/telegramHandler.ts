@@ -35,6 +35,7 @@ import { shortDate } from './dayProposalText';
 import { isIsoDate } from '@/lib/voice/dates';
 import { buildOpenMemory, buildTodayDigest } from './digest';
 import { snoozeUntil } from './reminders';
+import { chatCardButtons, chatCardText } from './chatMessage';
 import {
     addEntry, claimUpdate, consumeLinkCode, getEntry, getLinkByTelegramId,
     findEntryByReply, getSession, markEntry, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
@@ -259,6 +260,9 @@ async function deliver(link: AssistantLink, chatId: number, out: AssistantTurnOu
                 await sendMessage(chatId, '✉️ Nacrt maila je napravljen, ali ga ne mogu prikazati. Pošalji narudžbu iz ERP-a: Narudžbe → Pošalji emailom.');
             }
         }),
+        ...(out.chatCards || []).map(card =>
+            sendMessage(chatId, chatCardText(card.message), chatCardButtons(card.message, card.taskId))
+                .catch(e => console.error('[assistant] kartica poruke pala:', e))),
         ...(out.documents || []).map(async doc => {
             try {
                 await sendOrderPdf(chatId, link.orgId, doc.orderId, doc.draft);
@@ -448,8 +452,9 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         const task = (await ref.get()).data() as Task;
         if (kind === 'done') {
             await setTaskStatus(link.orgId, arg, true);
-            await answerCallbackQuery(inc.callbackId, 'Označeno kao urađeno');
-            await editMessageText(inc.chatId, inc.messageId, `✅ Urađeno: ${task.Title}`);
+            await answerCallbackQuery(inc.callbackId, task.Chat_Message ? 'Označeno kao poslano' : 'Označeno kao urađeno');
+            // Kartica poruke ostaje čitljiva (tekst), bez dugmadi.
+            await editMessageText(inc.chatId, inc.messageId, task.Chat_Message ? `${inc.messageText}\n\n✅ Poslano` : `✅ Urađeno: ${task.Title}`);
             return;
         }
         const until = snoozeUntil(extra, new Date(), tz);
