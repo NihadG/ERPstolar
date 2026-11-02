@@ -32,7 +32,7 @@ import {
 import { answeredMessage, checkMessage, needsOrder, type CheckView } from './materialText';
 import { toZoned, zonedToUtcMs } from './datetime';
 import { sendOrderPdf } from './orderDocuments';
-import { listLinks, recordOp, type AssistantLink } from './store';
+import { listLinks, noteBotMessage, recordOp, type AssistantLink } from './store';
 import type { ButtonRows } from '@/lib/telegram/api';
 import type { Material, Order, OrderItem, Product, ProductMaterial, Supplier, WorkOrder } from '@/lib/types';
 
@@ -259,6 +259,7 @@ async function sendCheck(
     await ref.set(JSON.parse(JSON.stringify(check)));
     const msg = checkMessage(view(check));
     await sendMessage(link.chatId, msg.text, msg.buttons);
+    await noteBotMessage(link.chatId, `provjera materijala (${g.label})`, msg.text, now);
 }
 
 /** Kapija bez materijala = zadatak u Zadacima (vidi se i u ERP-u). */

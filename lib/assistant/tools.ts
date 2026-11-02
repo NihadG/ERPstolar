@@ -53,10 +53,14 @@ import {
     type MemoryStateKey,
 } from './memoryRules';
 import { materialTypeFromName } from '@/lib/productProcesses';
-import type { Contact, Material, MemoryItem, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskChatMessage, TaskLink, TaskPriority } from '@/lib/types';
+import type { Contact, MailInboxItem, Material, MemoryItem, Order, Product, ProductMaterial, Supplier, Task, TaskCategory, TaskChatMessage, TaskLink, TaskPriority } from '@/lib/types';
 import { CHAT_STYLE, chatChannelOf, cleanChatText, isMobile, matchDiacritics, normalizePhone, sendTimeSaid } from './chatMessage';
-import { createContactDraft, createOrderDraft, DraftError, loadContacts } from '@/lib/server/emailDrafts';
-import { GmailError } from '@/lib/server/gmail';
+import { createContactDraft, createOrderDraft, createReplyDraft, DraftError, loadContacts } from '@/lib/server/emailDrafts';
+import { getMessageMeta, GmailError, listMessageIds } from '@/lib/server/gmail';
+import { inboxRef } from '@/lib/server/mailSync';
+import { COLLECTIONS } from '@/lib/services/shared/collections';
+import { gmailQuery, type MailSearch } from '@/lib/email/search';
+import { parseAddressList, parseMailbox } from '@/lib/email/addresses';
 import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
 import { queryTokens } from '@/lib/command/search';
 import type { TableDoc } from '@/lib/tables/table';
@@ -389,10 +393,11 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'list_notebook',
-        description: 'Spisak iz bilježnice po filteru — ERP ga složi i pošalje korisniku kakav jeste (ti ga ne prepričavaš). Za „daj mi spisak svih ogledala koja nisu montirana na E i C lameli", „šta sve fali u E3", „sve u kombiju".',
+        description: 'Spisak iz bilježnice po filteru — ERP ga složi i pošalje korisniku kakav jeste (ti ga ne prepričavaš). Za „daj mi spisak svih ogledala koja nisu montirana na E i C lameli", „šta sve fali u E3", „sve u kombiju", „listu napomena za Grbavicu" (project, bez predmeta).',
         input_schema: {
             type: 'object',
             properties: {
+                project: { ...str, description: 'Oznaka P# kad je rečen projekat („za Grbavicu") — samo stavke tog projekta.' },
                 subject: { ...str, description: 'Predmet u osnovnom obliku: „ogledalo". Bez toga = sve stvari.' },
                 locations: { ...strList, description: 'Lamele (samo slovo: ["E", "C"]) ili tačne lokacije (["E308", "Hodnik C5", "kombi"]). „Na E i C lameli" = ["E", "C"].' },
                 state: { ...enumOf(['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS]), description: 'otvoreno (podrazumijevano) = sve što još nije postavljeno („nisu montirana"); postavljeno = gotovo; ili tačno stanje.' },
@@ -454,7 +459,7 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'email_contact',
-        description: 'Opšti mail osobi iz Kontakata („javi Selmi mailom da kasnimo s lajsnama", „pošalji mail Emiru da može poručiti kolone"). ERP napravi NACRT s dugmetom „Pošalji" — ništa se ne šalje bez klika i NIKAD ne kažeš da je poslano. Adresu ne izmišljaj: to je ime/prezime/firma kako je rečeno, ili adresa iz poruke. Narudžbu dobavljaču šalji kroz email_order.',
+        description: 'Opšti mail osobi iz Kontakata („javi Selmi mailom da kasnimo s lajsnama", „pošalji mail Emiru da može poručiti kolone"). ERP napravi NACRT s dugmetom „Pošalji" — ništa se ne šalje bez klika i NIKAD ne kažeš da je poslano. Adresu ne izmišljaj: to je ime/prezime/firma kako je rečeno, ili adresa iz poruke. Narudžbu dobavljaču šalji kroz email_order. Odgovor na mail koji je stigao (potvrda predračuna…) → reply_mail.',
         input_schema: {
             type: 'object',
             properties: {
@@ -464,6 +469,21 @@ export const TOOLS: Anthropic.Tool[] = [
                 text: { ...str, description: 'Tijelo u 1–3 rečenice, korisnikovim riječima, ti-forma; bez pozdrava i potpisa (dodaje ih ERP).' },
             },
             required: ['to', 'subject', 'text'],
+        },
+    },
+    {
+        name: 'reply_mail',
+        description: 'ODGOVOR na mail koji je STIGAO, u istoj niti („potvrdi predračun koji je Lejla poslala i reci da može u proizvodnju", „odgovori Selmi na mail da stižemo u 10", „ovaj predračun s maila potvrdi"). Pozovi ODMAH — ERP sam nađe mail (zadnji primljen od osobe/firme s riječima) i napravi NACRT „Re: …" s dugmetom „Pošalji"; ne treba Kontakt ni adresa. Ne email_contact (to je novi mail). NIKAD ne kaži da je poslano.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                who: { ...str, description: 'Ko je poslao mail: ime („Lejla"), firma ili adresa.' },
+                words: { ...str, description: 'Riječi iz naslova/teksta tog maila („predračun", „ogledala") — bez cijele rečenice.' },
+                id: { ...str, description: 'Tačna poruka: id iz [id …] rezultata search_mail (umjesto who/words).' },
+                text: { ...str, description: 'Odgovor u 1–3 rečenice, korisnikovim riječima („Potvrđujem predračun 331594. Može u proizvodnju."); bez pozdrava i potpisa (dodaje ih ERP).' },
+                confirm: { type: 'boolean', description: 'true kad korisnik POTVRĐUJE predračun ili ponudu — ERP je upiše kao potvrđenu na narudžbi.' },
+            },
+            required: ['text'],
         },
     },
     {
@@ -671,9 +691,23 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'save_contact', 'chat_message']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'save_contact', 'chat_message']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
+/**
+ * Uz grešku alata: polja koja alat ne zna, najčešće naziv iz drugog alata („who"/„body" iz
+ * search_mail umjesto „to"/„text"). Tad model ispravi poziv iz prve — „Treba kome, naslov
+ * i tekst." je dvaput ponovljeno s istim pogrešnim nazivima (02.11.). Samo uz grešku: neki
+ * alati primaju i stare nazive mimo šeme (remember: state_label).
+ */
+export function fieldHint(name: string, args: Record<string, unknown>): string | null {
+    const props = (TOOLS.find(t => t.name === name)?.input_schema as { properties?: Record<string, unknown> } | undefined)?.properties;
+    if (!props) return null;
+    const known = Object.keys(props);
+    const unknown = Object.keys(args || {}).filter(k => !known.includes(k) && !k.startsWith('__'));
+    return unknown.length ? `Poslana polja koja ${name} ne zna: ${unknown.join(', ')}. Polja ovog alata: ${known.join(', ')} — ponovi s tim nazivima.` : null;
+}
+
 export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail']);
 
 /** Spisak (i tabela) koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
@@ -686,8 +720,13 @@ function qtyLabel(m: MemoryItem): string {
 function memorySummary(m: MemoryItem): string {
     const where = m.Location ? ` · ${m.Location}` : '';
     const spec = m.Spec ? ` (${m.Spec})` : '';
-    return `${m.State === 'resolved' ? '✔' : '📒'} ${qtyLabel(m)}${m.Title}${spec}${where} — ${m.State_Label}`;
+    // Projekat se vidi u potvrdi kao kod zadatka — bez njega „vrata 629" izgledaju nevezana za projekat (02.11.).
+    const project = m.Links?.find(l => l.Entity_Type === 'project')?.Entity_Name;
+    return `${m.State === 'resolved' ? '✔' : '📒'} ${qtyLabel(m)}${m.Title}${spec}${where} — ${m.State_Label}${project ? `\n📁 ${project}` : ''}`;
 }
+
+/** Isti naslov napravljen u ovom roku je isti zadatak (ispravka, ponovljena poruka). */
+const DUPLICATE_TASK_MINUTES = 60;
 
 type Args = Record<string, unknown>;
 type ToolResult = Record<string, unknown>;
@@ -732,6 +771,18 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         return { ok: false, error: 'Vrijeme podsjetnika je nejasno ili u prošlosti. Pitaj korisnika kada (ask_user).' };
     }
     const dueDate = isIsoDate(a.due_date) ? a.due_date : reminder?.date;
+
+    // Isti zadatak već postoji (isti naslov, isto vrijeme ili napravljen maloprije) → ne pravi drugi.
+    // jedna riječ kao ispravka tipfelera u prethodnoj poruci napravio je duplikat (02.11.).
+    const same = env.ctx.tasks.find(t => t.value.Status !== 'completed' && t.value.Status !== 'cancelled'
+        && foldText(t.value.Title || '') === foldText(title)
+        && (t.value.Assigned_Worker_ID || '') === (worker?.id || '')
+        && ((reminder && t.value.Reminder_At === reminder.iso) || env.now.getTime() - Date.parse(t.value.Created_Date || '') <= DUPLICATE_TASK_MINUTES * 60_000));
+    if (same) {
+        const label = same.value.Reminder_At ? formatReminder(same.value.Reminder_At, env.tz, env.now) : undefined;
+        env.summaries.push(`☑️ Već upisano: ${same.value.Title}${label ? ` — ${label}` : ''}`);
+        return { ok: true, task: same.alias, existing: true, note: 'Zadatak već postoji — nije napravljen drugi. Za izmjenu koristi update_task s ovom oznakom.' };
+    }
 
     const taskId = await createTask(env.orgId, {
         title,
@@ -2119,40 +2170,12 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
             return { ok: true, mail: await readMail(env.uid, id, env.tz), note: MAIL_IS_DATA };
         }
         const words = text(a.words, 120);
-        const who = text(a.who, 120);
         const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
         if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
-
-        const addresses: string[] = [];
-        const domains: string[] = [];
-        const names: string[] = [];
-        let phrase = '';
-        const contacts = who || project ? await loadContacts(env.orgId) : [];
-        if (who) {
-            const literal = normalizeEmail(who);
-            if (isValidEmail(literal)) { addresses.push(literal); domains.push(...firmDomains([literal])); }
-            else {
-                const suppliers = await suppliersOf(env.orgId);
-                const supplierName = (id: string) => suppliers.find(s => s.Supplier_ID === id)?.Name;
-                const people = searchContacts(contacts.map(c => ({ ...c, Receive_Only: false })), who, supplierName).slice(0, 6);
-                // Firma („Ramaglas", „iz Rama glasa"): njeni kontakti, adresa iz ERP-a i domen — odgovor često stiže kao nova nit, s druge adrese.
-                const firms = searchFirms(suppliers, who).slice(0, 3);
-                const firmPeople = contacts.filter(c => c.Supplier_ID && firms.some(f => f.Supplier_ID === c.Supplier_ID));
-                const found = [...people.map(c => c.Email), ...firmPeople.map(c => c.Email), ...firms.flatMap(f => splitEmails(f.Email || ''))];
-                // Nije u Kontaktima ni među dobavljačima → imenik pošte (ljudi kojima si pisao).
-                if (!found.length) found.push(...searchPeople(await loadMailPeople(env.uid), who).slice(0, 4).map(p => p.Email));
-                addresses.push(...found);
-                domains.push(...firmDomains([...firms.flatMap(f => splitEmails(f.Email || '')), ...firmPeople.map(c => c.Email), ...people.filter(c => c.Supplier_ID).map(c => c.Email)]));
-                // Nikog u Kontaktima ni među dobavljačima → Gmail traži ime u zaglavljima Od/Za.
-                if (!found.length) names.push(...queryTokens(who).filter(t => t.length >= 3).slice(0, 2));
-            }
-        } else if (project) {
-            addresses.push(...contacts.filter(c => (c.Project_Roles || []).some(r => r.Project_ID === project.id)).map(c => c.Email));
-            phrase = project.name || '';
-        }
+        const target = await mailTarget(env, text(a.who, 120), project);
         const direction = a.direction === 'in' || a.direction === 'out' ? a.direction : 'all';
         const days = typeof a.days === 'number' ? a.days : undefined;
-        const found = await searchMail(env.uid, { words, addresses, domains, names, phrase, days, direction, attachment: a.attachment === true }, env.tz);
+        const found = await searchMail(env.uid, { words, ...target, days, direction, attachment: a.attachment === true }, env.tz);
         if (!found.query) return { ok: false, error: 'Po čemu da tražim? Navedi riječi, osobu ili projekat.' };
         // Padežne oblike („{kolone kolona …}") model ne treba vidjeti — dovoljna je riječ.
         const shown = (q: string) => q.replace(/ -category:\S+/g, '').replace(/\{([^\s{}:]+)(?: [^\s{}:]+)+\}/g, '$1');
@@ -2163,6 +2186,108 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
                 ? { note: `${MAIL_IS_DATA} ${found.widened === 'words' ? `Kod te osobe/firme s riječima „${words}" skoro ništa — ERP je tražio iste riječi u svoj pošti; pogledaj ko je pisao. ` : found.widened === 'who' ? `Sa riječima „${words}" skoro ništa — ERP je pokazao svu poštu te osobe/firme. ` : ''}${NEW_THREAD_NOTE} Za cijeli tekst jedne poruke pozovi search_mail s id.` }
                 : { note: `Nema poruka za: ${shown(found.query)}. Probaj šire (manje riječi, više dana) prije nego kažeš da nema.` }),
         };
+    } catch (e) {
+        return emailToolError(e);
+    }
+}
+
+/** Osoba, firma ili projekat → adrese, domeni i imena za Gmail upit (pretraga i odgovor na mail). */
+async function mailTarget(env: ToolEnv, who: string, project: ProjectRef | null): Promise<Pick<MailSearch, 'addresses' | 'domains' | 'names' | 'phrase'>> {
+    const addresses: string[] = [];
+    const domains: string[] = [];
+    const names: string[] = [];
+    let phrase = '';
+    const contacts = who || project ? await loadContacts(env.orgId) : [];
+    if (who) {
+        const literal = normalizeEmail(who);
+        if (isValidEmail(literal)) { addresses.push(literal); domains.push(...firmDomains([literal])); }
+        else {
+            const suppliers = await suppliersOf(env.orgId);
+            const supplierName = (id: string) => suppliers.find(s => s.Supplier_ID === id)?.Name;
+            const people = searchContacts(contacts.map(c => ({ ...c, Receive_Only: false })), who, supplierName).slice(0, 6);
+            // Firma („Ramaglas", „iz Rama glasa"): njeni kontakti, adresa iz ERP-a i domen — odgovor često stiže kao nova nit, s druge adrese.
+            const firms = searchFirms(suppliers, who).slice(0, 3);
+            const firmPeople = contacts.filter(c => c.Supplier_ID && firms.some(f => f.Supplier_ID === c.Supplier_ID));
+            const found = [...people.map(c => c.Email), ...firmPeople.map(c => c.Email), ...firms.flatMap(f => splitEmails(f.Email || ''))];
+            // Nije u Kontaktima ni među dobavljačima → imenik pošte (ljudi kojima si pisao).
+            if (!found.length) found.push(...searchPeople(await loadMailPeople(env.uid), who).slice(0, 4).map(p => p.Email));
+            addresses.push(...found);
+            domains.push(...firmDomains([...firms.flatMap(f => splitEmails(f.Email || '')), ...firmPeople.map(c => c.Email), ...people.filter(c => c.Supplier_ID).map(c => c.Email)]));
+            // Nikog u Kontaktima ni među dobavljačima → Gmail traži ime u zaglavljima Od/Za.
+            if (!found.length) names.push(...queryTokens(who).filter(t => t.length >= 3).slice(0, 2));
+        }
+    } else if (project) {
+        addresses.push(...contacts.filter(c => (c.Project_Roles || []).some(r => r.Project_ID === project.id)).map(c => c.Email));
+        phrase = project.name || '';
+    }
+    return { addresses, domains, names, phrase };
+}
+
+/**
+ * Odgovor na mail koji je stigao, u ISTOJ niti („potvrdi predračun koji je Lejla poslala
+ * i reci da može u proizvodnju"). ERP nađe poruku (id iz search_mail, ili zadnja primljena
+ * od osobe s riječima), napravi nacrt „Re: …" s dugmetom „Pošalji". confirm: predračun ili
+ * ponuda iz ulazne pošte vezana za jednu narudžbu se upiše kao potvrđen — isto kao dugme
+ * „Potvrdi" na ulaznoj pošti. Tri poruke 02.11. bez ijednog nacrta (revizija, P-032).
+ */
+async function replyMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const body = text(a.text, 2000);
+    if (!body) return { ok: false, error: 'Treba text — šta odgovaraš, korisnikovim riječima.' };
+    try {
+        let id = text(a.id, 40);
+        if (id && !/^[0-9a-f]{8,32}$/i.test(id)) return { ok: false, error: 'id je oznaka iz [id …] u rezultatu search_mail.' };
+        const who = text(a.who, 120);
+        const words = text(a.words, 120);
+        if (!id) {
+            if (!who && !words) return { ok: false, error: 'Na koji mail? Pošalji who (ko je poslao) i words, ili id iz search_mail.' };
+            const target = await mailTarget(env, who, null);
+            const ids = await listMessageIds(env.uid, gmailQuery({ words, ...target, direction: 'in', days: 60 }), 1);
+            if (!ids.length) return { ok: false, error: `Nema primljenog maila${who ? ` od „${who}"` : ''}${words ? ` s „${words}"` : ''} u zadnjih 60 dana. Pozovi search_mail šire, pa reply_mail s id.` };
+            id = ids[0];
+        }
+        const meta = await getMessageMeta(env.uid, id, ['From', 'Reply-To', 'To', 'Subject', 'Message-ID']);
+        // Odgovor na vlastiti poslani mail ide onome kome je poslan.
+        const mine = meta.labelIds.includes('SENT');
+        const to = mine ? parseAddressList(meta.headers.to || '')[0] : parseMailbox(meta.headers['reply-to'] || '') || parseMailbox(meta.headers.from || '');
+        if (!to) return { ok: false, error: 'Mail nema adresu za odgovor.' };
+        const subject = meta.headers.subject || '(bez naslova)';
+        const draft = await createReplyDraft({
+            orgId: env.orgId, uid: env.uid, to: { name: to.name || '', email: to.email }, subject, text: body,
+            threadId: meta.threadId, inReplyTo: meta.headers['message-id'], source: 'telegram',
+        });
+        env.emailDrafts = [...(env.emailDrafts || []), draft.Draft_ID];
+
+        // Potvrda predračuna/ponude: ERP veže dokument na narudžbu kad ulazna pošta zna koju.
+        let confirmed = '';
+        if (a.confirm === true) {
+            const inbox = inboxRef(env.uid, id);
+            const item = (await inbox.get()).data() as MailInboxItem | undefined;
+            const orderId = item?.Organization_ID === env.orgId && item.Order_IDs.length === 1 ? item.Order_IDs[0] : '';
+            const snap = orderId ? await adminDb().collection(COLLECTIONS.ORDERS).where('Organization_ID', '==', env.orgId).where('Order_ID', '==', orderId).limit(1).get() : null;
+            if (item && snap && !snap.empty) {
+                const doc = snap.docs[0];
+                const order = doc.data() as Order;
+                const what = `${item.Doc_Kind === 'ponuda' ? 'ponuda' : 'predračun'}${item.Doc_No ? ` ${item.Doc_No}` : ''}`;
+                await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: doc.ref.path, before: doc.data(), label: `potvrda: ${what}` });
+                await doc.ref.set({
+                    Supplier_Doc: { No: item.Doc_No || '', Date: item.Received_At, Message_ID: item.Message_ID, Kind: item.Doc_Kind || 'predracun' },
+                    Confirmed_At: env.now.toISOString(),
+                }, { merge: true });
+                if (item.State === 'new') await inbox.set({ State: 'applied', Applied: `✔ ${what} potvrđen kroz bota` }, { merge: true });
+                env.changes.push(`${what} potvrđen na ${order.Order_Number}`);
+                confirmed = `✔ ${capitalizeFirst(what)} potvrđen na narudžbi ${order.Order_Number}.`;
+            }
+        }
+        const toLabel = to.name || to.email;
+        env.summaries.push([
+            ...(confirmed ? [confirmed] : []),
+            `✉️ Nacrt odgovora za ${toLabel} u istoj niti („${draft.Subject}") je ispod — pošalji ga dugmetom, ništa još nije poslano.`,
+        ].join('\n'));
+        return clean({
+            ok: true, draft: true, to: to.email, subject: draft.Subject,
+            order_confirmed: confirmed || undefined,
+            note: a.confirm === true && !confirmed ? 'Narudžba za ovaj mail nije u ERP-u (naručeno mailom) — samo odgovor, bez upisa. Ne spominji to kao grešku.' : 'Mail NIJE poslan — šalje ga korisnik dugmetom.',
+        });
     } catch (e) {
         return emailToolError(e);
     }
@@ -2728,10 +2853,13 @@ async function projectHistoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
 /** Spisak iz bilježnice po filteru — ERP ga složi, korisnik ga dobije kakav jeste. */
 async function listNotebookTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
+    if (a.project && !project) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
     const filter = {
         subject: text(a.subject, 60) || undefined,
         locations: Array.isArray(a.locations) ? a.locations.map(l => text(l, 40)).filter(Boolean).slice(0, 12) : [],
         state: typeof a.state === 'string' && ['otvoreno', 'postavljeno', 'sve', ...MEMORY_STATE_KEYS].includes(a.state) ? a.state : 'otvoreno',
+        ...(project ? { project: { id: project.id, name: projectLabel(project) } } : {}),
     };
     const all = await listMemory(env.orgId, env.uid, filter.state !== 'otvoreno');
     const items = filterNotebook(all, filter);
@@ -2827,6 +2955,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'order_pdf': return await orderPdfTool(env, args);
             case 'email_order': return await emailOrderTool(env, args);
             case 'email_contact': return await emailContactTool(env, args);
+            case 'reply_mail': return await replyMailTool(env, args);
             case 'find_contact': return await findContactTool(env, args);
             case 'chat_message': return await chatMessageTool(env, args);
             case 'search_mail': return await searchMailTool(env, args);

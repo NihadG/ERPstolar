@@ -214,13 +214,16 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         }),
     ]);
 
-    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session });
+    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session, quoted: inc.replyTo?.text, quotedFromBot: inc.replyTo?.fromBot });
 }
 
 async function converse(
     link: AssistantLink,
     chatId: number,
-    input: { text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession; now?: Date },
+    input: {
+        text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession; now?: Date;
+        quoted?: string; quotedFromBot?: boolean;
+    },
 ): Promise<AssistantTurnOutput> {
     const started = Date.now();
     const session = input.session || await getSession(chatId);
@@ -229,6 +232,7 @@ async function converse(
         uid: link.uid,
         text: input.text,
         forward: input.forward,
+        ...(input.quoted ? { quoted: { text: input.quoted, fromBot: !!input.quotedFromBot } } : {}),
         entryId: input.entryId,
         session,
         ...(input.now ? { now: input.now } : {}),

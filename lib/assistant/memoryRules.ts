@@ -171,6 +171,8 @@ export interface NotebookFilter {
     locations?: string[];
     /** otvoreno (podrazumijevano) = nije postavljeno; postavljeno; sve; ili fiksno stanje. */
     state?: string;
+    /** Samo stavke vezane za ovaj projekat („napomene za Brdo"). */
+    project?: { id: string; name: string };
 }
 
 /**
@@ -199,6 +201,7 @@ export function filterNotebook(items: MemoryItem[], f: NotebookFilter): MemoryIt
     const wanted = (f.locations || []).map(l => l.trim()).filter(Boolean);
     const state = f.state || 'otvoreno';
     return items.filter(m => {
+        if (f.project && !m.Links?.some(l => l.Entity_Type === 'project' && l.Entity_ID === f.project!.id)) return false;
         if (subject) {
             const words = tokens(foldText(`${m.Subject} ${m.Title}`)).map(stem);
             if (!words.includes(subject)) return false;
@@ -219,7 +222,7 @@ const STATE_HEAD: Record<string, string> = {
 
 /** Spisak za korisnika, po lameli pa po lokaciji: „• E104 — 2 kom Ogledalo 1000x1350 · u stanu, nije postavljeno". */
 export function notebookListText(items: MemoryItem[], f: NotebookFilter, since: (iso: string) => string): string {
-    const what = f.subject?.trim() ? cap(f.subject.trim()) : 'Stavke';
+    const what = `${f.subject?.trim() ? cap(f.subject.trim()) : 'Stavke'}${f.project ? ` za ${f.project.name}` : ''}`;
     const where = (f.locations || []).length
         ? ` · ${(f.locations || []).every(l => /^[a-z]$/i.test(l.trim())) ? `lamel${(f.locations || []).length > 1 ? 'e' : 'a'} ` : ''}${(f.locations || []).map(l => l.trim().toUpperCase()).join(', ')}`
         : '';

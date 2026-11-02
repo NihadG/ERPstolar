@@ -27,6 +27,8 @@ export function mentionNote(input: {
     text: string;
     /** Prethodne korisnikove poruke u razgovoru (bez ove). */
     recent: string;
+    /** Ova poruka nastavlja prethodnu (continuation.ts); false = projekat iz razgovora je samo mogućnost. */
+    continues?: boolean;
     projects: MentionRef[];
     orders: MentionRef[];
     question: boolean;
@@ -39,7 +41,12 @@ export function mentionNote(input: {
     let projects = hits(input.text, input.projects);
     const fromTalk = !projects.length;
     if (fromTalk) projects = hits(input.recent, input.projects);
-    if (projects.length) out.push(`${fromTalk ? 'projekat iz razgovora' : projects.length > 1 ? 'projekti' : 'projekat'}: ${projects.map(label).join(', ')}`);
+    // Poruka koja se ne naslanja na prethodnu (nova bilješka) ne preuzima njen projekat bez razloga:
+    // „pitati Edina za kant traku" poslije poruke o Brdu nije Brdo (02.11.).
+    const talkLabel = input.continues === false
+        ? 'projekat ranije u razgovoru (veži ga samo ako se ova poruka očito odnosi na njega)'
+        : 'projekat iz razgovora';
+    if (projects.length) out.push(`${fromTalk ? talkLabel : projects.length > 1 ? 'projekti' : 'projekat'}: ${projects.map(label).join(', ')}`);
 
     const orders = hits(input.text, input.orders);
     if (orders.length) out.push(`${orders.length > 1 ? 'nalozi' : 'nalog'}: ${orders.map(label).join(', ')}`);

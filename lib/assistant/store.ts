@@ -22,6 +22,7 @@ import { COLLECTIONS } from '@/lib/services/shared/collections';
 import { capToolCalls } from './toolLog';
 import { mergeSignals, type Signal } from './signals';
 import type { AssistantEntry, AssistantOutcome, AssistantUsage, MemoryItem, ToolCallLog } from '@/lib/types';
+import type { UnfinishedAsk } from './continuation';
 
 const LINK_CODE_TTL_MS = 10 * 60_000;
 const HISTORY_TURNS = 12;
@@ -189,6 +190,8 @@ export interface AssistantSession {
     focus?: SessionFocus | null;
     /** Zadnja obrađena poruka (dnevnik) — ispravka u sljedećoj i /lose idu na nju. */
     lastEntry?: { id: string; at: string; text: string } | null;
+    /** Zahtjev za upis koji prethodna poruka nije završila — nastavak ga preuzima (continuation.ts). */
+    unfinished?: UnfinishedAsk | null;
 }
 
 export async function getSession(chatId: number): Promise<AssistantSession> {
@@ -196,7 +199,7 @@ export async function getSession(chatId: number): Promise<AssistantSession> {
     const data = snap.data() as Partial<AssistantSession> | undefined;
     return {
         history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null, focus: data?.focus || null,
-        lastEntry: data?.lastEntry || null,
+        lastEntry: data?.lastEntry || null, unfinished: data?.unfinished || null,
     };
 }
 
@@ -208,8 +211,30 @@ export async function saveSession(chatId: number, session: AssistantSession): Pr
         refs: session.refs ? JSON.parse(JSON.stringify(session.refs)) : null,
         focus: session.focus || null,
         lastEntry: session.lastEntry || null,
+        unfinished: session.unfinished || null,
         updatedAt: new Date().toISOString(),
     });
+}
+
+/** Koliko teksta poruke koju je bot poslao sam ide u istoriju — dovoljno da „ova poruka" ima smisla. */
+const BOT_NOTE_CHARS = 700;
+
+/**
+ * Poruka koju je bot poslao sam (podsjetnik, jutarnji pregled, kapija materijala,
+ * prijedlog rada) ulazi u istoriju razgovora. Bez toga odgovor „ova poruka je
+ * beskorisna" ili „uradi to" nema na šta da se odnosi (revizija 02.11.2026).
+ */
+export async function noteBotMessage(chatId: number, kind: string, text: string, at = new Date()): Promise<void> {
+    try {
+        const ref = adminDb().collection(COLLECTIONS.ASSISTANT_SESSIONS).doc(String(chatId));
+        const data = (await ref.get()).data() as Partial<AssistantSession> | undefined;
+        const history = Array.isArray(data?.history) ? data!.history : [];
+        const body = text.length > BOT_NOTE_CHARS ? `${text.slice(0, BOT_NOTE_CHARS)}…` : text;
+        const turn: SessionTurn = { role: 'model', text: `[Poslao sam sam — ${kind}]\n${body}`, at: at.toISOString() };
+        await ref.set({ history: [...history, turn].slice(-HISTORY_TURNS), updatedAt: at.toISOString() }, { merge: true });
+    } catch (e) {
+        console.warn('[assistant] poruka bota nije ušla u istoriju:', e);
+    }
 }
 
 // ─── Dnevnik ──────────────────────────────────────────────────────────

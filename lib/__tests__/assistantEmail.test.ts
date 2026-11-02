@@ -322,3 +322,72 @@ describe('PDF „ove narudžbe"', () => {
         expect(e.documents).toEqual([{ orderId: 'o1', draft: true }]);
     });
 });
+
+// Revizija 02.11.2026 (P-032): „potvrdi predračun koji je Amra poslala i reci da može u
+// proizvodnju" → tri poruke bez nacrta. Sad: odgovor u istoj niti + potvrda na narudžbi.
+describe('reply_mail: odgovor na mail koji je stigao', () => {
+    const intent = (t: string) => messageIntent(t, [], { dims: [], widths: [], locations: [] });
+    const MID = 'a1b2c3d4e5f6';
+
+    function gmail(opts: { labels?: string[] } = {}) {
+        fetchMock.mockImplementation(async (url: string) => {
+            if (String(url).includes('oauth2')) return json(200, { access_token: 'A', expires_in: 3600 });
+            if (String(url).includes('/messages?')) return json(200, { messages: [{ id: MID }] });
+            if (String(url).includes(`/messages/${MID}`)) return json(200, {
+                id: MID, threadId: 'th9', labelIds: opts.labels || ['INBOX'], snippet: '', internalDate: '1',
+                payload: { headers: [
+                    { name: 'From', value: 'Amra Delić <amra@staklo-demo.example>' },
+                    { name: 'Subject', value: 'Predračun 331594' },
+                    { name: 'Message-ID', value: '<pr331594@staklo-demo.example>' },
+                ] },
+            });
+            throw new Error(`neočekivan poziv ${url}`);
+        });
+    }
+
+    it('„potvrdi predračun… reci da može u proizvodnju" je mail i bez riječi „mail"', () => {
+        expect(intent('Potvrdi mi Amri predračun i reci da može u proizvodnju.')).toMatchObject({ kinds: ['email'], expectsWrite: true });
+        expect(intent('Ovaj predračun što je Amra poslala na mail, potvrdi ga i reci joj isto da može to početi proizvoditi.').kinds).toEqual(['email']);
+        // Izvještaj o poslanom i dalje nije nalog za mail.
+        expect(intent('Naručio sam preko emaila, poslao Amri').kinds).toEqual(['question']);
+    });
+
+    it('zadnji primljen mail od osobe → nacrt „Re: …" u istoj niti; predračun potvrđen na narudžbi; Poništi vraća', async () => {
+        store.set(`mail_inbox/u1_${MID}`, {
+            Item_ID: MID, Organization_ID: ORG, Owner_UID: 'u1', Message_ID: MID, Thread_ID: 'th9', Rfc_Message_ID: '<pr331594@staklo-demo.example>',
+            From: 'amra@staklo-demo.example', From_Name: 'Amra Delić', Subject: 'Predračun 331594', Snippet: '', Received_At: '2026-10-29T08:00:00Z',
+            Kind: 'quote', Doc_Kind: 'predracun', Doc_No: '331594', Order_IDs: ['o1'], State: 'new', Created_At: 'x',
+        });
+        gmail();
+        const e = env('Potvrdi mi Amri predračun i reci da može u proizvodnju.');
+        const res = await runTool(e, 'reply_mail', { who: 'Amra', words: 'predračun', text: 'Potvrđujem predračun 331594. Može u proizvodnju.', confirm: true });
+        expect(res).toMatchObject({ ok: true, draft: true, to: 'amra@staklo-demo.example', subject: 'Re: Predračun 331594' });
+        const [d] = drafts();
+        expect(d).toMatchObject({ Thread_ID: 'th9', In_Reply_To: '<pr331594@staklo-demo.example>', Status: 'draft' });
+        expect(d.To[0].email).toBe('amra@staklo-demo.example');
+        expect(d.Body).toContain('Potvrđujem predračun 331594. Može u proizvodnju.');
+        expect(e.emailDrafts).toEqual([d.Draft_ID]);
+        expect(store.get('orders/o1')).toMatchObject({ Supplier_Doc: { No: '331594', Kind: 'predracun' }, Confirmed_At: expect.any(String) });
+        expect(store.get(`mail_inbox/u1_${MID}`)!.State).toBe('applied');
+        expect(e.summaries[0]).toMatch(/^✔ Predračun 331594 potvrđen na narudžbi N2026-10\/07\.\n✉️ Nacrt odgovora za Amra Delić u istoj niti/);
+        // Ništa nije poslano.
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/send'))).toBe(false);
+
+        await undoTurn(e.turnId, 'u1');
+        expect(store.get('orders/o1')!.Confirmed_At).toBeUndefined();
+    });
+
+    it('narudžba nije u ERP-u (naručeno mailom): samo odgovor, bez upisa', async () => {
+        gmail();
+        const e = env();
+        const res = await runTool(e, 'reply_mail', { id: MID, text: 'Potvrđujem. Može u proizvodnju.', confirm: true });
+        expect(res).toMatchObject({ ok: true, note: expect.stringMatching(/nije u ERP-u/) });
+        expect(e.changes).toEqual([]);
+        expect(drafts()[0].Thread_ID).toBe('th9');
+    });
+
+    it('bez teksta ili bez traga koji mail → jasna greška, ništa se ne pravi', async () => {
+        await expect(runTool(env(), 'reply_mail', { who: 'Amra' })).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/Treba text/) });
+        await expect(runTool(env(), 'reply_mail', { text: 'Važi.' })).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/Na koji mail/) });
+    });
+});
