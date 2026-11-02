@@ -37,7 +37,7 @@ import { aliasesOf } from './vocab';
 import { foldText } from '@/lib/voice/text';
 import { projectLabel } from '@/lib/voice/extract';
 import { claimsWrite, composeReply, sanitizeModelText } from './replyText';
-import { DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, type ErpQuestion, type ToolEnv } from './tools';
+import { fieldHint, DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, type ErpQuestion, type ToolEnv } from './tools';
 import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, SessionTurn } from './store';
 import type { AssistantOutcome, AssistantUsage, MemoryItem, TaskChatMessage, ToolCallLog } from '@/lib/types';
 import { toolCallLog } from './toolLog';
@@ -49,6 +49,7 @@ import { addUsage, emptyUsage } from './usage';
 import { mentionNote } from './mentions';
 import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
 import { turnSignals } from './signals';
+import { continuesPrevious, inheritedAsk, type UnfinishedAsk } from './continuation';
 
 export { claimsWrite } from './replyText';
 
@@ -176,6 +177,8 @@ export interface AssistantTurnInput {
     uid: string;
     text: string;
     forward?: { from: string; date: string };
+    /** Poruka na koju korisnik odgovara (reply) — „ova poruka je beskorisna" mora znati koja. */
+    quoted?: { text: string; fromBot: boolean };
     entryId?: string;
     session: AssistantSession;
     now?: Date;
@@ -260,10 +263,24 @@ function sessionRefs(env: ToolEnv, at: string): SessionRefs | null {
     return refs.orderGroups || refs.catalogHits || refs.searchHits || refs.diaryCandidates || refs.pendingVocab ? refs : null;
 }
 
-function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
-    const out: Anthropic.MessageParam[] = history.map(t => ({ role: t.role === 'model' ? 'assistant' : 'user', content: t.text }));
-    while (out.length && out[0].role !== 'user') out.shift(); // razgovor mora početi korisnikom
+export function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
+    const out: { role: 'user' | 'assistant'; content: string }[] = [];
+    for (const t of history) {
+        const role = t.role === 'model' ? 'assistant' : 'user';
+        // Poruke koje je bot poslao sam (podsjetnik pa pregled) dolaze jedna za drugom — spoje se u jedan red.
+        const last = out[out.length - 1];
+        if (last && last.role === role) last.content = `${last.content}\n\n${t.text}`;
+        else out.push({ role, content: t.text });
+    }
+    // Razgovor mora početi korisnikom; poruka koju je bot sam poslao na početku ostaje kao kontekst.
+    if (out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: '[ranije u razgovoru]' });
     return out;
+}
+
+/** Kad je bio zadnji red razgovora (i poruka koju je bot poslao sam) — za „nastavlja li se". */
+function minutesSinceLast(history: SessionTurn[], now: Date): number | null {
+    const last = history[history.length - 1];
+    return last ? (now.getTime() - Date.parse(last.at)) / 60_000 : null;
 }
 
 /** Kratak razlog greške za korisnika — bez logova na Vercelu inače se ne vidi šta je puklo. */
@@ -312,6 +329,8 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
 
     // Šta je ERP morao ispravljati (čuvari) — postavlja se u petlji, čita u finish.
     const sig = { readGuard: false, mailGuard: false, writeGuard: false, coverage: false };
+    // Zahtjev za upis ove poruke — ostaje u sesiji ako se ne upiše (dopuna ga preuzima).
+    let ask: UnfinishedAsk | null = null;
 
     const finish = (reply: string, buttons: ButtonRows, pending: AssistantSession['pending'], modelTurn: string, extra: Partial<AssistantTurnOutput> = {}): AssistantTurnOutput => ({
         reply,
@@ -330,6 +349,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             pending,
             refs: turnEnv ? sessionRefs(turnEnv, at) : prevRefs,
             focus: nextFocus,
+            unfinished: ask && extra.outcome !== 'written' ? ask : null,
         },
     });
 
@@ -351,19 +371,38 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     // Šta poruka traži (vrsta, radnici, vrijeme) — za napomenu i za provjeru poslije obrade.
     const workerRefs = ctx.workers.map(w => ({ id: w.value.id, name: w.value.name, aliases: aliasesOf(ctx.vocab || [], 'worker', w.value.id) }));
     // Zaglavlje proslijeđene poruke („[Proslijeđeno od Amer…]") nije dio onoga što se traži.
-    const intent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
+    const ownIntent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
+    // Nastavlja li se poruka na prethodnu: odgovor na pitanje, reply, „a vrata…", „ma treba mi…".
+    // Samo tad projekat, rečeno i nedovršen zahtjev iz prethodne poruke važe i za ovu (continuation.ts).
+    const continues = !!input.session.pending || !!input.quoted || continuesPrevious(pre.text, minutesSinceLast(history, now));
+    const inherited = inheritedAsk({
+        unfinished: input.session.unfinished,
+        ownWriteKinds: ownIntent.kinds.filter(k => k !== 'question' && k !== 'table'),
+        continues,
+        answering: !!input.session.pending,
+        now,
+    });
+    // Nedovršen zahtjev („podsjeti me sutra u 8…" na koji je bot samo odgovorio) traži upis i u dopuni.
+    const intent = inherited
+        ? { ...ownIntent, kinds: Array.from(new Set([...inherited.kinds, ...ownIntent.kinds.filter(k => k !== 'question')])), expectsWrite: true }
+        : ownIntent;
+    const writeKinds = intent.kinds.filter(k => k !== 'question' && k !== 'table');
+    if (intent.expectsWrite && writeKinds.length) ask = { kinds: writeKinds, text: inherited ? `${inherited.text}\n${message}` : message, at };
     const workerOf = (id: string) => ctx.workers.find(w => w.value.id === id);
     const focusOrder = focus?.order && now.getTime() - Date.parse(focus.order.at) <= ORDER_FOCUS_MINUTES * 60_000 ? focus.order : undefined;
     // Projekti i nalozi koje poruka spominje (imena, klijenti, naučeni nadimci) — ERP ih nađe, model ne pogađa.
     const projectGround = ctx.projects.map(p => ({ id: p.value.id, alias: p.alias, name: projectLabel(p.value), aliases: aliasesOf(ctx.vocab || [], 'project', p.value.id) }));
     const orderGround = (ctx.orders || []).map(o => ({ id: o.value.id, alias: o.alias, name: o.value.name, aliases: aliasesOf(ctx.vocab || [], 'order', o.value.id) }));
-    const recentUserText = history.filter(t => t.role === 'user').slice(-2).map(t => t.text).join('\n');
+    const recentUserText = [
+        ...history.filter(t => t.role === 'user').slice(-2).map(t => t.text),
+        ...(input.quoted ? [input.quoted.text] : []),
+    ].join('\n');
     // Dobavljači iz poruke („iz Ramaglasa“) s adresom — stanje kod njih je često samo u pošti.
     const firmHits = searchFirms((ctx.firms || []).map(f => ({ Name: f.name, Email: f.email })), pre.text).slice(0, 3)
         .map(f => ({ name: f.Name, ...(f.Email ? { email: f.Email } : {}) }));
     const note = factsNote(pre.facts, focusLocation, [
         ...intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }),
-        ...mentionNote({ text: pre.text, recent: recentUserText, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question'), firms: firmHits }),
+        ...mentionNote({ text: pre.text, recent: recentUserText, continues, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question'), firms: firmHits }),
         ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
     ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
@@ -373,7 +412,11 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         || pre.text.length > 300 || intent.kinds.filter(k => k !== 'question').length >= 3
         || intent.kinds.includes('progress')
         || (people > 0 && (people >= 2 || sentenceCount >= 2) && !intent.kinds.every(k => k === 'question'));
-    const modelMessage = note ? `${pre.text}\n${note}` : pre.text;
+    const context = [
+        ...(input.quoted ? [`[Korisnik odgovara na ${input.quoted.fromBot ? 'tvoju poruku' : 'poruku'}: „${input.quoted.text.slice(0, 900)}"]`] : []),
+        ...(inherited ? [`[Nastavak zahtjeva koji još nije upisan: „${inherited.text.slice(0, 300)}" — ova poruka ga dopunjuje ili ispravlja; upiši ga sad s onim što je rečeno, ne traži potvrdu iz ERP-a]`] : []),
+    ];
+    const modelMessage = [...context, pre.text, ...(note ? [note] : [])].join('\n');
     nextFocus = focusLocation || focusOrder
         ? { at: focus!.at, ...(focusLocation ? { location: focusLocation } : {}), ...(focusOrder ? { order: focusOrder } : {}) }
         : null;
@@ -383,7 +426,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     // → „Ameru"). Starije poruke bi podmetnule pogrešan dan.
     const recentUser = input.session.pending
         ? history.filter(t => t.role === 'user').slice(-1).map(t => t.text)
-        : [];
+        : inherited ? [inherited.text] : [];
     const env: ToolEnv = {
         orgId: input.orgId,
         uid: input.uid,
@@ -393,9 +436,11 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         turnId,
         entryId: input.entryId,
         dateText: [...recentUser, message].join('\n'),
-        // Utemeljenost upisa: ova poruka + korisnikove poruke iz zadnjih 30 min (nastavak razgovora).
+        // Utemeljenost upisa: ova poruka + korisnikove poruke iz zadnjih 30 min, ali samo kad se
+        // ova na njih naslanja — „pitati Edina za kant traku" ne preuzima Brdo iz poruke prije.
         groundText: [
-            ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-2).map(t => t.text),
+            ...(continues ? history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-2).map(t => t.text) : []),
+            ...(inherited ? [inherited.text] : []),
             ...(input.session.pending?.options || []),
             message,
             pre.text,
@@ -583,7 +628,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 }
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
-                const out = await runTool(env, use.name, (use.input || {}) as Record<string, unknown>);
+                const args = (use.input || {}) as Record<string, unknown>;
+                const ran = await runTool(env, use.name, args);
+                const hint = ran.ok === false ? fieldHint(use.name, args) : null;
+                const out = hint ? { ...ran, error: `${String(ran.error || 'Greška.')} ${hint}` } : ran;
                 const mailArgs = (use.input || {}) as Record<string, unknown>;
                 if (use.name === 'search_mail' && out.ok !== false && (mailArgs.who || mailArgs.project)) mailSearched = true;
                 toolCalls.push(toolCallLog(use.name, use.input, out));

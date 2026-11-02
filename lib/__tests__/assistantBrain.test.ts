@@ -107,7 +107,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'make_table', 'email_order', 'email_contact', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'make_table', 'email_order', 'email_contact', 'reply_mail', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
         expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
@@ -684,11 +684,25 @@ describe('alati po vrsti poruke i prepoznat projekat (30.10.)', () => {
 
     it('upis (rad, zadatak…) dobija sve alate; projekat iz prethodne poruke je „iz razgovora"', async () => {
         mockSent.length = 0;
-        const out = await say('Amer je radio montažu cijeli dan', [{ text: 'Koji nalog?' }]);
+        const out = await say('A Amer je radio montažu cijeli dan', [{ text: 'Koji nalog?' }]);
         expect(names(mockSent[0])).toContain('log_work');
         expect(names(mockSent[0])).not.toContain('all_tools');
         expect(mockSent[0].messages.at(-1).content).toContain('projekat iz razgovora: P1 Begović · Zgrada Grbavica · Grbavica');
         expect(out.usage?.toolSet).toBe('svi');
+    });
+
+    // Revizija 02.11.: „pitati Edina za kant traku" poslije poruke o drugom projektu dobio je taj projekat.
+    it('nova bilješka koja se ne naslanja na prethodnu: projekat iz razgovora je samo mogućnost, i ne veže se', async () => {
+        session = { history: [], pending: null };
+        await say('Šta je sa Grbavicom?', [{ text: 'Sve je u redu.' }]);
+        mockSent.length = 0;
+        const out = await say('Pitati Edina za kant traku bukvu u 11', [
+            { calls: [{ name: 'create_task', args: { title: 'Pitati Edina za kant traku bukvu', category: 'reminder', reminder_at: '2026-10-23T11:00', project: 'P1' } }] },
+        ]);
+        expect(mockSent[0].messages.at(-1).content).toContain('projekat ranije u razgovoru (veži ga samo ako se ova poruka očito odnosi na njega): P1');
+        const task = docs('tasks').find(t => t.Title === 'Pitati Edina za kant traku bukvu');
+        expect(task?.Links).toEqual([]);
+        expect(out.reply).not.toMatch(/📁/);
     });
 });
 
@@ -723,5 +737,55 @@ describe('pošta prije „ne" za stanje kod dobavljača (PDF 30.10.)', () => {
         mockSent.length = 0;
         await say(ask, steps);
         expect(mockSent).toHaveLength(2);
+    });
+});
+
+// Revizija 02.11.2026: bot treba kontekst zadnjih poruka, ne samo ERP (izmišljena imena).
+describe('kontekst razgovora (02.11.)', () => {
+    beforeEach(() => { session = { history: [], pending: null }; mockSent.length = 0; });
+
+    it('podsjetnik na koji je bot samo odgovorio: dopuna „ma, treba mi za…" ga upiše s vremenom iz prve poruke', async () => {
+        const first = await say('Provjerit sa Edinom sutra u 8 kako dovući staklo za Grbavicu', [
+            { text: 'Za Grbavicu još nije naručeno 3 m² stakla.' },
+            { text: 'Ne znam koje staklo.' },
+        ]);
+        // Bot nije upisao — ERP je tjerao jednom (podsjetnik), i zahtjev ostaje otvoren.
+        expect(mockSent[1].messages.at(-1).content).toMatch(/poruka traži upis \(reminder\)/);
+        expect(first.session.unfinished?.kinds).toEqual(['reminder']);
+
+        mockSent.length = 0;
+        const out = await say('Ma, treba mi za vrata na jedno staklo koje je naručeno u Staklorezu', [
+            { calls: [{ name: 'create_task', args: { title: 'Provjeriti sa Edinom staklo za vrata naručeno u Staklorezu', category: 'reminder', reminder_at: '2026-10-24T08:00' } }] },
+        ]);
+        expect(mockSent[0].messages.at(-1).content).toMatch(/^\[Nastavak zahtjeva koji još nije upisan: „Provjerit sa Edinom sutra u 8/);
+        expect(out.outcome).toBe('written');
+        expect(out.reply).toMatch(/sutra u 08:00/);
+        expect(out.session.unfinished).toBeNull();
+    });
+
+    it('odgovor (reply) na poruku bota: model zna na koju se poruka odnosi', async () => {
+        await say('Ova poruka je beskorisna, nema potrebe da je šalješ', [{ text: 'Razumijem.' }],
+            { quoted: { text: '⏰ Naručiti inox za Grbavicu', fromBot: true } });
+        expect(mockSent[0].messages.at(-1).content).toMatch(/^\[Korisnik odgovara na tvoju poruku: „⏰ Naručiti inox za Grbavicu"\]/);
+    });
+
+    it('ispravka tipfelera jednom riječju ne pravi drugi isti zadatak', async () => {
+        await say('Naruciti sutra inox za grbavicuu napomena', [
+            { calls: [{ name: 'create_task', args: { title: 'Naručiti inox za Grbavicu', category: 'reminder', reminder_at: '2026-10-24T08:00', project: 'P1' } }] },
+        ]);
+        const before = docs('tasks').filter(t => t.Title === 'Naručiti inox za Grbavicu').length;
+        const out = await say('grbavicu', [
+            { calls: [{ name: 'create_task', args: { title: 'Naručiti inox za Grbavicu', category: 'ordering', reminder_at: '2026-10-24T08:00', project: 'P1' } }] },
+        ]);
+        expect(docs('tasks').filter(t => t.Title === 'Naručiti inox za Grbavicu')).toHaveLength(before);
+        expect(out.reply).toMatch(/^☑️ Već upisano: Naručiti inox za Grbavicu/);
+    });
+
+    it('pogrešni nazivi polja: greška alata kaže koja polja alat zna', async () => {
+        await say('Javi Selmi mailom da je predračun potvrđen', [
+            { calls: [{ name: 'email_contact', args: { who: 'Selma', body: 'Predračun je potvrđen.' } }] },
+            { text: 'Nisam uspio.' },
+        ]);
+        expect(JSON.stringify(mockSent[1].messages.at(-1).content)).toMatch(/ne zna: who, body\. Polja ovog alata: to, company, subject, text/);
     });
 });

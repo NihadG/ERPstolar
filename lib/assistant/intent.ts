@@ -28,7 +28,9 @@ export interface MessageIntent {
     times: string[];
 }
 
-const QUESTION_START = /^(sta|šta|koliko|gdje|kad|kada|ko|koji|koja|koje|da li|jel|je li|ima li|imam li|imamo li|kako|zasto|zašto|pokazi|pokaži|posalji mi|pošalji mi|treba mi pdf|daj mi)\b/;
+const FUTURE_DAY = /^(sutra|prekosutra|ponedjeljak|utorak|srijedu|srijeda|cetvrtak|petak|subotu|subota|nedjelju|nedjelja)$/;
+
+const QUESTION_START =/^(sta|šta|koliko|gdje|kad|kada|ko|koji|koja|koje|da li|jel|je li|ima li|imam li|imamo li|kako|zasto|zašto|pokazi|pokaži|posalji mi|pošalji mi|treba mi pdf|daj mi)\b/;
 
 export function messageIntent(text: string, workers: GroundRef[], facts: { dims: string[]; widths: string[]; locations: string[] }): MessageIntent {
     const t = foldText(text).trim();
@@ -64,15 +66,23 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
     if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')
         && /\b(gotov|zavrs|napravljen|skrojen|srezan|kantiran|sklopljen|izbrusen|polakiran|zapakovan|montiran|ofarban|furniran|u toku|na (brusenj|lakiranj|kantiranj|krojenj|sklapanj|okivanj|montaz|furniranj|pakovanj|presovanj)|krenul|zapoce|zavrseno)\w*/.test(t)) kinds.add('progress');
+    // Budući dan ili sat bez ičeg drugog = podsjetnik, kojim god glagolom: „Provjerit sa Senadom sutra
+    // u 8 kako dovući staklo" (02.11.) nije bio ni u jednoj listi riječi, pa je bot odgovarao o staklu.
+    // „Danas" sam nije dovoljno („danas smo…" je izvještaj), sat jeste.
+    if (!question && !kinds.size && times.some(x => /\d:\d/.test(x) || FUTURE_DAY.test(x))) kinds.add('reminder');
     // Mail („pošalji Amri narudžbu mailom", „javi Selmi mailom da su lajsne gotove"): sadržaj maila
     // nije upis u ERP — nije nova narudžba, zadatak ni stanje procesa. Pitanje o adresi nije mail.
     // „Naručio sam preko emaila, poslao Merimi" (31.10.) je podatak gdje tražiti, ne nalog za
     // novi mail: prošlo vrijeme bez naredbe → pitanje (pošta se čita), ne upis.
     const mailReport = /\b(poslao|poslala|poslali|narucio|narucila|narucili|pisao|pisala|slao|slala)\b/.test(t)
-        && !/\b(posalji|posaljite|napisi|sastavi|javi|naruci|narucite|proslijedi|odgovori|napravi|upisi|zapisi|dodaj|kreiraj|podsjeti|napomeni)\b/.test(t);
-    if (/\b(e-?mail|mail|mejl|imejl)\w*/.test(t) && !/\b(koji je|kakav je|adres)\w*/.test(t)) {
+        && !/\b(posalji|posaljite|napisi|sastavi|javi|naruci|narucite|proslijedi|odgovori|potvrdi|napravi|upisi|zapisi|dodaj|kreiraj|podsjeti|napomeni)\b/.test(t);
+    // Potvrda dokumenta dobavljača ili odgovor na mail („potvrdi Lejli predračun i reci da može u
+    // proizvodnju", „odgovori joj da…") je odgovor u niti (reply_mail), i bez riječi „mail" (02.11.).
+    const replyMail = (/\bpotvrd\w*/.test(t) && /\b(predracun|ponud)\w*/.test(t))
+        || /\bodgovori\w*\s+(joj|mu|im|na (taj |ovaj |njen |njegov )?(mail|mejl|email|poruku))\b/.test(t);
+    if (replyMail || (/\b(e-?mail|mail|mejl|imejl)\w*/.test(t) && !/\b(koji je|kakav je|adres)\w*/.test(t))) {
         kinds.clear();
-        kinds.add(mailReport ? 'question' : 'email');
+        kinds.add(mailReport && !replyMail ? 'question' : 'email');
     }
     // Viber/WhatsApp („pošalji poruku Zaimu na viber sutra u 10, naruči baglame"): sadržaj poruke
     // nije narudžba ni podsjetnik u ERP-u — sve ide u jednu karticu (chat_message).
@@ -106,7 +116,7 @@ const KIND_LABEL: Record<MessageKind, string> = {
     notebook: 'bilježnica (remember / update_memory)', work: 'rad i procesi (log_work)',
     progress: 'stanje procesa bez radnika (set_progress; nazive procesa uzmi iz TOK NALOGA)', presence: 'prisustvo (set_presence)',
     order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)',
-    email: 'mail (email_order za narudžbu, email_contact za ostalo — samo NACRT, šalje korisnik dugmetom)',
+    email: 'mail (email_order za narudžbu, reply_mail za odgovor/potvrdu na mail koji je stigao, email_contact za novi mail — samo NACRT, šalje korisnik dugmetom)',
     chat: 'poruka na Viber/WhatsApp (chat_message; vrijeme ide u send_at, sadržaj u text — nije narudžba ni zadatak)',
     table: 'tabela (make_table — ERP složi i pošalje PDF; bez upisa)', question: 'pitanje (odgovor, bez upisa)',
 };

@@ -41,7 +41,9 @@ export function mentionsAllOrders(text: string): boolean {
     return /\b(svi nalozi|sve naloge|svim nalozima|svi poslovi|na svemu)\b/.test(foldText(text));
 }
 
-const words = (s: string) => tokens(foldText(s)).filter(w => w.length >= 3);
+// „Što" bez kvačica postane „sto" (stol): „predračun što je Lejla poslala" je vezao Sto za Tarika
+// (02.11.). Veznik se izbaci prije presavijanja; „sto" bez kvačica ostaje (može biti stol).
+const words = (s: string) => tokens(foldText((s || '').replace(/(^|[^\p{L}])što(?![\p{L}])/giu, '$1 '))).filter(w => w.length >= 3);
 
 /** Riječ naziva se nalazi u tekstu (s padežima i sitnim greškama). */
 function hit(nameWord: string, textWords: string[]): boolean {

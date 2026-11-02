@@ -16,7 +16,7 @@ import { buildTodayDigest } from './digest';
 import { createProposalMessage, gapsForDigest, isWorkingDayFor } from './dayProposals';
 import { materialDigest } from './materialAlerts';
 import { chatCardButtons, chatCardText } from './chatMessage';
-import { getLinkByUid, listLinks, setDigestDate, setProposalDate, type AssistantLink } from './store';
+import { getLinkByUid, listLinks, noteBotMessage, setDigestDate, setProposalDate, type AssistantLink } from './store';
 import type { Task } from '@/lib/types';
 
 const BATCH = 50;
@@ -80,8 +80,9 @@ export async function sendDueReminders(now: Date, tz: string): Promise<{ sent: n
         }
         try {
             // Poruka za Viber/WhatsApp stiže kao kartica s gotovim tekstom i dugmadima.
-            if (t.Chat_Message) await sendMessage(link.chatId, `⏰ Vrijeme je za poruku\n${chatCardText(t.Chat_Message)}`, chatCardButtons(t.Chat_Message, t.Task_ID));
-            else await sendMessage(link.chatId, reminderText(t), reminderButtons(t.Task_ID));
+            const body = t.Chat_Message ? `⏰ Vrijeme je za poruku\n${chatCardText(t.Chat_Message)}` : reminderText(t);
+            await sendMessage(link.chatId, body, t.Chat_Message ? chatCardButtons(t.Chat_Message, t.Task_ID) : reminderButtons(t.Task_ID));
+            await noteBotMessage(link.chatId, 'podsjetnik', body, now);
             await doc.ref.update({ Reminder_Pending: false, Reminder_Sent_At: nowIso });
             sent++;
         } catch (e) {
@@ -109,7 +110,9 @@ export async function sendMorningDigests(now: Date, tz: string): Promise<number>
                 materialDigest(link.orgId, local.date).catch(e => { console.error('[reminders] materijal nije izračunat:', e); return null; }),
             ]);
             if (!digest && !gaps && !material) continue;
-            await sendMessage(link.chatId, ['Dobro jutro ☀️', digest, material, gaps?.text].filter(Boolean).join('\n\n'), gaps?.buttons);
+            const body = ['Dobro jutro ☀️', digest, material, gaps?.text].filter(Boolean).join('\n\n');
+            await sendMessage(link.chatId, body, gaps?.buttons);
+            await noteBotMessage(link.chatId, 'jutarnji pregled', body, now);
             sent++;
         } catch (e) {
             console.error('[reminders] jutarnji pregled nije poslan:', e);
@@ -136,6 +139,7 @@ export async function sendDayProposals(now: Date, tz: string): Promise<number> {
             const msg = await createProposalMessage(link, local.date, local.date);
             if (!msg) continue;
             await sendMessage(link.chatId, msg.text, msg.buttons);
+            await noteBotMessage(link.chatId, 'prijedlog upisa rada', msg.text, now);
             sent++;
         } catch (e) {
             console.error('[reminders] večernji prijedlog nije poslan:', e);
