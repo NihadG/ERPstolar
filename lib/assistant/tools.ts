@@ -14,6 +14,7 @@ import { createTask, taskRef } from '@/lib/server/fieldWrites';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { isIsoDate } from '@/lib/voice/dates';
 import { foldText, tokens, stem } from '@/lib/voice/text';
+import { sortByFlat } from './checklistOrder';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
 import { formatReminder, resolveReminderAt, toZoned, zonedToUtcMs } from './datetime';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
@@ -63,7 +64,7 @@ import { gmailQuery, type MailSearch } from '@/lib/email/search';
 import { parseAddressList, parseMailbox } from '@/lib/email/addresses';
 import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
 import { queryTokens } from '@/lib/command/search';
-import type { TableDoc } from '@/lib/tables/table';
+import { tableFileName, type TableDoc } from '@/lib/tables/table';
 import { requestedColumns } from '@/lib/tables/columns';
 import type { EngineResult } from '@/lib/tables/engine';
 import { groundedScope, saidIn } from '@/lib/tables/grounding';
@@ -114,6 +115,8 @@ export const TOOLS: Anthropic.Tool[] = [
                 title: str,
                 note: { ...str, description: 'Bilješka koja se dopisuje (npr. ko je javio šta).' },
                 add_checklist: { ...strList, description: 'Nove stavke check liste u ISTOM zadatku („Kerim — CNC").' },
+                sort_checklist: { type: 'string', enum: ['stan'], description: '„Složi po stanovima/lamelama" → stan: ERP složi postojeće stavke (iste, istim tekstom) po lameli i stanu. Ne pravi novi zadatak za to.' },
+                checklist: { ...strList, description: 'CIJELA nova check lista umjesto stare — samo kad korisnik traži da se lista prepravi; stavke prepiši iz postojeće (ne iz bilježnice).' },
             },
             required: ['task'],
         },
@@ -418,11 +421,13 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'make_table',
-        description: 'TABELA kao PDF u chat („napravi tabelu…", „u tabeli…", „u kolonama…"). ERP učita podatke, složi kolone, redove i zbir i pošalje PDF — ti ne pišeš redove i ne prepričavaš. Izvori: biljeska (stvari po stanovima — polja: stan, lamela, gdje stoji, predmet, mjere, količina, stanje, napomena, upisano, oznake) i materijali (sastavnice projekata — materijal, količina, jedinica, dobavljač, projekat, proizvod, potrebno, naručeno, primljeno, na stanju, u nacrtu, cijena, iznos, status). Filtere stavljaj SAMO s riječima koje je korisnik rekao. Tabela iz nečega drugog (zadaci, narudžbe…) → reci da za sada postoje te dvije, ne pravi zamjensku.',
+        description: 'TABELA kao PDF u chat („napravi tabelu…", „u tabeli…", „u kolonama…"). ERP učita podatke, složi kolone, redove i zbir i pošalje PDF — ti ne pišeš redove i ne prepričavaš. Izvori: biljeska (stvari po stanovima — polja: stan, lamela, gdje stoji, predmet, mjere, količina, stanje, napomena, upisano, oznake) i materijali (sastavnice projekata — materijal, količina, jedinica, dobavljač, projekat, proizvod, potrebno, naručeno, primljeno, na stanju, u nacrtu, cijena, iznos, status). Filtere stavljaj SAMO s riječima koje je korisnik rekao. Treći izvor: tekst — tabela od onoga što je PROČITANO (mailovi iz search_mail s id, ili tvoj prethodni odgovor iz tog teksta): „napravi tabelu primjedbi iz Lejlinih mailova, samo za nas" → source tekst, columns, rows (ćelije prepisane iz teksta, bez izmišljanja; filter korisnika primijeni ti). ERP provjeri da je svaki red u pročitanom tekstu — mail koji nije pročitan u ovoj poruci prvo pročitaj (search_mail s id iz [id …] u istoriji). Tabela iz nečega drugog (zadaci, narudžbe…) → reci da za sada postoje ova tri izvora, ne pravi zamjensku.',
         input_schema: {
             type: 'object',
             properties: {
-                source: enumOf(['biljeska', 'materijali']),
+                source: enumOf(['biljeska', 'materijali', 'tekst']),
+                title: { ...str, description: 'tekst: naslov tabele („Primjedbe kupaca — Brdo").' },
+                rows: { type: 'array', items: strList, description: 'tekst: redovi, svaki s ćelijama istim redom kao columns, prepisano iz pročitanog teksta.' },
                 columns: { ...strList, description: 'Kolone tačno kako ih je korisnik rekao, istim redom („stan", „umivaonik/ogledalo", „dimenzije"). Bez toga = podrazumijevane.' },
                 filters: {
                     type: 'array',
@@ -484,6 +489,20 @@ export const TOOLS: Anthropic.Tool[] = [
                 confirm: { type: 'boolean', description: 'true kad korisnik POTVRĐUJE predračun ili ponudu — ERP je upiše kao potvrđenu na narudžbi.' },
             },
             required: ['text'],
+        },
+    },
+    {
+        name: 'link_mail',
+        description: 'Mail (ponuda, predračun, primjedbe) se odnosi na DRUGI/rečeni projekat („ova ponuda od Zaima se odnosi na projekat Brdo", „taj mail je za Grbavicu"). ERP prebaci vezu maila na taj projekat (kartica projekta, narudžbe). „Ovaj/taj mail" = mail iz razgovora: id iz [id …] u istoriji (pošta koju je bot javio), ili who + words.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                project: { ...str, description: 'Oznaka P# projekta na koji se mail odnosi.' },
+                id: { ...str, description: 'id maila iz [id …] u istoriji ili search_mail.' },
+                who: { ...str, description: 'Ko je poslao (kad id nije poznat).' },
+                words: { ...str, description: 'Riječi iz naslova (kad id nije poznat).' },
+            },
+            required: ['project'],
         },
     },
     {
@@ -651,6 +670,12 @@ export interface ToolEnv {
     diaryCandidates?: Aliased<string>[];
     /** „O3 Baglama ravna · Kuhinja Grbavica" — legenda oznaka ove poruke za istoriju modela. */
     refNotes?: string[];
+    /** Tekst pročitan ovom porukom (cijeli mailovi) i ranije u razgovoru — izvor za tabelu „iz teksta". */
+    readTexts?: string[];
+    /** Razgovor (istorija) kao tekst — i prethodni odgovor iz pročitanih mailova je izvor tabele. */
+    talkText?: string;
+    /** Poruka traži zadatak/podsjetnik, ne bilježnicu — upis u bilježnicu se odbija (stanje ide u zadatak). */
+    notebookBlocked?: boolean;
     /** Lokacija iz razgovora (ERP je vodi): „u tom stanu", poruka bez lokacije odmah poslije upisa. */
     focusLocation?: string;
     /** Stavke bilježnice upisane ovom porukom — dobijaju dugmad stanja ispod potvrde. */
@@ -691,7 +716,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'save_contact', 'chat_message']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'save_contact', 'chat_message']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
 /**
@@ -724,6 +749,17 @@ function memorySummary(m: MemoryItem): string {
     const project = m.Links?.find(l => l.Entity_Type === 'project')?.Entity_Name;
     return `${m.State === 'resolved' ? '✔' : '📒'} ${qtyLabel(m)}${m.Title}${spec}${where} — ${m.State_Label}${project ? `\n📁 ${project}` : ''}`;
 }
+
+/**
+ * Stavke check liste: do 40, do 240 znakova. Ranije 12 × 120 — lista montaže od 13 stavki
+ * izgubila je zadnju, a „(stoje ispred stana)" je odsječeno usred riječi (03.11.).
+ */
+function checklistOf(v: unknown): string[] {
+    return Array.isArray(v) ? v.map(c => text(c, 240)).filter(Boolean).slice(0, 40) : [];
+}
+
+/** Rečeno je da zadatak otpada: „otkaži", „ne treba", „obriši", „zatvori", „poništi"… */
+const CANCEL_SAID = /\b(otkaz\w*|otkazi|ne treba|nece trebati|otpad\w*|obrisi|izbrisi|brisi|zatvori|ponisti|storn\w*|nema potrebe|ukini|makni)\b/;
 
 /** Isti naslov napravljen u ovom roku je isti zadatak (ispravka, ponovljena poruka). */
 const DUPLICATE_TASK_MINUTES = 60;
@@ -792,7 +828,7 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         dueDate,
         assignedWorkerId: worker?.id,
         assignedWorkerName: worker?.name,
-        checklist: Array.isArray(a.checklist) ? a.checklist.map(c => text(c, 120)).filter(Boolean).slice(0, 12) : undefined,
+        checklist: Array.isArray(a.checklist) ? checklistOf(a.checklist) : undefined,
         links: project ? [projectLink(project)] : [],
         reminderAt: reminder?.iso,
         source: 'telegram',
@@ -842,6 +878,11 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const patch: Record<string, unknown> = {};
     let reminderLabel: string | undefined;
 
+    // Otkazati se smije samo rečeno otkazivanje. 03.11. model je otkazao zadatak da bi ga „složio
+    // ponovo", novi upis je pao, i korisnik je ostao bez zadatka — mijenja se postojeći, ne zamjenjuje.
+    if (a.status === 'cancelled' && env.groundText !== undefined && !CANCEL_SAID.test(foldText(env.groundText))) {
+        return { ok: false, error: 'Otkazivanje nije rečeno. Zadatak se ne otkazuje da bi se napravio novi — izmijeni ovaj (sort_checklist, checklist, title, add_checklist).' };
+    }
     if (typeof a.status === 'string' && STATUSES.includes(a.status)) {
         patch.Status = a.status;
         patch.Completed_Date = a.status === 'completed' ? new Date().toISOString() : '';
@@ -856,9 +897,21 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         reminderLabel = formatReminder(r.iso, env.tz, env.now);
     }
     if (text(a.title)) patch.Title = text(a.title, 120);
-    const added = Array.isArray(a.add_checklist) ? a.add_checklist.map(c => text(c, 120)).filter(Boolean).slice(0, 12) : [];
+    const added = checklistOf(a.add_checklist);
+    const replaced = Array.isArray(a.checklist) ? checklistOf(a.checklist) : null;
+    if (replaced?.length) {
+        // Prepravka liste: urađene stavke ostaju urađene (isti tekst).
+        const done = new Set((task.Checklist || []).filter(c => c.completed).map(c => foldText(c.text)));
+        patch.Checklist = replaced.map(t => ({ id: uuidv4(), text: t, completed: done.has(foldText(t)) }));
+    }
     if (added.length) {
-        patch.Checklist = [...(task.Checklist || []), ...added.map(t => ({ id: uuidv4(), text: t, completed: false }))];
+        patch.Checklist = [...((patch.Checklist as Task['Checklist']) || task.Checklist || []), ...added.map(t => ({ id: uuidv4(), text: t, completed: false }))];
+    }
+    const sorted = a.sort_checklist === 'stan';
+    if (sorted) {
+        const list = (patch.Checklist as Task['Checklist']) || task.Checklist || [];
+        if (!list.length) return { ok: false, error: 'Zadatak nema check listu za slaganje.' };
+        patch.Checklist = sortByFlat(list);
     }
     if (text(a.note)) {
         const line = `[${shortDay(env.now.toISOString(), env.tz)}] ${text(a.note, 500)}${env.reporter !== 'ja' ? ` (${env.reporter})` : ''}`;
@@ -875,7 +928,8 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     else if (patch.Status === 'cancelled') lines.push(`✖ Otkazano: ${task.Title}`);
     else if (patch.Status) lines.push(`↺ ${task.Title} — ${patch.Status === 'in_progress' ? 'u toku' : 'ponovo otvoreno'}`);
     if (reminderLabel) lines.push(`⏰ ${task.Title} → ${reminderLabel}`);
-    if (added.length) lines.push(`➕ ${task.Title}:`, ...added.map(t => `☐ ${t}`));
+    if (sorted || replaced?.length) lines.push(`${sorted ? '↕️ Složeno po stanovima' : '✏️ Nova lista'}: ${task.Title}`, ...((task.Checklist || []).map(c => `${c.completed ? '☑' : '☐'} ${c.text}`)));
+    else if (added.length) lines.push(`➕ ${task.Title}:`, ...added.map(t => `☐ ${t}`));
     if (!lines.length) lines.push(`✏️ ${task.Title}${text(a.note) ? `: ${text(a.note, 200)}` : ''}`);
     env.summaries.push(lines.join('\n'));
     return clean({ ok: true, task: String(a.task), title: task.Title, status: patch.Status as string | undefined, reminder_label: reminderLabel });
@@ -928,7 +982,11 @@ function stateOf(a: Args): { key?: MemoryStateKey; label: string } | null {
     return legacy ? { label: legacy } : null;
 }
 
+/** Poruka je zadatak ili podsjetnik, a bilježnica nije rečena (intent.ts → notebookBlocked). */
+const NOTEBOOK_BLOCKED = 'Poruka traži zadatak ili podsjetnik, ne bilježnicu: stanje iz nje (gdje stoji, šta fali) ide u naslov ili check listu zadatka. Bilježnica samo kad korisnik kaže „zabilježi" / „u bilježnicu".';
+
 async function rememberTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    if (env.notebookBlocked) return { ok: false, error: NOTEBOOK_BLOCKED };
     const subject = text(a.subject, 60).toLowerCase();
     const state = stateOf(a);
     if (!subject || !state) return { ok: false, error: 'Nedostaje predmet ili stanje.' };
@@ -1025,6 +1083,7 @@ export async function memoryButtonState(orgId: string, uid: string, itemId: stri
 }
 
 async function updateMemoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    if (env.notebookBlocked) return { ok: false, error: NOTEBOOK_BLOCKED };
     const aliases = [...(text(a.item, 8) ? [a.item] : []), ...(Array.isArray(a.items) ? a.items : [])].slice(0, 40);
     if (!aliases.length) return { ok: false, error: 'Navedi stavku (M# ili S#).' };
     const found = aliases.map(x => resolveAlias(env.ctx.memory, x) || resolveAlias(env.searchHits, x));
@@ -2167,7 +2226,12 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     try {
         if (id) {
             if (!/^[0-9a-f]{8,32}$/i.test(id)) return { ok: false, error: 'id je oznaka iz [id …] u rezultatu pretrage.' };
-            return { ok: true, mail: await readMail(env.uid, id, env.tz), note: MAIL_IS_DATA };
+            const mail = await readMail(env.uid, id, env.tz);
+            // Pročitano ostaje poznato: tabela iz ovog teksta, a legenda u istoriji nosi id za sljedeću poruku.
+            env.readTexts = [...(env.readTexts || []), mail];
+            const head = mail.split('\n').filter(l => /^(Od|Naslov):/.test(l)).join(' · ');
+            noteRefs(env, [`pročitan mail [id ${id}] ${head.slice(0, 160)}`]);
+            return { ok: true, mail, note: MAIL_IS_DATA };
         }
         const words = text(a.words, 120);
         const project = a.project ? resolveAlias(env.ctx.projects, a.project) : null;
@@ -2179,6 +2243,8 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         if (!found.query) return { ok: false, error: 'Po čemu da tražim? Navedi riječi, osobu ili projekat.' };
         // Padežne oblike („{kolone kolona …}") model ne treba vidjeti — dovoljna je riječ.
         const shown = (q: string) => q.replace(/ -category:\S+/g, '').replace(/\{([^\s{}:]+)(?: [^\s{}:]+)+\}/g, '$1');
+        // Nađeni mailovi s oznakom ostaju u istoriji: „napravi tabelu od toga" ih čita po id-u, ne traži ponovo.
+        noteRefs(env, found.lines.map(l => `mail ${l.replace(/^• /, '').replace(/ · [^·]*$/, '').slice(0, 110)} ${l.match(/\[id [^\]]+\]/)?.[0] || ''}`));
         return {
             ok: true,
             mails: found.lines,
@@ -2288,6 +2354,42 @@ async function replyMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
             order_confirmed: confirmed || undefined,
             note: a.confirm === true && !confirmed ? 'Narudžba za ovaj mail nije u ERP-u (naručeno mailom) — samo odgovor, bez upisa. Ne spominji to kao grešku.' : 'Mail NIJE poslan — šalje ga korisnik dugmetom.',
         });
+    } catch (e) {
+        return emailToolError(e);
+    }
+}
+
+/**
+ * „Ova ponuda od Zaima se odnosi na projekat Brdo" (03.11.): bot je rekao „razumijem,
+ * treba povezati" i ništa nije uradio — alata nije bilo. ERP prebaci vezu maila iz ulazne
+ * pošte na rečeni projekat; narudžbe drugih projekata se skinu s maila. Poništi vraća.
+ */
+async function linkMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const project = resolveAlias(env.ctx.projects, a.project);
+    if (!project) return { ok: false, error: `Projekat ${String(a.project || '')} ne postoji u listi.` };
+    try {
+        let id = text(a.id, 40);
+        if (id && !/^[0-9a-f]{8,32}$/i.test(id)) return { ok: false, error: 'id je oznaka iz [id …].' };
+        if (!id) {
+            const who = text(a.who, 120);
+            const words = text(a.words, 120);
+            if (!who && !words) return { ok: false, error: 'Koji mail? id iz [id …] u istoriji, ili who + words.' };
+            const ids = await listMessageIds(env.uid, gmailQuery({ words, ...(await mailTarget(env, who, null)), direction: 'in', days: 60 }), 1);
+            if (!ids.length) return { ok: false, error: 'Taj mail nisam našao — pozovi search_mail pa link_mail s id.' };
+            id = ids[0];
+        }
+        const ref = inboxRef(env.uid, id);
+        const snap = await ref.get();
+        const item = snap.data() as MailInboxItem | undefined;
+        if (!item || item.Organization_ID !== env.orgId) return { ok: false, error: 'Ovaj mail nije u ulaznoj pošti ERP-a (samo mailovi od dobavljača i poznatih). Reci korisniku da ga ERP ne prati.' };
+        const items = await adminDb().collection(COLLECTIONS.ORDER_ITEMS).where('Organization_ID', '==', env.orgId).where('Project_ID', '==', project.id).get();
+        const projectOrders = new Set(items.docs.map(d => (d.data() as { Order_ID?: string }).Order_ID).filter(Boolean));
+        const orders = (item.Order_IDs || []).filter(o => projectOrders.has(o));
+        await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before: snap.data() as Record<string, unknown>, label: `veza maila „${item.Subject}"` });
+        await ref.set({ Project_IDs: [project.id], Order_IDs: orders }, { merge: true });
+        env.changes.push(`mail „${item.Subject}" → ${projectLabel(project)}`);
+        env.summaries.push(`🔗 Mail „${item.Subject}" (${item.From_Name || item.From}) vezan za projekat ${projectLabel(project)}.`);
+        return { ok: true, mail: item.Subject, project: projectLabel(project) };
     } catch (e) {
         return emailToolError(e);
     }
@@ -2873,6 +2975,7 @@ async function listNotebookTool(env: ToolEnv, a: Args): Promise<ToolResult> {
  * korisnik nije rekao se odbija; nerečeno stanje → podrazumijevano, uz napomenu.
  */
 async function makeTableTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    if (a.source === 'tekst') return textTable(env, a);
     const source = TABLE_SOURCES.find(s => s === a.source);
     if (!source) return { ok: false, error: 'Izvor tabele: biljeska ili materijali.' };
     const list = (v: unknown, max: number, len: number) => (Array.isArray(v) ? v.map(x => text(x, len)).filter(Boolean).slice(0, max) : []);
@@ -2920,6 +3023,51 @@ async function makeTableTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, count: table.rowCount };
 }
 
+/** Red je u pročitanom tekstu kad je bar ovoliki dio njegovih riječi tamo. */
+const TEXT_ROW_SHARE = 0.6;
+
+/**
+ * Tabela od pročitanog (mailovi, prethodni odgovor iz njih): ćelije piše model, ali svaki
+ * red mora biti u tom tekstu — ERP odbije red koji nije, pa ništa ne nastane iz glave.
+ * „Napravi mi tabelu stan, primjedba, samo za nas" iz mailova nadzora (02.11.) završila je
+ * kao tabela bilježnice, jer drugog izvora nije bilo.
+ */
+function textTable(env: ToolEnv, a: Args): ToolResult {
+    const columns = Array.isArray(a.columns) ? a.columns.map(c => text(c, 40)).filter(Boolean).slice(0, 8) : [];
+    if (!columns.length) return { ok: false, error: 'tekst: treba columns (kolone kako ih je korisnik rekao).' };
+    const rows = (Array.isArray(a.rows) ? a.rows : []).slice(0, 200)
+        .map(r => (Array.isArray(r) ? r : [r]).map(c => text(c, 300)))
+        .filter(r => r.some(Boolean))
+        .map(r => columns.map((_, i) => r[i] || ''));
+    if (!rows.length) return { ok: false, error: 'tekst: nema redova (rows).' };
+    const corpus = new Set(tokens(foldText([...(env.readTexts || []), env.talkText || ''].join('\n'))).map(stem));
+    const missing = rows.filter(r => {
+        const w = tokens(foldText(r.join(' '))).filter(x => x.length >= 3);
+        return w.length > 0 && w.filter(x => corpus.has(stem(x))).length / w.length < TEXT_ROW_SHARE;
+    });
+    if (missing.length) {
+        return {
+            ok: false,
+            error: `Ovi redovi nisu u pročitanom tekstu: ${missing.slice(0, 3).map(r => `„${r.join(' | ').slice(0, 80)}"`).join('; ')}. Pročitaj mailove (search_mail s id) u ovoj poruci pa ponovi — samo s onim što piše.`,
+        };
+    }
+    const day = toZoned(env.now.toISOString(), env.tz).date;
+    const title = text(a.title, 80) || 'Tabela';
+    const table: TableDoc = {
+        title,
+        subtitle: `iz pročitanog teksta · ${rows.length} ${rows.length === 1 ? 'red' : 'redova'}`,
+        columns: columns.map((label, i) => ({ key: `c${i}`, label: capitalizeFirst(label), align: 'left' as const })),
+        groups: [{ label: '', rows }],
+        total: null,
+        notes: [],
+        rowCount: rows.length,
+        fileName: tableFileName(title, day),
+    };
+    (env.tables ||= []).push(table);
+    env.summaries.push(`📄 ${table.title} — ${table.subtitle}. PDF stiže ispod.`);
+    return { ok: true, count: rows.length };
+}
+
 function askUserTool(env: ToolEnv, a: Args): ToolResult {
     const question = stripAliases(text(a.question, 300));
     const options = Array.isArray(a.options) ? a.options.map(o => stripAliases(text(o, 40))).filter(Boolean).slice(0, 4) : [];
@@ -2956,6 +3104,7 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'email_order': return await emailOrderTool(env, args);
             case 'email_contact': return await emailContactTool(env, args);
             case 'reply_mail': return await replyMailTool(env, args);
+            case 'link_mail': return await linkMailTool(env, args);
             case 'find_contact': return await findContactTool(env, args);
             case 'chat_message': return await chatMessageTool(env, args);
             case 'search_mail': return await searchMailTool(env, args);

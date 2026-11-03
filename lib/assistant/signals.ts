@@ -79,6 +79,37 @@ export function isCorrection(text: string, previous: string): boolean {
     return same / Math.min(a.size, b.size) >= 0.7;
 }
 
+/**
+ * Poruka je pritužba („pogrešno totalno", „ma nešto je ovdje pogrešno"), bez obzira na prethodnu.
+ * Gola ispravka („ne, u utorak", „ne, Senadu") nije — ona je odgovor i ide dalje kao odgovor.
+ */
+export function isComplaint(text: string): boolean {
+    const t = foldText(text).trim();
+    return /^(nije to|nije tacno|nisi razumio|krivo)\b/.test(t) || COMPLAINT.test(t.split(/\s+/).slice(0, 6).join(' '));
+}
+
+// ── Napomena o botu u običnoj poruci ─────────────────────────────────
+//
+// „Zabilježi da je ovo pogrešno, kako sam ja ovo skontao", „zabilježi to kao pogrešno
+// shvatanje", „trebalo bi napraviti da AI pročita PDF ponude…" (03.11.) — to je napomena
+// za reviziju bota, ne bilješka u ERP-u. Bez ovoga je završilo u bilježnici („Ponuda —
+// ranije pogrešno povezana…") ili kao „Ništa nije upisano".
+
+const META = /\b(zabiljezi|zapisi|zapamti)\s+(\w+\s+){0,3}(pogresn\w*|lose|kao gresk\w*)|pogresno (si |je )?(shvat|razum|procijen|skont|protumac)\w*|kako (sam |si |je )?(ja )?(ovo |to )?skont\w*|trebalo bi (napraviti|uraditi|dodati|omoguciti|da)|\b(ai|bot|botu|model|haiku|gemini|claude)\b[^.]{0,60}\b(treba|trebao|trebalo|procita|razumije|nauci)\w*/;
+
+/**
+ * Napomena o botu: `pure` = poruka je samo to (ide u reviziju, ništa se ne izvršava);
+ * inače poruka ima i posao („pogrešno si procijenio bilješku, ne čeka nego… zabilježi to
+ * kao pogrešno shvatanje") — napomena ide u reviziju, a posao modelu.
+ */
+export function metaFeedback(text: string): { pure: boolean } | null {
+    const t = foldText(text);
+    if (!META.test(t)) return null;
+    const pure = /^(zabiljezi|zapisi|zapamti|trebalo bi)\b/.test(t) && t.length <= 160
+        || /\b(ai|bot|model|haiku|gemini|claude)\b/.test(t) && /\btrebalo bi\b/.test(t);
+    return { pure };
+}
+
 // ── Napomena odgovorom na poruku bota ────────────────────────────────
 
 export type FeedbackKind = 'lose' | 'dobro' | 'napomena';

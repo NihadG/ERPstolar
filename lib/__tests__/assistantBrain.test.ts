@@ -107,7 +107,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'make_table', 'email_order', 'email_contact', 'reply_mail', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'make_table', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
         expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
@@ -787,5 +787,72 @@ describe('kontekst razgovora (02.11.)', () => {
             { text: 'Nisam uspio.' },
         ]);
         expect(JSON.stringify(mockSent[1].messages.at(-1).content)).toMatch(/ne zna: who, body\. Polja ovog alata: to, company, subject, text/);
+    });
+});
+
+// Revizija 03.11.2026 — principi (izmišljena imena).
+describe('zadaci se mijenjaju, dopuna ide kome je namijenjena (03.11.)', () => {
+    beforeEach(() => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        for (const k of Array.from(mockStore.keys())) if (String(k).startsWith('tasks/')) mockStore.delete(k);
+    });
+
+    it('dopuna za radnike: bilježnica se odbija, ERP pokazuje njihov zadatak, upis ide u njega', async () => {
+        await say('Zadaci za sutra za Amera i Edina: montirati umivaonik u stanu E504', [
+            { calls: [{ name: 'create_task', args: { title: 'Montaža za Amera i Edina', category: 'installation', worker: 'W1', reminder_at: '2026-10-24T08:00', checklist: ['montirati umivaonik u stanu E504'] } }] },
+        ]);
+        const task = docs('tasks').find(t => t.Title === 'Montaža za Amera i Edina')!;
+        const memBefore = docs('memory_items').length;
+        mockSent.length = 0;
+        const out = await say('Dodati za Amera i Edina da ponesu jednu U plastiku za umivaonik, fali u stanu B206', [
+            { calls: [{ name: 'remember', args: { subject: 'U plastika', state: 'fali', location: 'B206', quantity: 1 } }] },
+            { calls: [{ name: 'update_task', args: { task: 'T1', add_checklist: ['ponijeti jednu U plastiku za umivaonik, fali u B206'] } }] },
+        ]);
+        expect(mockSent[0].messages.at(-1).content).toMatch(/otvoren zadatak za Amer Hodžić, Edin Begić: T\d „Montaža za Amera i Edina"/);
+        expect(JSON.stringify(mockSent[1].messages.at(-1).content)).toMatch(/ne bilježnicu/);
+        expect(docs('memory_items')).toHaveLength(memBefore);
+        expect(docs('tasks').find(t => t.Task_ID === task.Task_ID)!.Checklist.map((c: any) => c.text)).toContain('ponijeti jednu U plastiku za umivaonik, fali u B206');
+        expect(out.outcome).toBe('written');
+    });
+
+    it('„složi po stanovima" složi postojeći zadatak; otkazivanje koje nije rečeno se odbija', async () => {
+        await say('Zadaci za sutra za Amera: ogledalo u E504, provjeriti C502, ogledala u C408', [
+            { calls: [{ name: 'create_task', args: { title: 'Montaža za Amera', category: 'installation', worker: 'W1', checklist: ['ogledalo u E504', 'provjeriti C502', 'ogledala u C408'] } }] },
+        ]);
+        const id = docs('tasks').find(t => t.Title === 'Montaža za Amera')!.Task_ID;
+        const out = await say('Možeš li složiti tu checklistu po stanovima i lamelama', [
+            { calls: [{ name: 'update_task', args: { task: 'T1', status: 'cancelled', note: 'Zamijenjen novim' } }] },
+            { calls: [{ name: 'update_task', args: { task: 'T1', sort_checklist: 'stan' } }] },
+        ]);
+        expect(JSON.stringify(mockSent.at(-1).messages.at(-1).content)).toMatch(/Otkazivanje nije rečeno/);
+        const t = docs('tasks').find(x => x.Task_ID === id)!;
+        expect(t.Status).not.toBe('cancelled');
+        expect(t.Checklist.map((c: any) => c.text)).toEqual(['ogledala u C408', 'provjeriti C502', 'ogledalo u E504']);
+        expect(out.reply).toMatch(/^↕️ Složeno po stanovima: Montaža za Amera\n☐ ogledala u C408/);
+    });
+
+    it('„pogrešno totalno" na pitanje „u koliko sati?": nije izbor, ništa novo; nudi poništenje prethodnog upisa', async () => {
+        await say('Napomeni me sutra u 10 da Amer ponese umivaonik iz C601 u pogon', [
+            { calls: [{ name: 'create_task', args: { title: 'Amer — ponijeti umivaonik iz C601 u pogon', category: 'reminder', reminder_at: '2026-10-24T10:00' } }] },
+        ]);
+        const prevTurn = session.lastTurn!.id;
+        session = { ...session, pending: { question: 'U koliko sati sutra?', options: ['08:00', '10:00'], askedAt: NOW.toISOString() } };
+        const before = docs('tasks').length;
+        mockSent.length = 0;
+        const out = await say('Pogresno totalno', [
+            { calls: [{ name: 'create_task', args: { title: 'Umivaonik iz C601 nazad u pogon', category: 'reminder', reminder_at: '2026-10-24T08:00' } }] },
+            { text: 'Razumio sam da podsjetnik nije trebao. Šta treba drugačije?' },
+        ]);
+        expect(mockSent[0].messages.at(-1).content).toMatch(/^\[Korisnik kaže da je prethodno pogrešno\. To NIJE izbor opcije/);
+        expect(docs('tasks')).toHaveLength(before);
+        expect(out.session.pending).toBeNull();
+        expect(out.buttons).toEqual([[{ text: '↩️ Poništi prethodni upis', data: `undo:${prevTurn}` }]]);
+    });
+
+    it('podsjetnik bez vremena: model pita „kad?" tekstom → ERP to pretvori u dugmad', async () => {
+        const out = await say('Napomeni me da provjerim umivaonike u C102', [{ text: 'Koji datum i sat da te podsjetim?' }]);
+        expect(out.outcome).toBe('question');
+        expect(out.buttons.map(r => r[0].text)).toEqual(['Danas u 16:00', 'Sutra u 08:00', 'Sutra u 10:00', 'Sutra u 12:00']);
     });
 });

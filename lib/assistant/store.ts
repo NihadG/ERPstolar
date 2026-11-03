@@ -192,6 +192,8 @@ export interface AssistantSession {
     lastEntry?: { id: string; at: string; text: string } | null;
     /** Zahtjev za upis koji prethodna poruka nije završila — nastavak ga preuzima (continuation.ts). */
     unfinished?: UnfinishedAsk | null;
+    /** Zadnja poruka koju je bot obradio — pritužba u sljedećoj nudi poništenje njenog upisa. */
+    lastTurn?: { id: string; at: string; wrote: boolean } | null;
 }
 
 export async function getSession(chatId: number): Promise<AssistantSession> {
@@ -199,7 +201,7 @@ export async function getSession(chatId: number): Promise<AssistantSession> {
     const data = snap.data() as Partial<AssistantSession> | undefined;
     return {
         history: Array.isArray(data?.history) ? data!.history : [], pending: data?.pending || null, refs: data?.refs || null, focus: data?.focus || null,
-        lastEntry: data?.lastEntry || null, unfinished: data?.unfinished || null,
+        lastEntry: data?.lastEntry || null, unfinished: data?.unfinished || null, lastTurn: data?.lastTurn || null,
     };
 }
 
@@ -212,6 +214,7 @@ export async function saveSession(chatId: number, session: AssistantSession): Pr
         focus: session.focus || null,
         lastEntry: session.lastEntry || null,
         unfinished: session.unfinished || null,
+        lastTurn: session.lastTurn || null,
         updatedAt: new Date().toISOString(),
     });
 }
