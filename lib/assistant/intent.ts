@@ -28,7 +28,10 @@ export interface MessageIntent {
     times: string[];
 }
 
-const FUTURE_DAY = /^(sutra|prekosutra|ponedjeljak|utorak|srijedu|srijeda|cetvrtak|petak|subotu|subota|nedjelju|nedjelja)$/;
+/** Bilježnica je izričito rečena („zabilježi", „u bilježnicu", „bilješka"). */
+export const NOTEBOOK_SAID = /\b(biljesk\w*|biljezi|zabiljezi\w*|biljeznic\w*|zapamti)\b/;
+
+const FUTURE_DAY =/^(sutra|prekosutra|ponedjeljak|utorak|srijedu|srijeda|cetvrtak|petak|subotu|subota|nedjelju|nedjelja)$/;
 
 const QUESTION_START =/^(sta|šta|koliko|gdje|kad|kada|ko|koji|koja|koje|da li|jel|je li|ima li|imam li|imamo li|kako|zasto|zašto|pokazi|pokaži|posalji mi|pošalji mi|treba mi pdf|daj mi)\b/;
 
@@ -51,16 +54,26 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Nadimak („Kemo") samo kao napomena modelu — u pokrivenost ulaze rečena imena.
     const nicknames = workerNicknames(text, workers);
     const anyWorker = workerIds.length > 0 || nicknames.length > 0;
-    const question = /\?\s*$/.test(text.trim()) || QUESTION_START.test(t);
+    // „Hoćeš li me napomenuti sutra … i kad" pita za podsjetnik koji postoji (03.11. — bot je pravio novi);
+    // „hoćeš li me napomenuti sutra u 8 da…" bez „kad" je molba. „Jesi li upisao…" je uvijek pitanje.
+    const question = /\?\s*$/.test(text.trim()) || QUESTION_START.test(t)
+        || /^jesi li\b/.test(t) || (/^(hoces li|da li ces|jel ces)\b/.test(t) && /\b(i kad|kad|kada|u koliko|koliko sati)\b/.test(t));
 
-    if (/\b(napomeni|podsjeti|podsjetnik|javi mi|napisi mi|napiši mi|posalji mi poruku|pošalji mi poruku|ne zaboravi|zapamti da)\b/.test(t)
+    if (/\b(napomeni|napomenuti|podsjeti|podsjetiti|podsjetnik|javi mi|napisi mi|napiši mi|posalji mi poruku|pošalji mi poruku|ne zaboravi|zapamti da)\b/.test(t)
         || (times.length && /\b(trebam|moram|treba|javiti|nazvati|zvati|naruciti|naručiti|platiti|otici|otići|pitati)\b/.test(t))) kinds.add('reminder');
     if (/\b(neka|reci|recite|kazi|kaži|javi)\b/.test(t) && workerIds.length) kinds.add('task');
+    // Posao za radnike rečen kao „zadatak/napomena/dodaj za Amera i Edina…" — to je zadatak (i dopuna
+    // postojećeg), ne bilježnica: 03.11. „u napomenu za Edina i Amera ubaciti da u E007 fali ogledalo"
+    // i „dodati za Amera i Edina da ponesu U plastiku" otišli su u bilježnicu.
+    if (workerIds.length && /\b(zada[tc]\w*|napomen\w*|dodaj\w*|dodati|ubaci\w*|stavi|staviti|ponesu|ponijeti|neka)\b/.test(t)) kinds.add('task');
     if (/\b(naruci|naruči|narucio|naručio|narudzb|narudžb)\w*/.test(t) && !question) kinds.add('order');
     if (/\b(stig|dosa|dosl|dostav|isporuc)\w*/.test(t) && !question && !anyWorker) kinds.add('arrival');
     if (/\b(prisut|bolovanj|odmor|na terenu|nije dosao|nije došao|nisu dosli|nisu došli|odsut)\w*/.test(t) && (workerIds.length || mentionsEveryone(text))) kinds.add('presence');
     if ((facts.locations.length && (facts.dims.length || facts.widths.length || /\b(fali|fale|nije postavljen|nisam postavio|pogresno|pogrešno|ima|imam|stoji|u stanu|na hodniku)\b/.test(t)))
         || /\b(u kombiju|na hodniku|u stanu)\b/.test(t)) kinds.add('notebook');
+    // Zadatak ili podsjetnik nosi stanje stvari u sebi („ogledala su ispred stana", „ključa nije bilo"):
+    // bilježnica samo kad je rečena. Inače jedna poruka napravi zadatak + 8 bilješki (03.11.).
+    if ((kinds.has('task') || kinds.has('reminder')) && !NOTEBOOK_SAID.test(t)) kinds.delete('notebook');
     if (anyWorker && !kinds.has('task')
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".

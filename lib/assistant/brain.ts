@@ -48,7 +48,7 @@ import { getEmailAccount } from '@/lib/server/gmail';
 import { addUsage, emptyUsage } from './usage';
 import { mentionNote } from './mentions';
 import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
-import { turnSignals } from './signals';
+import { isComplaint, turnSignals } from './signals';
 import { continuesPrevious, inheritedAsk, type UnfinishedAsk } from './continuation';
 
 export { claimsWrite } from './replyText';
@@ -179,6 +179,8 @@ export interface AssistantTurnInput {
     forward?: { from: string; date: string };
     /** Poruka na koju korisnik odgovara (reply) — „ova poruka je beskorisna" mora znati koja. */
     quoted?: { text: string; fromBot: boolean };
+    /** Napomena o botu iz ove poruke je već u reviziji (signals.metaFeedback) — model je ne upisuje. */
+    metaSaved?: boolean;
     entryId?: string;
     session: AssistantSession;
     now?: Date;
@@ -277,6 +279,52 @@ export function toMessages(history: SessionTurn[]): Anthropic.MessageParam[] {
     return out;
 }
 
+/** Model pita za vrijeme tekstom („Koji datum i sat da te podsjetim…?"). */
+export function asksTime(text: string): boolean {
+    const t = foldText(text);
+    return /\?\s*$/.test(text.trim()) && /\b(kad|kada|koji datum|koji dan|u koliko sati|koje vrijeme|u koje vrijeme|koliko sati)\b/.test(t);
+}
+
+/** Dugmad za vrijeme podsjetnika: danas za sat-dva (ako ima dana), pa sutra ujutro i u podne. */
+export function timeOptions(now: Date, tz: string): string[] {
+    const local = toZoned(now, tz);
+    const later = local.hour + 2;
+    return [
+        ...(later <= 19 ? [`Danas u ${String(later).padStart(2, '0')}:00`] : []),
+        'Sutra u 08:00', 'Sutra u 10:00', 'Sutra u 12:00',
+    ].slice(0, 4);
+}
+
+/** Upisi koji prave nešto NOVO — pritužba bez sadržaja ih ne smije pokrenuti. */
+const NEW_WRITES = new Set(['create_task', 'remember', 'create_order', 'log_work', 'fill_work_days', 'set_progress', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'chat_message']);
+
+/** „↩️ Poništi prethodni upis" uz pritužbu važi ovoliko poslije te poruke. */
+const UNDO_PREVIOUS_MINUTES = 30;
+
+/** Dopuna („dodaj", „ubaci", „stavi", „još") — ide u postojeći zadatak tih radnika. */
+const ADDS = /\b(dodaj\w*|dodati|ubaci\w*|stavi|staviti|jos|i to|u zadatak|u napomenu)\b/;
+
+/**
+ * Otvoren zadatak rečenih radnika (dodijeljen ili imenovan u naslovu/listi): „dodaj za Amera
+ * i Edina…" ide u njega. 03.11. dvije takve poruke otišle su u bilježnicu, a korisnik je
+ * morao reći „stavi to u onaj zadatak". ERP nađe zadatak, model ne pogađa.
+ */
+export function workerTaskNote(
+    text: string, workerIds: string[], tasks: { alias: string; value: import('@/lib/types').Task }[],
+    workerOf: (id: string) => { value: { name: string } } | undefined,
+): string[] {
+    if (!workerIds.length || !ADDS.test(foldText(text))) return [];
+    const names = workerIds.map(id => workerOf(id)?.value.name).filter((n): n is string => !!n);
+    const firsts = names.map(n => foldText(n).split(' ')[0]).filter(w => w.length >= 3);
+    const open = tasks.filter(t => t.value.Status !== 'completed' && t.value.Status !== 'cancelled').filter(t => {
+        if (t.value.Assigned_Worker_ID && workerIds.includes(t.value.Assigned_Worker_ID)) return true;
+        const body = foldText(`${t.value.Title} ${(t.value.Checklist || []).map(c => c.text).join(' ')}`);
+        return firsts.length > 0 && firsts.every(f => body.includes(f.slice(0, Math.max(3, f.length - 1))));
+    });
+    if (!open.length || open.length > 2) return [];
+    return [`otvoren zadatak za ${names.join(', ')}: ${open.map(t => `${t.alias} „${t.value.Title}"`).join(', ')} — dopuna za njih ide u njega (update_task add_checklist), ne u bilježnicu ni novi zadatak`];
+}
+
 /** Kad je bio zadnji red razgovora (i poruka koju je bot poslao sam) — za „nastavlja li se". */
 function minutesSinceLast(history: SessionTurn[], now: Date): number | null {
     const last = history[history.length - 1];
@@ -311,11 +359,19 @@ function textOf(res: Anthropic.Message): string {
 /** Koliko unazad korisnikove poruke važe kao „rečeno" za upis (nastavak istog razgovora). */
 const GROUND_MINUTES = 30;
 
-export async function runAssistant(input: AssistantTurnInput): Promise<AssistantTurnOutput> {
-    const now = input.now || new Date();
+export async function runAssistant(original: AssistantTurnInput): Promise<AssistantTurnOutput> {
+    const now = original.now || new Date();
     const tz = assistantTimezone();
     const turnId = uuidv4();
-    const message = userMessage(input, tz);
+    const message = userMessage(original, tz);
+    // Pritužba („pogrešno totalno") nije odgovor na pitanje ni nastavak zahtjeva: pitanje se gasi,
+    // ništa se ne preuzima. 03.11. „Pogrešno totalno" na „u koliko sati?" je upisalo podsjetnik u 08:00.
+    const complaint = isComplaint(message);
+    const input: AssistantTurnInput = complaint
+        ? { ...original, session: { ...original.session, pending: null, unfinished: null } }
+        : original;
+    const prevTurn = input.session.lastTurn && now.getTime() - Date.parse(input.session.lastTurn.at) <= UNDO_PREVIOUS_MINUTES * 60_000
+        ? input.session.lastTurn : null;
     const cutoff = now.getTime() - HISTORY_HOURS * 3_600_000;
     const history = (input.session.history || []).filter(t => input.session.pending || Date.parse(t.at) >= cutoff);
     const at = now.toISOString();
@@ -350,6 +406,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             refs: turnEnv ? sessionRefs(turnEnv, at) : prevRefs,
             focus: nextFocus,
             unfinished: ask && extra.outcome !== 'written' ? ask : null,
+            lastTurn: { id: turnId, at, wrote: (extra.changes || []).length > 0 },
         },
     });
 
@@ -387,6 +444,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         ? { ...ownIntent, kinds: Array.from(new Set([...inherited.kinds, ...ownIntent.kinds.filter(k => k !== 'question')])), expectsWrite: true }
         : ownIntent;
     const writeKinds = intent.kinds.filter(k => k !== 'question' && k !== 'table');
+    // „Pogrešno totalno", „ma nešto je pogrešno, nemoj ništa raditi": pritužba bez novog sadržaja ne
+    // pravi ništa novo (izmjena postojećeg i dalje smije). Kratka ili s „nemoj / ne radi ništa".
+    const noNewWrites = complaint && !writeKinds.length
+        && (pre.text.split(/\s+/).length <= 8 || /\b(nemoj|ne radi|ne diraj|stani|cekaj)\b/.test(foldText(pre.text)));
     if (intent.expectsWrite && writeKinds.length) ask = { kinds: writeKinds, text: inherited ? `${inherited.text}\n${message}` : message, at };
     const workerOf = (id: string) => ctx.workers.find(w => w.value.id === id);
     const focusOrder = focus?.order && now.getTime() - Date.parse(focus.order.at) <= ORDER_FOCUS_MINUTES * 60_000 ? focus.order : undefined;
@@ -404,6 +465,7 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
         ...intentNote(intent, id => { const w = workerOf(id); return w ? `${w.value.name} (${w.alias})` : id; }),
         ...mentionNote({ text: pre.text, recent: recentUserText, continues, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question'), firms: firmHits }),
         ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
+        ...workerTaskNote(pre.text, intent.workerIds, ctx.tasks, workerOf),
     ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
     const people = intent.workerIds.length + intent.nicknames.length;
@@ -415,6 +477,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     const context = [
         ...(input.quoted ? [`[Korisnik odgovara na ${input.quoted.fromBot ? 'tvoju poruku' : 'poruku'}: „${input.quoted.text.slice(0, 900)}"]`] : []),
         ...(inherited ? [`[Nastavak zahtjeva koji još nije upisan: „${inherited.text.slice(0, 300)}" — ova poruka ga dopunjuje ili ispravlja; upiši ga sad s onim što je rečeno, ne traži potvrdu iz ERP-a]`] : []),
+        ...(complaint ? [`[Korisnik kaže da je prethodno pogrešno. To NIJE izbor opcije ni novi zahtjev. ${noNewWrites
+            ? 'Ništa novo ne pravi: u jednoj rečenici reci šta si razumio i pitaj šta treba drugačije.'
+            : 'Ako je jasno šta treba, ispravi ili premjesti prethodni upis (update_*, add_checklist) — ne dupliraj; inače kratko pitaj šta je pogrešno.'}]`] : []),
+        ...(input.metaSaved ? ['[ERP je napomenu o botu iz ove poruke sačuvao za reviziju — nju ne upisuj (ni u bilježnicu); uradi samo ostatak poruke]'] : []),
     ];
     const modelMessage = [...context, pre.text, ...(note ? [note] : [])].join('\n');
     nextFocus = focusLocation || focusOrder
@@ -446,6 +512,10 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
             pre.text,
         ].join('\n'),
         messageText: message,
+        // Prethodni odgovori (i iz pročitanih mailova) — izvor tabele „iz teksta".
+        talkText: history.map(t => t.text).join('\n'),
+        // Zadatak/podsjetnik nosi stanje u sebi; bilježnica samo kad je rečena (intent.ts).
+        ...((intent.kinds.includes('task') || intent.kinds.includes('reminder')) && !intent.kinds.includes('notebook') ? { notebookBlocked: true } : {}),
         // „U tom stanu" / poruka bez lokacije odmah poslije upisa → lokacija iz razgovora.
         ...(focusLocation && (pre.facts.deictic || !pre.facts.locations.length) ? { focusLocation } : {}),
         reporter: input.forward?.from || 'ja',
@@ -629,7 +699,9 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
                 const args = (use.input || {}) as Record<string, unknown>;
-                const ran = await runTool(env, use.name, args);
+                const ran = noNewWrites && NEW_WRITES.has(use.name)
+                    ? { ok: false, error: 'Korisnik je rekao da je pogrešno — ne pravi ništa novo. Reci šta si razumio i pitaj šta treba drugačije.' }
+                    : await runTool(env, use.name, args);
                 const hint = ran.ok === false ? fieldHint(use.name, args) : null;
                 const out = hint ? { ...ran, error: `${String(ran.error || 'Greška.')} ${hint}` } : ran;
                 const mailArgs = (use.input || {}) as Record<string, unknown>;
@@ -669,8 +741,18 @@ export async function runAssistant(input: AssistantTurnInput): Promise<Assistant
     if (lastLoc) nextFocus = { ...(nextFocus || {}), location: lastLoc, at };
     // Narudžba koju je ova poruka dotakla postaje narudžba iz razgovora.
     if (env.touchedOrder) nextFocus = { ...(nextFocus || { at }), order: { ...env.touchedOrder, at } };
-    const undoRow: ButtonRows = env.changes.length ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]] : [];
+    // Pritužba na prethodni upis: jedan dodir ga poništi — ispravka premješta, ne ostavlja duplikat
+    // (03.11. „U plastika" je ostala u bilježnici i poslije „pogrešno, to treba u zadatak").
+    const undoRow: ButtonRows = env.changes.length
+        ? [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]]
+        : complaint && prevTurn?.wrote ? [[{ text: '↩️ Poništi prethodni upis', data: `undo:${prevTurn.id}` }]] : [];
+    if (complaint && prevTurn?.wrote && env.changes.length) undoRow.push([{ text: '↩️ Poništi prethodni upis', data: `undo:${prevTurn.id}` }]);
     const wroteFacts = env.changes.length ? `[ERP je upisao i korisniku poslao potvrdu: ${env.changes.join('; ')}]\n` : '';
+
+    // Pitanje „kad?" tekstom (podsjetnik bez vremena) → dugmad, kao svako pitanje s konačnim izborom.
+    if (!env.question && !env.erpQuestion && !env.changes.length && intent.kinds.includes('reminder') && asksTime(modelText)) {
+        env.question = { question: modelText, options: timeOptions(now, tz) };
+    }
 
     // ERP treba jedan izbor da završi upis → dugmad; izbor završava upis bez modela (runPendingAction).
     if (env.erpQuestion) {

@@ -391,3 +391,45 @@ describe('reply_mail: odgovor na mail koji je stigao', () => {
         await expect(runTool(env(), 'reply_mail', { text: 'Važi.' })).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/Na koji mail/) });
     });
 });
+
+// Revizija 03.11.2026: tabela iz pročitanih mailova; „ovaj mail je za projekat X".
+describe('tabela iz pročitanog teksta', () => {
+    const mail = 'Od: Selma Ribić <selma@projekt-demo.example>\nNaslov: Primjedbe kupaca\n\nStan B206: unutar ormarića nedostaje pregrada (LuxCo). Stan B505: šteke na stolariji dotegnuti (LuxCo). Moleraj u dnevnom boravku (Molerski Demo).';
+
+    it('redovi iz pročitanog maila → PDF tabela; filter („samo naše") primijeni model', async () => {
+        const e = env();
+        e.readTexts = [mail];
+        const res = await runTool(e, 'make_table', { source: 'tekst', title: 'Primjedbe kupaca — naše', columns: ['stan', 'primjedba'], rows: [['B206', 'unutar ormarića nedostaje pregrada'], ['B505', 'šteke na stolariji dotegnuti']] });
+        expect(res).toMatchObject({ ok: true, count: 2 });
+        expect(e.tables?.[0]).toMatchObject({ title: 'Primjedbe kupaca — naše', subtitle: 'iz pročitanog teksta · 2 redova', columns: [{ label: 'Stan' }, { label: 'Primjedba' }] });
+        expect(e.tables?.[0].groups[0].rows).toEqual([['B206', 'unutar ormarića nedostaje pregrada'], ['B505', 'šteke na stolariji dotegnuti']]);
+    });
+
+    it('red kojeg nema u pročitanom se odbija — ništa iz glave', async () => {
+        const e = env();
+        e.talkText = mail;
+        const res = await runTool(e, 'make_table', { source: 'tekst', columns: ['stan', 'primjedba'], rows: [['C708', 'zamijeniti radnu ploču u kuhinji']] });
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/nisu u pročitanom tekstu: „C708/) });
+        expect(e.tables).toBeUndefined();
+    });
+});
+
+describe('link_mail: mail se odnosi na drugi projekat', () => {
+    const MID = 'b1c2d3e4f5a6';
+
+    it('veza maila prelazi na rečeni projekat; narudžbe drugih projekata se skidaju; Poništi vraća', async () => {
+        store.set('projects/p2', { Project_ID: 'p2', Organization_ID: ORG, Name: 'Kuća Brdo', Client_Name: 'Brdo', Status: 'Odobreno' });
+        store.set(`mail_inbox/u1_${MID}`, {
+            Item_ID: MID, Organization_ID: ORG, Owner_UID: 'u1', Message_ID: MID, Thread_ID: 'th1', From: 'amra@staklo-demo.example', From_Name: 'Amra Delić',
+            Subject: 'Ponuda umivaonici', Snippet: '', Received_At: '2026-11-03T08:00:00Z', Kind: 'quote', Order_IDs: ['o1'], Project_IDs: ['p1'], State: 'new', Created_At: 'x',
+        });
+        const e = env();
+        e.ctx.projects.push({ alias: 'P2', value: { id: 'p2', client: 'Brdo', name: 'Kuća Brdo' } } as any);
+        const res = await runTool(e, 'link_mail', { id: MID, project: 'P2' });
+        expect(res).toMatchObject({ ok: true, mail: 'Ponuda umivaonici' });
+        expect(store.get(`mail_inbox/u1_${MID}`)).toMatchObject({ Project_IDs: ['p2'], Order_IDs: [] });
+        expect(e.summaries[0]).toMatch(/^🔗 Mail „Ponuda umivaonici" \(Amra Delić\) vezan za projekat/);
+        await undoTurn(e.turnId, 'u1');
+        expect(store.get(`mail_inbox/u1_${MID}`)).toMatchObject({ Project_IDs: ['p1'], Order_IDs: ['o1'] });
+    });
+});

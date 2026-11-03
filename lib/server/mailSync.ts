@@ -26,7 +26,7 @@ import { mailMessage, NOTIFY_KINDS } from '@/lib/assistant/mailText';
 import { companyOf } from '@/lib/assistant/orderDocuments';
 import { addressedToMe, followMessage, followOf, needsReply, nextFollowAt } from '@/lib/email/followUp';
 import { companyTag } from '@/lib/email/compose';
-import { getLinkByUid } from '@/lib/assistant/store';
+import { getLinkByUid, noteBotMessage } from '@/lib/assistant/store';
 import { sendMessage } from '@/lib/telegram/api';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import type { EmailDraft, MailInboxItem, Order, Project, Supplier } from '@/lib/types';
@@ -168,12 +168,15 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
         if (link && NOTIFY_KINDS.has(item.Kind)) {
             const m = mailMessage(item, o => orderNo.get(o));
             await sendMessage(link.chatId, m.text, m.buttons.length ? m.buttons : undefined);
+            // „Ova ponuda se odnosi na Švicarsku" (03.11.) — bot mora znati koja je to poruka i njen id.
+            await noteBotMessage(link.chatId, `pošta [id ${id}]`, m.text, now);
             item.Notified_At = now.toISOString();
             notified++;
         } else if (link && follow === 'reply') {
             // Običan mail poznatog koji pita nešto: javi odmah, s dugmetom „Odgovorio sam".
             const m = followMessage(item, now, o => orderNo.get(o));
             await sendMessage(link.chatId, m.text, m.buttons);
+            await noteBotMessage(link.chatId, `pošta [id ${id}]`, m.text, now);
             item.Notified_At = now.toISOString();
             notified++;
         }

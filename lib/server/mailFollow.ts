@@ -16,7 +16,7 @@ import { receiveOrderItems } from './orderWrites';
 import { inboxRef } from './mailSync';
 import { digestText, followMessage, nextFollowAt, openList } from '@/lib/email/followUp';
 import { toZoned } from '@/lib/assistant/datetime';
-import { getLinkByUid } from '@/lib/assistant/store';
+import { getLinkByUid, noteBotMessage } from '@/lib/assistant/store';
 import { answerCallbackQuery, editMessageText, sendMessage, type ButtonRows } from '@/lib/telegram/api';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import type { MailInboxItem, Order } from '@/lib/types';
@@ -55,6 +55,7 @@ export async function sendMailFollowUps(now: Date, tz: string): Promise<number> 
         if (link) {
             const m = followMessage(item, now, id => byId.get(id)?.Order_Number);
             await sendMessage(link.chatId, m.text, m.buttons);
+            await noteBotMessage(link.chatId, `podsjetnik za mail [id ${item.Message_ID}]`, m.text, now);
             sent++;
         }
         await doc.ref.set({ Follow_Count: count + 1, Next_Follow_At: nextFollowAt(item.Received_At, item.Follow, count + 1) }, { merge: true });
@@ -86,6 +87,7 @@ export async function sendMailDigests(now: Date, tz: string): Promise<number> {
             const link = await getLinkByUid(account.UID);
             if (text && link) {
                 await sendMessage(link.chatId, text);
+                await noteBotMessage(link.chatId, 'sažetak pošte', text, now);
                 sent++;
             }
         } catch (e) {

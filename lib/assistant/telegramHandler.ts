@@ -48,7 +48,7 @@ const HOW_TO_LINK =
     'Da ga povežeš s nalogom: u aplikaciji otvori Postavke → Telegram asistent → „Poveži", ' +
     'pa pošalji ovdje kod koji dobiješ (ili klikni link).';
 
-import { isCorrection, parseFeedback } from './signals';
+import { isCorrection, metaFeedback, parseFeedback } from './signals';
 
 /** Ispravka se veže za prethodnu poruku samo ako je stigla u ovom roku. */
 const CORRECTION_MINUTES = 10;
@@ -195,6 +195,20 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         await saveFeedback(inc.chatId, link, session, fb, inc.replyTo?.fromBot ? inc.replyTo.messageId : undefined);
         return;
     }
+    // Napomena o botu u običnoj poruci (i glasom): „zabilježi da je ovo pogrešno", „trebalo bi da AI…".
+    // Ide u reviziju uz poruku na koju se odnosi; samo napomena → ništa se ne izvršava.
+    const meta = metaFeedback(text);
+    if (meta) {
+        const replyTarget = inc.replyTo?.fromBot ? inc.replyTo.messageId : undefined;
+        if (meta.pure) {
+            if (heard) await sendMessage(inc.chatId, `🎙 „${heard}"`);
+            await saveFeedback(inc.chatId, link, session, { kind: 'napomena', text }, replyTarget);
+            return;
+        }
+        const fresh = session.lastEntry && Date.now() - Date.parse(session.lastEntry.at) <= FEEDBACK_HOURS * 3_600_000;
+        const target = replyTarget ? (await findEntryByReply(link.uid, replyTarget))?.Entry_ID : fresh ? session.lastEntry!.id : undefined;
+        if (target) await markEntry(target, link.uid, { feedback: { kind: 'napomena', text } });
+    }
     // Sljedeća poruka odmah ispravlja prethodnu („ne, nije tako", isto pitanje opet) → signal na prethodnoj.
     const last = session.lastEntry;
     if (last && Date.now() - Date.parse(last.at) <= CORRECTION_MINUTES * 60_000 && isCorrection(text, last.text)) {
@@ -214,7 +228,7 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
         }),
     ]);
 
-    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session, quoted: inc.replyTo?.text, quotedFromBot: inc.replyTo?.fromBot });
+    await converse(link, inc.chatId, { text, forward: inc.forward, entryId, heard, session, quoted: inc.replyTo?.text, quotedFromBot: inc.replyTo?.fromBot, metaSaved: !!meta });
 }
 
 async function converse(
@@ -222,7 +236,7 @@ async function converse(
     chatId: number,
     input: {
         text: string; forward?: { from: string; date: string }; entryId?: string; heard?: string; session?: AssistantSession; now?: Date;
-        quoted?: string; quotedFromBot?: boolean;
+        quoted?: string; quotedFromBot?: boolean; metaSaved?: boolean;
     },
 ): Promise<AssistantTurnOutput> {
     const started = Date.now();
@@ -233,6 +247,7 @@ async function converse(
         text: input.text,
         forward: input.forward,
         ...(input.quoted ? { quoted: { text: input.quoted, fromBot: !!input.quotedFromBot } } : {}),
+        ...(input.metaSaved ? { metaSaved: true } : {}),
         entryId: input.entryId,
         session,
         ...(input.now ? { now: input.now } : {}),
