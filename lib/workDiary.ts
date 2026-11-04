@@ -72,8 +72,16 @@ const CLOSE = 0.15;
  * stavka; inače sve žive stavke naloga (kao šihtarica). Više naloga podjednako
  * dobrih → kandidati za pitanje. Otvoreni nalozi imaju prednost pred završenim.
  */
+/** Vrste proizvoda (korijen): „vrata", „kuhinja", „ormar"… — rečena vrsta mora postojati u nalogu. */
+const PRODUCT_KINDS = ['vrat', 'kuhinj', 'ormar', 'garderob', 'gardarob', 'komod', 'krevet', 'stol', 'polic', 'plakar', 'regal', 'klup', 'oblog', 'ostrv', 'ladic', 'uzglav', 'ogledal', 'umivaon', 'vitrin'];
+const kindsOf = (s: string) => Array.from(new Set(tokens(foldText(s)).flatMap(w => PRODUCT_KINDS.filter(k => w.startsWith(k) || (k === 'stol' && w === 'sto')))));
+
 export function matchTarget(query: string, targets: DiaryTarget[]): TargetMatch {
+    // „Vrata Hamza" nije Hamzina kuhinja: rečena vrsta proizvoda koje nema ni u nalogu ni u
+    // proizvodu znači da taj nalog ne postoji — ERP ponudi da ga napravi (04.11.), ne pogađa.
+    const said = kindsOf(query);
     const scored = targets
+        .filter(t => !said.length || said.some(k => kindsOf(`${t.workOrderName} ${t.productName}`).includes(k)))
         .map(t => ({
             t,
             wo: coverage(query, `${t.workOrderName} ${t.projectName}`),

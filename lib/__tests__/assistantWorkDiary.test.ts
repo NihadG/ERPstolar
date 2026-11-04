@@ -81,9 +81,14 @@ describe('pitanja prije upisa — ništa se ne upisuje dok nije jasno', () => {
         expect(logsOf('amer').map(l => l.WorkLog_ID)).toEqual(['auto1']);
     });
 
-    it('nepoznat proces → pitanje; ništa upisano', async () => {
-        const res = await runTool(env(), 'log_work', { lines: [{ workers: ['W4'], work: 'montaža vrata E5', process: 'montaža' }] });
-        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/„montaža" nije u katalogu/) });
+    // 04.11.: „utovar kamiona" nije proces iz kataloga — šihtarica i nalog su glavno, proces dodatak.
+    it('nepoznat proces ne ruši upis: rad ide na nalog bez procesa, uz napomenu', async () => {
+        const e = env();
+        const res = await runTool(e, 'log_work', { lines: [{ workers: ['W4'], work: 'montaža vrata E5', process: 'montaža' }] });
+        expect(res.ok).toBe(true);
+        expect(logsOf('imer').length).toBeGreaterThan(0);
+        expect(e.summaries.join('\n')).toMatch(/„montaža" — nema u procesima, pa je rad upisan na nalog bez procesa/);
+        await undoTurn(e.turnId, 'u1');
         expect(logsOf('imer')).toHaveLength(0);
     });
 

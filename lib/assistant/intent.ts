@@ -12,7 +12,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { foldText } from '@/lib/voice/text';
-import { workerMentioned, workerNicknames, mentionsEveryone, type GroundRef } from './grounding';
+import { workerMentioned, workerNicknames, mentionsEveryone, sharedFirstNames, type GroundRef } from './grounding';
 
 export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'table' | 'question';
 
@@ -50,9 +50,14 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         if (new RegExp(`\\b${w}\\b`).test(t)) times.push(w);
     }
 
-    const workerIds = workers.filter(w => workerMentioned(text, w)).map(w => w.id);
+    // Isto ime dvojice bez prezimena („Senad") nije rečen radnik nego pitanje — ide u nadimke s
+    // više mogućnosti (napomena: „pitaj ask_user"), ne u pokrivenost.
+    const mentioned = workers.filter(w => workerMentioned(text, w)).map(w => w.id);
+    const shared = sharedFirstNames(text, mentioned, workers);
+    const unclear = new Set(shared.flatMap(s => s.ids));
+    const workerIds = mentioned.filter(id => !unclear.has(id));
     // Nadimak („Kemo") samo kao napomena modelu — u pokrivenost ulaze rečena imena.
-    const nicknames = workerNicknames(text, workers);
+    const nicknames = [...workerNicknames(text, workers), ...shared];
     const anyWorker = workerIds.length > 0 || nicknames.length > 0;
     // „Hoćeš li me napomenuti sutra … i kad" pita za podsjetnik koji postoji (03.11. — bot je pravio novi);
     // „hoćeš li me napomenuti sutra u 8 da…" bez „kad" je molba. „Jesi li upisao…" je uvijek pitanje.
@@ -147,7 +152,9 @@ export function intentNote(intent: MessageIntent, workerLabel: (id: string) => s
     for (const n of intent.nicknames) {
         parts.push(n.ids.length === 1
             ? `„${n.token}" je nadimak: ${workerLabel(n.ids[0])}`
-            : `„${n.token}" može biti: ${n.ids.map(workerLabel).join(' ili ')} — pitaj ask_user`);
+            : `„${n.token}" može biti: ${n.ids.map(workerLabel).join(' ili ')} — ${intent.kinds.some(k => k === 'work' || k === 'presence')
+                ? 'NE pitaj: upiši cijeli dan, a u red tog posla stavi oba; ERP upiše ostalo i pita dugmadima koji'
+                : 'pitaj ask_user'}`);
     }
     if (intent.times.length) parts.push(`vrijeme: ${intent.times.join(', ')}`);
     return parts;

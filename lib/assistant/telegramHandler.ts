@@ -39,7 +39,7 @@ import { snoozeUntil } from './reminders';
 import { chatCardButtons, chatCardText } from './chatMessage';
 import {
     addEntry, claimUpdate, consumeLinkCode, getEntry, getLinkByTelegramId,
-    findEntryByReply, getSession, markEntry, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
+    findEntryByReply, getSession, markEntry, noteBotMessage, recordEntryOutcome, saveSession, undoTurn, type AssistantLink, type AssistantSession,
 } from './store';
 import type { Task } from '@/lib/types';
 
@@ -49,6 +49,8 @@ const HOW_TO_LINK =
     'pa pošalji ovdje kod koji dobiješ (ili klikni link).';
 
 import { isCorrection, metaFeedback, parseFeedback } from './signals';
+import { parsePresenceButton } from './presenceAsk';
+import { markPresence } from '@/lib/server/presence';
 
 /** Ispravka se veže za prethodnu poruku samo ako je stigla u ovom roku. */
 const CORRECTION_MINUTES = 10;
@@ -358,6 +360,20 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
     }
 
     // Stanje stavke bilježnice jednim dodirom — bez modela, bez tokena.
+    // „Bez prisustva, a nisu spomenuti": jedan dodir = prisustvo tog dana, bez modela i bez
+    // knjiženja naloga (na čemu je radio korisnik kaže porukom).
+    if (kind === 'pres') {
+        const p = parsePresenceButton(inc.data);
+        if (!p) { await answerCallbackQuery(inc.callbackId); return; }
+        const [row] = await markPresence(link.orgId, { workerIds: [p.workerId], status: p.status, date: p.date, book: false });
+        if (!row) { await answerCallbackQuery(inc.callbackId, 'Radnik više nije aktivan.'); return; }
+        const line = `${row.worker}: ${p.status.toLowerCase()}${p.status === 'Prisutan' ? ' — reci na čemu je radio' : ''}`;
+        await answerCallbackQuery(inc.callbackId, 'Upisano');
+        await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n→ ${line}`, inc.buttons?.filter(r => !r.some(b => b.data.startsWith(`pres:${p.workerId}:`))));
+        await noteBotMessage(inc.chatId, 'prisustvo dugmetom', `${line} (${p.date})`);
+        return;
+    }
+
     if (kind === 'mem') {
         const result = await memoryButtonState(link.orgId, link.uid, arg, extra === 'f' ? 'fali' : 'postavljeno');
         await answerCallbackQuery(inc.callbackId, result.ok ? 'Sačuvano' : result.error);

@@ -39,6 +39,8 @@ class FakeQuery {
     constructor(public col: string, public filters: Filter[] = [], public lim = Infinity) {}
     where(f: string, op: string, v: any) { return new FakeQuery(this.col, [...this.filters, [f, op, v]], this.lim); }
     limit(n: number) { return new FakeQuery(this.col, this.filters, n); }
+    /** Projekcija polja: u memoriji vraća cijele dokumente (dovoljno za testove). */
+    select(..._fields: string[]) { return this; }
     async get() {
         const docs = Array.from(fakeStore.entries())
             .filter(([k]) => k.startsWith(`${this.col}/`) && k.split('/').length === 2)
