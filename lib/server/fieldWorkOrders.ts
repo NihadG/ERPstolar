@@ -170,3 +170,64 @@ export async function createCustomWorkOrder(
 
     return { workOrderId, workOrderNumber, name };
 }
+
+/**
+ * Nalog iz bota, kad posao nema naloga („vrata za Hamzu", „utovar kamiona za Brdo"):
+ *   • s proizvodima projekta → RADNI nalog „Proizvodnja" s tim proizvodima, bez procesa
+ *     (plan proizvoda ERP doda pri prvom upisu procesa, isto kao za svaku stavku bez plana);
+ *   • bez proizvoda → posao „Zadaci" vezan za projekat (trošak rada ide na projekat).
+ * Novac ostaje na nuli kao i s telefona — vrijednost i ponudu vodi vlasnik na desktopu.
+ * Vraća i putanje novih dokumenata, da ↩️ Poništi može obrisati nalog.
+ */
+export async function createBotWorkOrder(orgId: string, input: {
+    name: string;
+    project?: { id: string; name: string };
+    products?: { id: string; name: string; quantity: number }[];
+}): Promise<CreatedOrder & { paths: string[] }> {
+    const name = input.name.trim();
+    if (!name) throw new Error('Nalog nema naziv.');
+    const products = input.products || [];
+    const type = products.length ? 'Proizvodnja' : 'Zadaci';
+    const numbers = await existingOrderNumbers(orgId);
+    const workOrderId = uuidv4();
+    const workOrderNumber = generateWorkOrderNumber(type, numbers);
+    const db = adminDb();
+    const batch = db.batch();
+    const paths: string[] = [];
+    const zero = { Product_Value: 0, Material_Cost: 0, Planned_Labor_Cost: 0, Planned_Labor_Days: 0, Planned_Labor_Workers: 0, Planned_Labor_Rate: 0, Services_Total: 0, Transport_Share: 0 };
+    const items: Record<string, unknown>[] = products.length
+        ? products.map(p => ({
+            ID: uuidv4(), Organization_ID: orgId, Work_Order_ID: workOrderId,
+            Product_ID: p.id, Product_Name: p.name, Project_ID: input.project?.id || '', Project_Name: input.project?.name || '',
+            Quantity: p.quantity || 1, Status: 'Na čekanju', Item_Type: 'product', Processes: [], ...zero,
+        }))
+        : [{
+            ID: uuidv4(), Organization_ID: orgId, Work_Order_ID: workOrderId,
+            Product_ID: `custom-${uuidv4()}`, Product_Name: name,
+            Project_ID: input.project?.id || '', Project_Name: input.project?.name || 'Razni poslovi',
+            Quantity: 1, Status: 'Na čekanju', Item_Type: 'custom',
+            Processes: [{ Process_Name: WORK_PROCESS, Status: 'Na čekanju' }], Process_Stages: [{ processes: [WORK_PROCESS] }], ...zero,
+        }];
+    for (const item of items) {
+        const ref = db.collection('work_order_items').doc();
+        batch.set(ref, item);
+        paths.push(ref.path);
+    }
+    const workOrder: Record<string, unknown> = {
+        Work_Order_ID: workOrderId, Organization_ID: orgId, Work_Order_Number: workOrderNumber,
+        Created_Date: new Date().toISOString(), Name: name, Due_Date: '', Status: 'Na čekanju',
+        Production_Steps: products.length ? [] : [WORK_PROCESS], Notes: 'Napravljen iz Telegram asistenta.', Work_Order_Type: type,
+    };
+    if (!products.length) {
+        const itemId = items[0].ID as string;
+        const { graph, columns } = mergeProductGraphs([{ itemId, graph: synthesizeOrderGraph([{ itemId, stages: [[WORK_PROCESS]] }], undefined, { includeEdges: true }).graph }]);
+        const pos = layoutColumns(columns);
+        graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
+        workOrder.Process_Graph = JSON.parse(JSON.stringify(graph));
+    }
+    const woRef = db.collection('work_orders').doc();
+    batch.set(woRef, workOrder);
+    paths.push(woRef.path);
+    await batch.commit();
+    return { workOrderId, workOrderNumber, name, paths };
+}

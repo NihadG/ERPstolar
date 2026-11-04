@@ -22,6 +22,8 @@ export interface ReplaySide {
     billed?: number;
     calls?: number;
     toolSet?: string;
+    /** Svaki poziv alata s argumentima i greškom — za uzrok u results.json. */
+    toolLog?: { name: string; ok: boolean; args?: unknown; error?: string }[];
 }
 
 export interface ReplayCase {
