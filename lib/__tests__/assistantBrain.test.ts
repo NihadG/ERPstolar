@@ -107,7 +107,7 @@ describe('asistent od poruke do baze', () => {
         expect(p.system[0].text).not.toMatch(/SADA:|KALENDAR|2026-10-2/);
         expect(p.system[1].text).toMatch(/^SADA: petak, 23\.10\.2026, 14:05/);
         expect(p.temperature).toBeUndefined();
-        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'make_table', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
+        expect(p.tools.map((t: any) => t.name)).toEqual(['create_task', 'update_task', 'remember', 'update_memory', 'search_memory', 'find_material', 'create_order', 'product_materials', 'list_orders', 'manage_order', 'log_work', 'fill_work_days', 'work_report', 'set_presence', 'set_progress', 'order_status', 'project_brief', 'project_history', 'list_notebook', 'order_pdf', 'task_detail', 'task_pdf', 'make_table', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'chat_message', 'find_contact', 'search_mail', 'save_contact', 'material_status', 'material_arrived', 'learn_name', 'ask_user']);
         expect(p.system[0].text).toContain('NALOZI U RADU (oznaka | naziv):');
 
         // Stabilni dio je isti i kasnije u danu → keš se čita.
@@ -854,5 +854,52 @@ describe('zadaci se mijenjaju, dopuna ide kome je namijenjena (03.11.)', () => {
         const out = await say('Napomeni me da provjerim umivaonike u C102', [{ text: 'Koji datum i sat da te podsjetim?' }]);
         expect(out.outcome).toBe('question');
         expect(out.buttons.map(r => r[0].text)).toEqual(['Danas u 16:00', 'Sutra u 08:00', 'Sutra u 10:00', 'Sutra u 12:00']);
+    });
+});
+
+// Revizija 04.11.2026: lista za montere se mijenja kratkim porukama i ide na print.
+describe('lista za montere: izbaci, zamijeni, dodaj, print (04.11.)', () => {
+    beforeEach(() => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        for (const k of Array.from(mockStore.keys())) if (String(k).startsWith('tasks/')) mockStore.delete(k);
+    });
+
+    it('stavke se mijenjaju jedna po jedna; ne vraća se izbačeno, ne duplira se, bot ne piše svoje napomene; istorija zna šta je urađeno', async () => {
+        await say('Zadaci za sutra za Amera i Edina: obići kompletnu A lamelu, pregledati šteke u B lameli, postaviti dvoja vrata ako ima prostora', [
+            { calls: [{ name: 'create_task', args: { title: 'Montaža za Amera i Edina', category: 'installation', worker: 'W1', checklist: ['obići kompletnu A lamelu', 'pregledati šteke u B lameli', 'postaviti dvoja vrata ako ima prostora'] } }] },
+        ]);
+        const out1 = await say('Izbaci ovo obići kompletnu A lamelu', [
+            { calls: [{ name: 'update_task', args: { task: 'T1', remove_checklist: ['obići kompletnu A lamelu'], note: 'Izmjena: obilazak A lamele izbačen' } }] },
+        ]);
+        expect(out1.session.history.at(-1)!.text).toMatch(/izbačeno: „obići kompletnu A lamelu"/);
+        await say('Ne, znači da je to na stanu E501', [
+            { calls: [{ name: 'update_task', args: { task: 'T1', edit_checklist: [{ find: 'dvoja vrata', text: 'postaviti dvoja vrata u stanu E501, ako ima prostora' }] } }] },
+        ]);
+        const dup = await say('I dodaj još pregledati šteke u B lameli', [
+            { calls: [{ name: 'update_task', args: { task: 'T1', add_checklist: ['pregledati šteke u B lameli'] } }] },
+            { text: 'To već piše u listi.' },
+        ]);
+        expect(JSON.stringify(mockSent.at(-1).messages.at(-1).content)).toMatch(/već postoje u listi/);
+        const t = docs('tasks').find(x => x.Title === 'Montaža za Amera i Edina')!;
+        expect(t.Checklist.map((c: any) => c.text)).toEqual(['pregledati šteke u B lameli', 'postaviti dvoja vrata u stanu E501, ako ima prostora']);
+        expect(t.Notes || '').toBe('');
+        expect(dup.outcome).toBe('answer');
+    });
+
+    it('„napravi mi dokument šta trebaju sutra uraditi" → PDF zadatka sa svim stavkama, bez napomena; „izbaci bilješke" ih briše', async () => {
+        await say('Zadaci za sutra za Amera: ogledalo u E504, provjeriti C502', [
+            { calls: [{ name: 'create_task', args: { title: 'Montaža za Amera', category: 'installation', worker: 'W1', reminder_at: '2026-10-24T08:00', checklist: ['ogledalo u E504', 'provjeriti C502'] } }] },
+        ]);
+        const id = docs('tasks').find(x => x.Title === 'Montaža za Amera')!.Task_ID;
+        mockStore.set(`tasks/${id}`, { ...mockStore.get(`tasks/${id}`), Notes: '[23.10.] Izmjena: …' });
+        await say('Izbaci ove bilješke, ne treba da se vide', [{ calls: [{ name: 'update_task', args: { task: 'T1', clear_notes: true } }] }]);
+        expect(docs('tasks').find(x => x.Task_ID === id)!.Notes).toBe('');
+        mockSent.length = 0;
+        const out = await say('Možeš li mi napraviti dokument šta Amer treba sutra da uradi?', [{ calls: [{ name: 'task_pdf', args: { task: 'T1' } }] }]);
+        expect(out.tables?.[0]).toMatchObject({ title: 'Montaža za Amera', rowCount: 2, columns: [{ label: 'Br.' }, { label: 'Stavka' }, { label: 'Urađeno' }] });
+        expect(out.tables?.[0].groups[0].rows).toEqual([['1', 'ogledalo u E504', ''], ['2', 'provjeriti C502', '']]);
+        expect(out.tables?.[0].subtitle).toMatch(/Amer Hodžić · 2 stavki$/);
+        expect(mockSent).toHaveLength(1);   // bez pretrage pošte i bez drugog kruga
     });
 });

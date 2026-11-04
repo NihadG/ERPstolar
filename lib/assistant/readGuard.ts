@@ -28,6 +28,13 @@ const DATA_TERMS = /\b(iveral\w*|dekor\w*|materijal\w*|kant\w*|mdf|hdf|furnir\w*
 /** O tome je sve u promptu (zadaci, podsjetnici, bilježnica) — čitanje ne treba. */
 const PROMPT_ONLY = /\b(zadat\w*|podsjet\w*|napomen\w*|biljeznic\w*|sta imam|sta trebam|danas imam|sutra imam)\b/;
 
+/**
+ * Pitanje o onome što je bot upravo uradio („je li obrisana ova pogrešna", „jesi li upisao",
+ * „je li zamijenjeno"). Odgovor je u istoriji ([ERP je upisao …]), ne u ERP-u: 04.11. bot je
+ * tjeran da čita, pa je za „polica → kolica" pretraživao katalog materijala.
+ */
+export const ABOUT_OWN = /\b(je li|jel|da li|jesi li|jesi)\b.{0,40}\b(obrisan\w*|izbrisan\w*|upisan\w*|upisao|napravljen\w*|napravio|promijenjen\w*|promijenio|ispravljen\w*|ispravio|dodan\w*|dodao|zamijenjen\w*|zamijenio|izbacen\w*|izbacio|pogresn\w*)\b/;
+
 export function asksForData(question: string): boolean {
     const t = foldText(question);
     return DATA_TERMS.test(t) && !PROMPT_ONLY.test(t);
@@ -45,6 +52,7 @@ export function shouldReadFirst(s: {
     answer: string;
 }): boolean {
     if (!s.isQuestion || s.readUsed || s.readAsked || s.changed) return false;
+    if (ABOUT_OWN.test(foldText(s.question))) return false;
     if (NO_DATA.test(foldText(s.answer)) || PROMISE.test(foldText(s.answer))) return true;
     // Odgovor iz zadataka/bilježnice koji su već u promptu („Ploču za Dinu (T7) radi Amer") — čitanje ne treba.
     if (/\b[TM]\d+\b/.test(s.answer)) return false;

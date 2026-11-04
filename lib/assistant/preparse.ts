@@ -107,8 +107,13 @@ export function messageFacts(text: string, knownLocations: string[] = []): Messa
 /** Normalizovana poruka + činjenice koje je ERP u njoj našao. */
 export function preparseMessage(text: string, opts: { knownLocations?: string[]; subjects?: string[] } = {}): Preparsed {
     const prefixes = new Set((opts.knownLocations || []).map(l => l.trim().charAt(0).toLowerCase()).filter(c => /[a-z]/.test(c)));
-    const normalized = fixTypos(normalizeLocations(normalizeDims(text), prefixes), opts.subjects || []);
-    return { text: normalized, facts: messageFacts(normalized, opts.knownLocations) };
+    const base = normalizeLocations(normalizeDims(text), prefixes);
+    const baseFacts = messageFacts(base, opts.knownLocations);
+    // Tipfeler predmeta („pgledalo") samo u poruci o stanju stvari (lokacija ili mjera). Drugdje je to
+    // prava riječ: „ponesemo kolica za dijete" je postalo „polica" (04.11.) — ERP ne prepravlja rečeno.
+    const aboutThings = baseFacts.locations.length + baseFacts.dims.length + baseFacts.widths.length > 0;
+    const normalized = aboutThings ? fixTypos(base, opts.subjects || []) : base;
+    return { text: normalized, facts: aboutThings ? messageFacts(normalized, opts.knownLocations) : baseFacts };
 }
 
 /** Kratka napomena za model, uz poruku. Prazno kad ERP ništa nije našao. */

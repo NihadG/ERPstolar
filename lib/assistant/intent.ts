@@ -107,7 +107,10 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     }
     // Tabela („napravi tabelu nenaručenih materijala", „u tabeli stan, dimenzije…"): čitanje
     // i PDF, ne upis — „naručen" ili „u stanu" u njoj nisu narudžba ni bilježnica.
-    if (/\btabel\w*/.test(t) && !kinds.has('email') && !kinds.has('chat')) {
+    // Dokument za print („napravi mi dokument šta Amer treba sutra", „isprintaj listu") je isto
+    // prikaz (task_pdf / make_table), ne upis ni pošta (04.11. bot je tražio po mailu).
+    if ((/\btabel\w*/.test(t) || /\b(dokument\w*|isprint\w*|printa\w*|odstampa\w*|stampa\w*)\b/.test(t))
+        && !kinds.has('email') && !kinds.has('chat')) {
         kinds.clear();
         kinds.add('table');
     }
@@ -131,7 +134,7 @@ const KIND_LABEL: Record<MessageKind, string> = {
     order: 'narudžba (create_order / manage_order)', arrival: 'stigao materijal (material_arrived)',
     email: 'mail (email_order za narudžbu, reply_mail za odgovor/potvrdu na mail koji je stigao, email_contact za novi mail — samo NACRT, šalje korisnik dugmetom)',
     chat: 'poruka na Viber/WhatsApp (chat_message; vrijeme ide u send_at, sadržaj u text — nije narudžba ni zadatak)',
-    table: 'tabela (make_table — ERP složi i pošalje PDF; bez upisa)', question: 'pitanje (odgovor, bez upisa)',
+    table: 'tabela ili dokument za print (make_table; zadatak → task_pdf — ERP složi i pošalje PDF; bez upisa)', question: 'pitanje (odgovor, bez upisa)',
 };
 
 /** Dio napomene za model: vrsta poruke, rečeni radnici (i nadimci) i vrijeme. */

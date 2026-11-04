@@ -14,7 +14,7 @@ import { createTask, taskRef } from '@/lib/server/fieldWrites';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { isIsoDate } from '@/lib/voice/dates';
 import { foldText, tokens, stem } from '@/lib/voice/text';
-import { sortByFlat } from './checklistOrder';
+import { findItem, sameItem, sortByFlat } from './checklistOrder';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
 import { formatReminder, resolveReminderAt, toZoned, zonedToUtcMs } from './datetime';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
@@ -113,10 +113,16 @@ export const TOOLS: Anthropic.Tool[] = [
                 status: enumOf(STATUSES),
                 reminder_at: { ...str, description: 'Novo lokalno vrijeme YYYY-MM-DDTHH:MM.' },
                 title: str,
-                note: { ...str, description: 'Bilješka koja se dopisuje (npr. ko je javio šta).' },
+                note: { ...str, description: 'Napomena u zadatku (vidi se i na štampi) — SAMO kad korisnik kaže da se zapiše („dodaj napomenu…"). Nikad ovdje ne bilježi svoje izmjene.' },
                 add_checklist: { ...strList, description: 'Nove stavke check liste u ISTOM zadatku („Kerim — CNC").' },
                 sort_checklist: { type: 'string', enum: ['stan'], description: '„Složi po stanovima/lamelama" → stan: ERP složi postojeće stavke (iste, istim tekstom) po lameli i stanu. Ne pravi novi zadatak za to.' },
-                checklist: { ...strList, description: 'CIJELA nova check lista umjesto stare — samo kad korisnik traži da se lista prepravi; stavke prepiši iz postojeće (ne iz bilježnice).' },
+                remove_checklist: { ...strList, description: '„Izbaci X" → riječi stavke kako ih je korisnik rekao („obići kompletnu A lamelu"); ERP nađe stavku i izbaci samo nju.' },
+                edit_checklist: {
+                    type: 'array',
+                    description: '„Zamijeni A sa B", „ne, to je u E501", „ispravi stavku…" → {find: riječi postojeće stavke, text: cijela nova stavka}. ERP mijenja samo tu stavku; ostale ostaju. NIKAD ne prepisuj cijelu listu.',
+                    items: { type: 'object', properties: { find: str, text: str }, required: ['find', 'text'] },
+                },
+                clear_notes: { ...bool, description: '„Izbaci/obriši bilješke/napomene iz zadatka" → true.' },
             },
             required: ['task'],
         },
@@ -417,6 +423,23 @@ export const TOOLS: Anthropic.Tool[] = [
                 project: { ...str, description: 'Oznaka P#.' },
                 supplier: str,
             },
+        },
+    },
+    {
+        name: 'task_detail',
+        description: 'Cijeli zadatak: naslov, vrijeme, radnik, SVE stavke check liste (urađene i neurađene), opis i napomene. Za „šta piše u zadatku…", „pročitaj mi listu", prije ispravke stavke kad nisi siguran šta tačno piše.',
+        input_schema: { type: 'object', properties: { task: { ...str, description: 'Oznaka T#.' } }, required: ['task'] },
+    },
+    {
+        name: 'task_pdf',
+        description: 'DOKUMENT zadatka za print („napravi mi dokument šta Amer i Edin trebaju sutra uraditi", „isprintaj listu", „PDF zadatka"). ERP složi PDF: naslov, dan, radnik i sve stavke s kućicom za kvačicu — napomene bez notes=true ne ulaze. Pošta tu nije potrebna.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                task: { ...str, description: 'Oznaka T#.' },
+                notes: { ...bool, description: 'true samo kad korisnik traži i napomene u dokumentu.' },
+            },
+            required: ['task'],
         },
     },
     {
@@ -733,10 +756,10 @@ export function fieldHint(name: string, args: Record<string, unknown>): string |
     return unknown.length ? `Poslana polja koja ${name} ne zna: ${unknown.join(', ')}. Polja ovog alata: ${known.join(', ')} — ponovi s tim nazivima.` : null;
 }
 
-export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail']);
+export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail', 'task_detail', 'task_pdf']);
 
 /** Spisak (i tabela) koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
-export const DISPLAY_TOOLS = new Set(['list_notebook', 'make_table']);
+export const DISPLAY_TOOLS = new Set(['list_notebook', 'make_table', 'task_pdf']);
 
 function qtyLabel(m: MemoryItem): string {
     return m.Quantity != null ? `${m.Quantity} ${m.Unit || 'kom'} ` : '';
@@ -757,6 +780,9 @@ function memorySummary(m: MemoryItem): string {
 function checklistOf(v: unknown): string[] {
     return Array.isArray(v) ? v.map(c => text(c, 240)).filter(Boolean).slice(0, 40) : [];
 }
+
+/** Korisnik traži napomenu u zadatku („zapiši u zadatak", „dodaj napomenu", „bilješka uz zadatak"). */
+const NOTE_SAID = /\b(napomen\w*|biljesk\w*|zabiljezi|zapisi|napisi u|dopisi)\b/;
 
 /** Rečeno je da zadatak otpada: „otkaži", „ne treba", „obriši", „zatvori", „poništi"… */
 const CANCEL_SAID = /\b(otkaz\w*|otkazi|ne treba|nece trebati|otpad\w*|obrisi|izbrisi|brisi|zatvori|ponisti|storn\w*|nema potrebe|ukini|makni)\b/;
@@ -881,7 +907,7 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     // Otkazati se smije samo rečeno otkazivanje. 03.11. model je otkazao zadatak da bi ga „složio
     // ponovo", novi upis je pao, i korisnik je ostao bez zadatka — mijenja se postojeći, ne zamjenjuje.
     if (a.status === 'cancelled' && env.groundText !== undefined && !CANCEL_SAID.test(foldText(env.groundText))) {
-        return { ok: false, error: 'Otkazivanje nije rečeno. Zadatak se ne otkazuje da bi se napravio novi — izmijeni ovaj (sort_checklist, checklist, title, add_checklist).' };
+        return { ok: false, error: 'Otkazivanje nije rečeno. Zadatak se ne otkazuje da bi se napravio novi — izmijeni ovaj (sort_checklist, remove_checklist, edit_checklist, title, add_checklist).' };
     }
     if (typeof a.status === 'string' && STATUSES.includes(a.status)) {
         patch.Status = a.status;
@@ -897,40 +923,74 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         reminderLabel = formatReminder(r.iso, env.tz, env.now);
     }
     if (text(a.title)) patch.Title = text(a.title, 120);
-    const added = checklistOf(a.add_checklist);
-    const replaced = Array.isArray(a.checklist) ? checklistOf(a.checklist) : null;
-    if (replaced?.length) {
-        // Prepravka liste: urađene stavke ostaju urađene (isti tekst).
-        const done = new Set((task.Checklist || []).filter(c => c.completed).map(c => foldText(c.text)));
-        patch.Checklist = replaced.map(t => ({ id: uuidv4(), text: t, completed: done.has(foldText(t)) }));
+    const oldTitle = task.Title;
+    // Check lista: ERP mijenja stavke koje rečene riječi označavaju; ostale ostaju kakve jesu.
+    let list: NonNullable<Task['Checklist']> = [...(task.Checklist || [])];
+    const did: string[] = [];   // šta je urađeno — za istoriju modela (ne zna inače šta je maloprije dodao)
+    const removed: string[] = [];
+    for (const said of checklistOf(a.remove_checklist)) {
+        const hit = findItem(list, said);
+        if (!hit) return { ok: false, error: `U listi nema stavke „${said}". Stavke: ${list.map(c => `„${c.text}"`).join('; ')}` };
+        if ('ambiguous' in hit) return { ok: false, error: `„${said}" odgovara na više stavki: ${hit.ambiguous.map(t => `„${t}"`).join('; ')} — reci tačnije riječi.` };
+        removed.push(list[hit.index].text);
+        list = list.filter((_, i) => i !== hit.index);
     }
-    if (added.length) {
-        patch.Checklist = [...((patch.Checklist as Task['Checklist']) || task.Checklist || []), ...added.map(t => ({ id: uuidv4(), text: t, completed: false }))];
+    const edited: string[] = [];
+    for (const e of Array.isArray(a.edit_checklist) ? a.edit_checklist.slice(0, 20) : []) {
+        const find = text((e as Args)?.find, 240);
+        const now = text((e as Args)?.text, 240);
+        if (!find || !now) continue;
+        const hit = findItem(list, find);
+        if (!hit) return { ok: false, error: `U listi nema stavke „${find}". Stavke: ${list.map(c => `„${c.text}"`).join('; ')}` };
+        if ('ambiguous' in hit) return { ok: false, error: `„${find}" odgovara na više stavki: ${hit.ambiguous.map(t => `„${t}"`).join('; ')} — reci tačnije riječi.` };
+        list[hit.index] = { ...list[hit.index], text: now };
+        edited.push(now);
     }
+    // Ponovljeno „dodaj" (ista stavka u dvije poruke, 04.11.) ne pravi duplikat.
+    const added = checklistOf(a.add_checklist).filter(t => !list.some(c => sameItem(c.text, t)));
+    list = [...list, ...added.map(t => ({ id: uuidv4(), text: t, completed: false }))];
     const sorted = a.sort_checklist === 'stan';
     if (sorted) {
-        const list = (patch.Checklist as Task['Checklist']) || task.Checklist || [];
         if (!list.length) return { ok: false, error: 'Zadatak nema check listu za slaganje.' };
-        patch.Checklist = sortByFlat(list);
+        list = sortByFlat(list);
     }
-    if (text(a.note)) {
+    if (removed.length || edited.length || added.length || sorted) patch.Checklist = list;
+    if (removed.length) did.push(`izbačeno: ${removed.map(t => `„${t}"`).join(', ')}`);
+    if (edited.length) did.push(`izmijenjeno u: ${edited.map(t => `„${t}"`).join(', ')}`);
+    if (added.length) did.push(`dodano: ${added.map(t => `„${t}"`).join(', ')}`);
+    if (sorted) did.push('složeno po stanovima');
+    if (patch.Title) did.push(`naslov „${oldTitle}" → „${String(patch.Title)}"`);
+    if (reminderLabel) did.push(`podsjetnik ${reminderLabel}`);
+
+    // Napomena u zadatku je korisnikov tekst (vidi se i na štampi): samo kad ju je tražio.
+    // 04.11. bot je uz svaku izmjenu dopisivao „Izmjena: …", pa lista nije mogla na print.
+    if (a.clear_notes === true) { patch.Notes = ''; did.push('napomene obrisane'); }
+    else if (text(a.note) && (env.groundText === undefined || NOTE_SAID.test(foldText(env.groundText)))) {
         const line = `[${shortDay(env.now.toISOString(), env.tz)}] ${text(a.note, 500)}${env.reporter !== 'ja' ? ` (${env.reporter})` : ''}`;
         patch.Notes = task.Notes ? `${task.Notes}\n${line}` : line;
+        did.push('napomena dopisana');
     }
-    if (!Object.keys(patch).length) return { ok: false, error: 'Nema izmjena.' };
+    if (!Object.keys(patch).length) {
+        return { ok: false, error: added.length === 0 && checklistOf(a.add_checklist).length ? 'Te stavke već postoje u listi — ništa nije dodano.' : 'Nema izmjena.' };
+    }
 
     await ref.update(patch);
     await recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path: ref.path, before, label: `zadatak „${task.Title}"` });
     Object.assign(task, patch);
-    env.changes.push(`zadatak „${task.Title}"`);
+    // Istorija nosi ŠTA je urađeno: „je li obrisana ova pogrešna" i „ne, to je u E501" se odnose na to.
+    env.changes.push(`zadatak „${task.Title}"${did.length ? ` (${did.join('; ')})` : ''}`);
     const lines: string[] = [];
     if (patch.Status === 'completed') lines.push(`✅ Urađeno: ${task.Title}`);
     else if (patch.Status === 'cancelled') lines.push(`✖ Otkazano: ${task.Title}`);
     else if (patch.Status) lines.push(`↺ ${task.Title} — ${patch.Status === 'in_progress' ? 'u toku' : 'ponovo otvoreno'}`);
     if (reminderLabel) lines.push(`⏰ ${task.Title} → ${reminderLabel}`);
-    if (sorted || replaced?.length) lines.push(`${sorted ? '↕️ Složeno po stanovima' : '✏️ Nova lista'}: ${task.Title}`, ...((task.Checklist || []).map(c => `${c.completed ? '☑' : '☐'} ${c.text}`)));
-    else if (added.length) lines.push(`➕ ${task.Title}:`, ...added.map(t => `☐ ${t}`));
-    if (!lines.length) lines.push(`✏️ ${task.Title}${text(a.note) ? `: ${text(a.note, 200)}` : ''}`);
+    if (patch.Title) lines.push(`✏️ Naslov: ${task.Title}`);
+    if (sorted || removed.length || edited.length) {
+        lines.push(`${sorted ? '↕️ Složeno po stanovima' : removed.length && !edited.length ? '➖ Izbačeno' : '✏️ Izmijenjeno'}: ${task.Title}`,
+            ...((task.Checklist || []).map(c => `${c.completed ? '☑' : '☐'} ${c.text}`)));
+    } else if (added.length) lines.push(`➕ ${task.Title}:`, ...added.map(t => `☐ ${t}`));
+    if (a.clear_notes === true) lines.push(`🧹 Napomene obrisane: ${task.Title}`);
+    if (!lines.length) lines.push(`✏️ ${task.Title}${patch.Notes ? `: ${text(a.note, 200)}` : ''}`);
     env.summaries.push(lines.join('\n'));
     return clean({ ok: true, task: String(a.task), title: task.Title, status: patch.Status as string | undefined, reminder_label: reminderLabel });
 }
@@ -3023,6 +3083,57 @@ async function makeTableTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     return { ok: true, count: table.rowCount };
 }
 
+/** Kad i kome: „sutra u 08:00 · Amer Hodžić" — isto u detalju i u dokumentu. */
+function taskWhen(env: ToolEnv, t: Task): string {
+    const when = t.Reminder_At ? formatReminder(t.Reminder_At, env.tz, env.now) : t.Due_Date ? `rok ${t.Due_Date.slice(0, 10)}` : '';
+    return [when, t.Assigned_Worker_Name].filter(Boolean).join(' · ');
+}
+
+/**
+ * Cijeli zadatak. U promptu je samo prvih 6 stavki, pa je bot 04.11. na „ne mogu ove koje si
+ * napravio" rekao da nema alat koji vraća sadržaj liste.
+ */
+function taskDetailTool(env: ToolEnv, a: Args): ToolResult {
+    const t = resolveAlias(env.ctx.tasks, a.task);
+    if (!t) return { ok: false, error: `Zadatak ${String(a.task)} ne postoji u listi.` };
+    return clean({
+        ok: true, task: String(a.task), title: t.Title, when: taskWhen(env, t) || undefined,
+        checklist: (t.Checklist || []).map(c => `${c.completed ? '☑' : '☐'} ${c.text}`),
+        description: t.Description || undefined, notes: t.Notes || undefined,
+    });
+}
+
+/**
+ * Dokument zadatka za print (04.11. „generiši dokument sa svim stavkama za sutra"): bot je
+ * tražio po pošti, pa nudio tabelu iz glave. ERP složi PDF iz zadatka kakav jeste — stavke
+ * redom, kolona „Urađeno" prazna za kvačicu olovkom; napomene samo kad su tražene.
+ */
+function taskPdfTool(env: ToolEnv, a: Args): ToolResult {
+    const t = resolveAlias(env.ctx.tasks, a.task);
+    if (!t) return { ok: false, error: `Zadatak ${String(a.task)} ne postoji u listi.` };
+    const items = t.Checklist || [];
+    if (!items.length) return { ok: false, error: 'Zadatak nema check listu — nema šta staviti u dokument.' };
+    const day = toZoned(env.now.toISOString(), env.tz).date;
+    const notes = a.notes === true && t.Notes ? [t.Notes] : [];
+    const table: TableDoc = {
+        title: t.Title,
+        subtitle: [taskWhen(env, t), `${items.length} ${items.length === 1 ? 'stavka' : 'stavki'}`].filter(Boolean).join(' · '),
+        columns: [
+            { key: 'n', label: 'Br.', align: 'right' },
+            { key: 'item', label: 'Stavka', align: 'left' },
+            { key: 'done', label: 'Urađeno', align: 'left' },
+        ],
+        groups: [{ label: '', rows: items.map((c, i) => [String(i + 1), c.text, c.completed ? 'da' : '']) }],
+        total: null,
+        notes: [...(t.Description ? [t.Description] : []), ...notes],
+        rowCount: items.length,
+        fileName: tableFileName(t.Title, day),
+    };
+    (env.tables ||= []).push(table);
+    env.summaries.push(`📄 ${t.Title} — dokument za print stiže ispod (${items.length} ${items.length === 1 ? 'stavka' : 'stavki'}).`);
+    return { ok: true, items: items.length };
+}
+
 /** Red je u pročitanom tekstu kad je bar ovoliki dio njegovih riječi tamo. */
 const TEXT_ROW_SHARE = 0.6;
 
@@ -3116,6 +3227,8 @@ export async function runTool(env: ToolEnv, name: string, args: Args): Promise<T
             case 'project_history': return await projectHistoryTool(env, args);
             case 'list_notebook': return await listNotebookTool(env, args);
             case 'make_table': return await makeTableTool(env, args);
+            case 'task_detail': return taskDetailTool(env, args);
+            case 'task_pdf': return taskPdfTool(env, args);
             case 'ask_user': return askUserTool(env, args);
             default: return { ok: false, error: `Nepoznat alat ${name}.` };
         }
