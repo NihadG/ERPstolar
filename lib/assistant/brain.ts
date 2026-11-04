@@ -34,7 +34,7 @@ import { intentNote, messageIntent, type MessageKind } from './intent';
 import { orderMentioned, workerMentioned } from './grounding';
 import { loadFlowMaps } from './orderStatus';
 import { aliasesOf } from './vocab';
-import { foldText } from '@/lib/voice/text';
+import { foldText, stem, tokens } from '@/lib/voice/text';
 import { projectLabel } from '@/lib/voice/extract';
 import { claimsWrite, composeReply, sanitizeModelText } from './replyText';
 import { fieldHint, DISPLAY_TOOLS, READ_TOOLS, runTool, stripAliases, TOOLS, WRITE_TOOLS, type ErpQuestion, type ToolEnv } from './tools';
@@ -42,7 +42,7 @@ import type { AssistantSession, PendingAction, SessionFocus, SessionRefs, Sessio
 import type { AssistantOutcome, AssistantUsage, MemoryItem, TaskChatMessage, ToolCallLog } from '@/lib/types';
 import { toolCallLog } from './toolLog';
 import type { TableDoc } from '@/lib/tables/table';
-import { mailFirstNote, READ_FIRST_NOTE, shouldCheckMail, shouldReadFirst } from './readGuard';
+import { ABOUT_OWN, mailFirstNote, READ_FIRST_NOTE, shouldCheckMail, shouldReadFirst } from './readGuard';
 import { searchFirms } from '@/lib/contacts';
 import { getEmailAccount } from '@/lib/server/gmail';
 import { addUsage, emptyUsage } from './usage';
@@ -301,6 +301,31 @@ const NEW_WRITES = new Set(['create_task', 'remember', 'create_order', 'log_work
 /** „↩️ Poništi prethodni upis" uz pritužbu važi ovoliko poslije te poruke. */
 const UNDO_PREVIOUS_MINUTES = 30;
 
+/**
+ * „Generiši dokument sa svim stavkama … Sarajevo vodilice" → zadatak, ne tabela bilježnice
+ * (ponavljanje 04.11.: make_table „E008: nema ničega"). ERP nađe zadatak po riječima naslova
+ * ili po rečenim radnicima i kaže modelu koji je.
+ */
+export function taskDocNote(
+    text: string, workerIds: string[], tasks: { alias: string; value: import('@/lib/types').Task }[],
+    workerOf: (id: string) => { value: { name: string } } | undefined,
+): string[] {
+    const t = foldText(text);
+    if (!/\b(dokument\w*|isprint\w*|printa\w*|stampa\w*|odstampa\w*|pdf)\b/.test(t)) return [];
+    const said = new Set(tokens(t).filter(w => w.length >= 4).map(stem));
+    const open = tasks.filter(x => x.value.Status !== 'completed' && x.value.Status !== 'cancelled' && (x.value.Checklist || []).length);
+    const byTitle = open.filter(x => {
+        const w = tokens(foldText(x.value.Title)).filter(z => z.length >= 4).map(stem);
+        return w.length > 0 && w.filter(z => said.has(z)).length / w.length >= 0.5;
+    });
+    const firsts = workerIds.map(id => workerOf(id)?.value.name).filter((n): n is string => !!n).map(n => foldText(n).split(' ')[0]);
+    const byWorkers = firsts.length ? open.filter(x => x.value.Assigned_Worker_ID && workerIds.includes(x.value.Assigned_Worker_ID)
+        || firsts.every(f => foldText(`${x.value.Title} ${(x.value.Checklist || []).map(c => c.text).join(' ')}`).includes(f.slice(0, Math.max(3, f.length - 1))))) : [];
+    const hit = byTitle.length ? byTitle : byWorkers;
+    if (!hit.length || hit.length > 2) return [];
+    return [`dokument zadatka → task_pdf ${hit.map(x => `${x.alias} („${x.value.Title}")`).join(' ili ')}, ne make_table`];
+}
+
 /** Dopuna („dodaj", „ubaci", „stavi", „još") — ide u postojeći zadatak tih radnika. */
 const ADDS = /\b(dodaj\w*|dodati|ubaci\w*|stavi|staviti|jos|i to|u zadatak|u napomenu)\b/;
 
@@ -466,6 +491,7 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         ...mentionNote({ text: pre.text, recent: recentUserText, continues, projects: projectGround, orders: orderGround, question: intent.kinds.includes('question'), firms: firmHits }),
         ...(focusOrder ? [`narudžba iz razgovora: ${focusOrder.number} · ${focusOrder.supplier} („ova/ta/ista narudžba" = ona; ne pitaj koja)`] : []),
         ...workerTaskNote(pre.text, intent.workerIds, ctx.tasks, workerOf),
+        ...taskDocNote(pre.text, intent.workerIds, ctx.tasks, workerOf),
     ]);
     // Teška poruka (mnogo stvari odjednom, ili ljudi + posao u više rečenica) ide jačem modelu od prvog kruga.
     const people = intent.workerIds.length + intent.nicknames.length;

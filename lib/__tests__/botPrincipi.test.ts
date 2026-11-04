@@ -93,3 +93,72 @@ describe('napomena o botu ide u reviziju', () => {
         expect(metaFeedback('Dodaj u zadatak za Amera da ponese vodilice')).toBeNull();
     });
 });
+
+// Revizija 04.11.2026 — kako vlasnik radi: diktira listu za montere, mijenja je kratkim
+// porukama, štampa je; bot ne smije prepravljati njegove riječi ni zaboraviti šta je uradio.
+import { findItem, sameItem } from '@/lib/assistant/checklistOrder';
+import { preparseMessage } from '@/lib/assistant/preparse';
+import { ABOUT_OWN, shouldReadFirst } from '@/lib/assistant/readGuard';
+import { foldText } from '@/lib/voice/text';
+
+describe('ERP ne prepravlja rečeno', () => {
+    it('„kolica za dijete" ostaje kolica, iako u bilježnici postoji „polica"; tipfeler u poruci o stanu i dalje se ispravi', () => {
+        expect(preparseMessage('Napomeni me u 3 da ponesemo kolica za dijete', { subjects: ['polica'] }).text).toBe('Napomeni me u 3 da ponesemo kolica za dijete');
+        expect(preparseMessage('Stan e302 ima pgledalo 1000x1600', { knownLocations: ['E302'] }).text).toBe('Stan E302 ima ogledalo 1000x1600');
+    });
+});
+
+describe('stavka liste po riječima', () => {
+    const list = ['Amer i Edin — obići kompletnu A lamelu', 'Amer i Edin — pregledati sve šteke u B lameli', 'Amer i Edin — postaviti dvoja vrata u E lameli, ako ima prostora']
+        .map(text => ({ text }));
+
+    it('„izbaci ovo obići kompletnu A lamelu" nađe tu stavku; nepostojeće → null; dvije jednako dobre → nejasno', () => {
+        expect(findItem(list, 'obići kompletnu A lamelu')).toEqual({ index: 0 });
+        expect(findItem(list, 'dvoja vrata ako ima prostora')).toEqual({ index: 2 });
+        expect(findItem(list, 'lajsne u pogonu')).toBeNull();
+        expect(findItem([{ text: 'ogledalo u E504' }, { text: 'ogledalo u E505' }], 'ogledalo')).toEqual({ ambiguous: ['ogledalo u E504', 'ogledalo u E505'] });
+    });
+
+    it('ista stavka u dvije poruke je ista (ne dodaje se dvaput)', () => {
+        expect(sameItem('Amer i Edin — provjeriti u pogonu da li su završene lajsne koje fale na B101; ako jesu, povući ih i postaviti',
+            'Amer i Edin — provjeriti u pogonu jesu li završene lajsne koje fale na B101, ako jesu povući ih i postaviti')).toBe(true);
+        expect(sameItem('postaviti ogledalo u E504', 'postaviti umivaonik u C102')).toBe(false);
+    });
+});
+
+describe('bot zna šta je sam uradio', () => {
+    it('„je li obrisana ova pogrešna" pita za prethodni upis — ne tjera čitanje ERP-a', () => {
+        const q = 'je li obrisana ova pogresna';
+        expect(ABOUT_OWN.test(foldText(q))).toBe(true);
+        expect(shouldReadFirst({ isQuestion: true, readUsed: false, readAsked: false, changed: false, question: q, answer: 'Nisam siguran.' })).toBe(false);
+        expect(ABOUT_OWN.test(foldText('koliko imamo ogledala na E lameli'))).toBe(false);
+    });
+});
+
+describe('prijedlog za aplikaciju i dokument za print', () => {
+    it('„trebalo bi da ja kad uđem u ERP mogu uređivati…" je prijedlog; „trebalo bi da Amer ponese…" je posao', () => {
+        expect(metaFeedback('Trebalo bi da ja kad uđem u RPE, ovo što si ti kreirao, ove bilješke, mogu editovati, mogu eventualno obrisati, mogu dodati nove stavke u checklistu i sve ostalo, dakle isto kao ti.')).toEqual({ pure: true });
+        expect(metaFeedback('Trebalo bi da Amer ponese umivaonik sutra u C102')).toBeNull();
+    });
+
+    it('„napravi mi dokument šta Amer i Edin trebaju sutra uraditi" je prikaz, ne upis ni pošta', () => {
+        expect(messageIntent('Možeš li mi napraviti dokument šta Amer i Edin treba sutra da urade?', workers, facts()).kinds).toEqual(['table', 'question']);
+        expect(messageIntent('Isprintaj mi listu za Amera', workers, facts()).expectsWrite).toBe(false);
+    });
+});
+
+// Ponavljanje 04.11.: „dokument sa svim stavkama … Brdo vodilice" → make_table bilježnice.
+import { taskDocNote } from '@/lib/assistant/brain';
+
+describe('dokument zadatka', () => {
+    const task = (alias: string, title: string, extra: Partial<Task> = {}) => ({ alias, value: { Task_ID: alias, Title: title, Status: 'pending', Checklist: [{ id: 'c', text: 'x', completed: false }], ...extra } as unknown as Task });
+    const workerOf = (id: string) => ({ value: { name: workers.find(w => w.id === id)!.name } });
+    const tasks = [task('T1', 'Brdo — postavljanje vodilica i ladica E008', { Assigned_Worker_ID: 'w-a' }), task('T2', 'Naručiti inox')];
+
+    it('po riječima naslova ili po radnicima → task_pdf tog zadatka', () => {
+        expect(taskDocNote('Generiši dokument sa svim stavkama za Brdo postavljanje vodilica i ladica', [], tasks, workerOf))
+            .toEqual(['dokument zadatka → task_pdf T1 („Brdo — postavljanje vodilica i ladica E008"), ne make_table']);
+        expect(taskDocNote('Napravi mi dokument šta Amer treba sutra da uradi', ['w-a'], tasks, workerOf)).toHaveLength(1);
+        expect(taskDocNote('Šta Amer radi sutra?', ['w-a'], tasks, workerOf)).toEqual([]);
+    });
+});

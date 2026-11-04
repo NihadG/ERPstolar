@@ -95,7 +95,12 @@ export function isComplaint(text: string): boolean {
 // za reviziju bota, ne bilješka u ERP-u. Bez ovoga je završilo u bilježnici („Ponuda —
 // ranije pogrešno povezana…") ili kao „Ništa nije upisano".
 
-const META = /\b(zabiljezi|zapisi|zapamti)\s+(\w+\s+){0,3}(pogresn\w*|lose|kao gresk\w*)|pogresno (si |je )?(shvat|razum|procijen|skont|protumac)\w*|kako (sam |si |je )?(ja )?(ovo |to )?skont\w*|trebalo bi (napraviti|uraditi|dodati|omoguciti|da)|\b(ai|bot|botu|model|haiku|gemini|claude)\b[^.]{0,60}\b(treba|trebao|trebalo|procita|razumije|nauci)\w*/;
+const META = /^trebalo bi da ja\b|\b(zabiljezi|zapisi|zapamti)\s+(\w+\s+){0,3}(pogresn\w*|lose|kao gresk\w*)|pogresno (si |je )?(shvat|razum|procijen|skont|protumac)\w*|kako (sam |si |je )?(ja )?(ovo |to )?skont\w*|\b(ai|bot|botu|model|haiku|gemini|claude)\b[^.]{0,60}\b(treba|trebao|trebalo|procita|razumije|nauci)\w*/;
+/**
+ * „Trebalo bi…" je prijedlog za sistem samo kad govori o sistemu (bot, AI, ERP, aplikacija).
+ * Bez toga je posao: „trebalo bi da Amer ponese umivaonik" je zadatak, ne napomena za reviziju.
+ */
+const SYSTEM = /\b(ai|bot|botu|model|haiku|gemini|claude|erp|rpe|aplikacij\w*|sistem\w*)\b/;
 
 /**
  * Napomena o botu: `pure` = poruka je samo to (ide u reviziju, ništa se ne izvršava);
@@ -104,9 +109,11 @@ const META = /\b(zabiljezi|zapisi|zapamti)\s+(\w+\s+){0,3}(pogresn\w*|lose|kao g
  */
 export function metaFeedback(text: string): { pure: boolean } | null {
     const t = foldText(text);
-    if (!META.test(t)) return null;
-    const pure = /^(zabiljezi|zapisi|zapamti|trebalo bi)\b/.test(t) && t.length <= 160
-        || /\b(ai|bot|model|haiku|gemini|claude)\b/.test(t) && /\btrebalo bi\b/.test(t);
+    const aboutSystem = /\btrebalo bi\b/.test(t) && SYSTEM.test(t);
+    if (!META.test(t) && !aboutSystem) return null;
+    // „Trebalo bi da ja kad uđem u ERP mogu uređivati…" (04.11.) je prijedlog za aplikaciju, koliko god dug.
+    const pure = /^(zabiljezi|zapisi|zapamti)\b/.test(t) && t.length <= 160
+        || /^trebalo bi da ja\b/.test(t) || aboutSystem;
     return { pure };
 }
 

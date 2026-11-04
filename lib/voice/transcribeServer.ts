@@ -23,6 +23,9 @@ export const BASE_VOCABULARY = [
     'kuhinja', 'ormar', 'komoda', 'vitrina', 'plakar', 'garderober', 'ogledalo',
     'radni nalog', 'narudžba', 'ponuda', 'montaža', 'ugradnja', 'isporuka', 'mjerenje',
     'rezanje', 'kantovanje', 'bušenje', 'brušenje', 'lakiranje', 'sklapanje', 'CNC',
+    // Montaža na stambenim zgradama (04.11.: „alamela", „isprat", „umivonik", „RPE" iz diktata).
+    'A lamela', 'B lamela', 'E lamela', 'sprat', 'stan', 'hodnik', 'umivaonik', 'šteke', 'ladice', 'lajsne',
+    'plastike', 'vrata', 'ERP', 'check lista', 'pogon',
     'Sarajevo', 'Ilidža', 'Vogošća', 'Hadžići', 'Ilijaš', 'Zenica', 'Tuzla', 'Mostar',
     'Visoko', 'Kakanj', 'Konjic', 'Travnik', 'Bihać', 'Banja Luka',
 ];
