@@ -10,7 +10,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from './firebaseAdmin';
-import { getActiveWorkers, getWorkLogRefsForWorkerDate, getWorkOrderRef, getItemDocsForWorkOrder } from './fieldRepo';
+import { getActiveWorkers, getAttendanceForDate, getWorkLogRefsForWorkerDate, getWorkOrderRef, getItemDocsForWorkOrder } from './fieldRepo';
 import {
     ABSENT_STATUSES, PRESENT_STATUSES, buildProposalForDate, commitBooking, recalcOrderLabor, renormalizeWorkerDay,
 } from './fieldAttendance';
@@ -28,9 +28,56 @@ export interface PresenceRow {
     noOrders: boolean;
 }
 
+/**
+ * Briše radnikov dan (ispravka iz bota): rad iz šihtarice i bota tog dana, i prisustvo kad je
+ * `attendance`. Ručni unos iz ERP-a ostaje. Vraća naloge kojima treba preračunati rad.
+ * „Senad ne treba nikako" / „Haso nije dobro dodijeljen" (04.11.) — prije ovoga je
+ * ispravka mogla samo dodati nove redove pored pogrešnih.
+ */
+export async function clearWorkerDay(
+    orgId: string, workerId: string, date: string, opts: { attendance: boolean }, track: TrackHook = () => undefined,
+): Promise<string[]> {
+    const affected = new Set<string>();
+    const logs = await getWorkLogRefsForWorkerDate(orgId, workerId, date);
+    const batch = adminDb().batch();
+    for (const l of logs) {
+        if (l.data.Booking_Source === 'manual' && l.data.Entry_Source !== 'telegram') continue;
+        track(l.ref.path, l.data as unknown as Record<string, unknown>);
+        batch.delete(l.ref);
+        if (l.data.Work_Order_ID) affected.add(l.data.Work_Order_ID);
+    }
+    if (opts.attendance) {
+        const snap = await adminDb().collection('worker_attendance')
+            .where('Worker_ID', '==', workerId).where('Organization_ID', '==', orgId)
+            .where('Date', '>=', date).where('Date', '<', `${date}T99`).get();
+        snap.docs.filter(d => String(d.data().Date || '').split('T')[0] === date).forEach(d => {
+            track(d.ref.path, d.data());
+            batch.delete(d.ref);
+        });
+    }
+    await batch.commit();
+    (await renormalizeWorkerDay(orgId, workerId, date)).forEach(id => affected.add(id));
+    for (const id of Array.from(affected)) await recalcOrderLabor(orgId, id);
+    return Array.from(affected);
+}
+
+/**
+ * Aktivni radnici bez prisustva tog dana, a ova poruka ih nije spomenula („fali li neko da ga
+ * nisam spomenuo", 04.11.). Prazno za neradni dan — vikend bez ikakvog rada ne pita ni za koga.
+ */
+export async function workersWithoutPresence(orgId: string, date: string, mentioned: string[]): Promise<{ id: string; name: string }[]> {
+    const [workers, attendance] = await Promise.all([getActiveWorkers(orgId), getAttendanceForDate(orgId, date)]);
+    const wd = new Date(`${date}T12:00:00Z`).getUTCDay();
+    if ((wd === 0 || wd === 6) && !attendance.length) return [];
+    const marked = new Set(attendance.map(a => a.Worker_ID));
+    const said = new Set(mentioned);
+    return workers.filter(w => !marked.has(w.Worker_ID) && !said.has(w.Worker_ID)).map(w => ({ id: w.Worker_ID, name: w.Name }));
+}
+
 export async function markPresence(
     orgId: string,
-    input: { workerIds: string[]; status: string; date: string },
+    /** book=false: samo prisustvo, bez knjiženja „po šihtarici" — rad na nalozima upisuje log_work iste poruke. */
+    input: { workerIds: string[]; status: string; date: string; book?: boolean },
     track: TrackHook = () => undefined,
 ): Promise<PresenceRow[]> {
     const workers = (await getActiveWorkers(orgId)).filter(w => input.workerIds.includes(w.Worker_ID));
@@ -59,6 +106,9 @@ export async function markPresence(
         return rows;
     }
     if (!PRESENT_STATUSES.has(input.status)) return rows;
+    // Poruka kaže ko je na čemu radio: šihtarica ne pogađa naloge od zadnjeg dana (04.11. su tako
+    // radnici rečeni za jedan projekat završili i na nalozima drugog, pa još jednom po upisu rada).
+    if (input.book === false) return rows;
 
     // Prisutan / teren: isti prijedlog kao u aplikaciji, potvrđen onako kako je predčekiran.
     const proposal = await buildProposalForDate(orgId, rows.map(r => ({ workerId: r.workerId, workerName: r.worker, status: input.status })), input.date);

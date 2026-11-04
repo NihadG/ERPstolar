@@ -74,10 +74,14 @@ run('ponavljanje stvarnih poruka (pravi model, lažna baza)', () => {
 
         const cases: ReplayCase[] = [];
         let session: AssistantSession = { history: [], pending: null };
+        // ASSISTANT_REPLAY_CARRY=1: baza ide dalje kroz razgovor (zadatak iz prve poruke vidi i
+        // „izbaci stavku" u sljedećoj). Bez toga svaka poruka kreće od istog snimka.
+        const carry = process.env.ASSISTANT_REPLAY_CARRY === '1';
+        const load = () => { store.clear(); for (const [k, v] of Object.entries(snapshot)) store.set(k, JSON.parse(JSON.stringify(v))); };
+        if (carry) load();
         for (const e of list) {
-            // Svaka poruka kreće od istog snimka; razgovor (istorija, pitanje bota) ide dalje.
-            store.clear();
-            for (const [k, v] of Object.entries(snapshot)) store.set(k, JSON.parse(JSON.stringify(v)));
+            // Razgovor (istorija, pitanje bota) uvijek ide dalje; baza samo s CARRY.
+            if (!carry) load();
             let out;
             try {
                 out = await runAssistant({
@@ -97,6 +101,8 @@ run('ponavljanje stvarnih poruka (pravi model, lažna baza)', () => {
                     // Kartica Viber/WhatsApp ide posebnom porukom — u izvještaju se vidi i njen tekst.
                     outcome: out.outcome, reply: [out.reply, ...(out.chatCards || []).map(c => `[kartica → ${c.message.To_Name}] ${c.message.Text}`)].join('\n'),
                     tools: (out.toolCalls || []).filter(t => t.ok).map(t => t.name),
+                    // Za uzrok: argumenti i greške svakog poziva (results.json, ne report.md).
+                    toolLog: (out.toolCalls || []).map(t => ({ name: t.name, ok: t.ok, args: t.args, ...(t.error ? { error: t.error } : {}) })),
                     billed: out.usage ? billedTokens(out.usage) : 0, calls: out.usage?.calls || 0, toolSet: out.usage?.toolSet,
                 },
             });

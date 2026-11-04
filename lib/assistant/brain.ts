@@ -26,7 +26,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import Anthropic from '@anthropic-ai/sdk';
 import type { ButtonRows } from '@/lib/telegram/api';
-import { assistantTimezone, toZoned } from './datetime';
+import { assistantTimezone, formatReminder, toZoned } from './datetime';
 import { loadContext } from './context';
 import { buildPromptParts } from './prompt';
 import { factsNote, preparseMessage, uncovered } from './preparse';
@@ -46,10 +46,12 @@ import { ABOUT_OWN, mailFirstNote, READ_FIRST_NOTE, shouldCheckMail, shouldReadF
 import { searchFirms } from '@/lib/contacts';
 import { getEmailAccount } from '@/lib/server/gmail';
 import { addUsage, emptyUsage } from './usage';
+import { presenceQuestion } from './presenceAsk';
+import { workersWithoutPresence } from '@/lib/server/presence';
 import { mentionNote } from './mentions';
 import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
 import { isComplaint, turnSignals } from './signals';
-import { continuesPrevious, inheritedAsk, type UnfinishedAsk } from './continuation';
+import { CONTINUATION_MINUTES, continuesPrevious, inheritedAsk, type UnfinishedAsk } from './continuation';
 
 export { claimsWrite } from './replyText';
 
@@ -295,6 +297,9 @@ export function timeOptions(now: Date, tz: string): string[] {
     ].slice(0, 4);
 }
 
+/** Poruka sama kaže dan („danas", „jučer", „u ponedjeljak", „3.11.") — dan iz razgovora tad ne važi. */
+const DAY_SAID = /\b(danas|jucer|juce|prekjucer|sutra|ponedjelj\w*|utor\w*|srijed\w*|cetvrt\w*|petak|petk\w*|subot\w*|nedjelj\w*|\d{1,2}\.\s?\d{1,2}\.?)\b/;
+
 /** Upisi koji prave nešto NOVO — pritužba bez sadržaja ih ne smije pokrenuti. */
 const NEW_WRITES = new Set(['create_task', 'remember', 'create_order', 'log_work', 'fill_work_days', 'set_progress', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'chat_message']);
 
@@ -456,7 +461,15 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
     const ownIntent = messageIntent(pre.text.replace(/^\[Proslijeđeno[^\]]*\]\n/, ''), workerRefs, pre.facts);
     // Nastavlja li se poruka na prethodnu: odgovor na pitanje, reply, „a vrata…", „ma treba mi…".
     // Samo tad projekat, rečeno i nedovršen zahtjev iz prethodne poruke važe i za ovu (continuation.ts).
-    const continues = !!input.session.pending || !!input.quoted || continuesPrevious(pre.text, minutesSinceLast(history, now));
+    // Bot je pitao tekstom („na čemu je radio Senad, Lejlin ili vrata?") → sljedeća poruka je odgovor,
+    // kako god počinjala. 04.11. „lejla i vrata za Brdo" nije bila nastavak, pa je
+    // „Senad Ibrić nije spomenut" odbilo upis iako ga je korisnik imenovao poruku ranije.
+    const lastTurn = history[history.length - 1];
+    const gap = minutesSinceLast(history, now);
+    const botAsked = !!lastTurn && lastTurn.role === 'model' && gap !== null && gap <= CONTINUATION_MINUTES
+        // Pitanje ne mora biti zadnji znak: „Koji nalozi su u pitanju?\nOpcije: …" (ponavljanje 04.11.).
+        && /\?/.test(lastTurn.text.replace(/\[oznake:[^\]]*\]/g, '').trim().slice(-400));
+    const continues = !!input.session.pending || !!input.quoted || botAsked || continuesPrevious(pre.text, gap);
     const inherited = inheritedAsk({
         unfinished: input.session.unfinished,
         ownWriteKinds: ownIntent.kinds.filter(k => k !== 'question' && k !== 'table'),
@@ -507,10 +520,15 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
             ? 'Ništa novo ne pravi: u jednoj rečenici reci šta si razumio i pitaj šta treba drugačije.'
             : 'Ako je jasno šta treba, ispravi ili premjesti prethodni upis (update_*, add_checklist) — ne dupliraj; inače kratko pitaj šta je pogrešno.'}]`] : []),
         ...(input.metaSaved ? ['[ERP je napomenu o botu iz ove poruke sačuvao za reviziju — nju ne upisuj (ni u bilježnicu); uradi samo ostatak poruke]'] : []),
+        // „Je li obrisana ova pogrešna" — pita za tvoj prethodni upis; odgovor je u istoriji.
+        ...(ABOUT_OWN.test(foldText(pre.text)) ? ['[Pitanje o onome što si ti upravo uradio: odgovori iz istorije ([ERP je upisao …] kaže tačno šta je napravljeno, izmijenjeno ili izbačeno) — bez pretrage]'] : []),
     ];
     const modelMessage = [...context, pre.text, ...(note ? [note] : [])].join('\n');
-    nextFocus = focusLocation || focusOrder
-        ? { at: focus!.at, ...(focusLocation ? { location: focusLocation } : {}), ...(focusOrder ? { order: focusOrder } : {}) }
+    // Dan iz razgovora („za jučer upiši…" pa dopuna bez dana) — važi 30 min, dok poruka ne kaže drugi dan.
+    const focusDay = focus?.workDay && now.getTime() - Date.parse(focus.workDay.at) <= GROUND_MINUTES * 60_000 ? focus.workDay : undefined;
+    const talkWorkDay = focusDay && !DAY_SAID.test(foldText(pre.text)) ? focusDay.date : undefined;
+    nextFocus = focusLocation || focusOrder || focusDay
+        ? { at: focus!.at, ...(focusLocation ? { location: focusLocation } : {}), ...(focusOrder ? { order: focusOrder } : {}), ...(focusDay ? { workDay: focusDay } : {}) }
         : null;
 
     // Vrijeme se potvrđuje samo prema OVOJ poruci — osim kad je ovo odgovor na
@@ -540,6 +558,14 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         messageText: message,
         // Prethodni odgovori (i iz pročitanih mailova) — izvor tabele „iz teksta".
         talkText: history.map(t => t.text).join('\n'),
+        ...(intent.kinds.includes('work') ? { workInMessage: true } : {}),
+        // Radnici: rečen maloprije = rečen, i kad poruka nije „nastavak" (projekti ostaju strogi).
+        ...(talkWorkDay ? { talkWorkDay } : {}),
+        workerGround: [
+            ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-3).map(t => t.text),
+            ...(input.session.pending?.options || []),
+            message, pre.text,
+        ].join('\n'),
         // Zadatak/podsjetnik nosi stanje u sebi; bilježnica samo kad je rečena (intent.ts).
         ...((intent.kinds.includes('task') || intent.kinds.includes('reminder')) && !intent.kinds.includes('notebook') ? { notebookBlocked: true } : {}),
         // „U tom stanu" / poruka bez lokacije odmah poslije upisa → lokacija iz razgovora.
@@ -762,11 +788,26 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         }
     }
 
+    // Upisan dan (rad ili prisustvo): ko nije spomenut, a nema prisustvo → dugmad po radniku (bez modela).
+    if (env.presenceDay && env.changes.length) {
+        const people = await workersWithoutPresence(input.orgId, env.presenceDay.date, env.presenceDay.workerIds)
+            .catch(e => { console.warn('[assistant] prisustvo nespomenutih:', e); return []; });
+        if (people.length) {
+            const today = toZoned(now, tz).date;
+            const label = env.presenceDay.date === today ? 'danas' : formatReminder(`${env.presenceDay.date}T10:00:00Z`, tz, now).replace(/ u \d\d:\d\d$/, '');
+            const q = presenceQuestion(people, env.presenceDay.date, label);
+            env.summaries.push(q.text);
+            env.followUp = [...(env.followUp || []), ...q.buttons];
+        }
+    }
+
     // Fokus razgovora: lokacija zadnje upisane stavke.
     const lastLoc = [...(env.touchedMemory || [])].reverse().find(m => m.Location)?.Location;
     if (lastLoc) nextFocus = { ...(nextFocus || {}), location: lastLoc, at };
     // Narudžba koju je ova poruka dotakla postaje narudžba iz razgovora.
     if (env.touchedOrder) nextFocus = { ...(nextFocus || { at }), order: { ...env.touchedOrder, at } };
+    // Upisan dan postaje dan razgovora (dopuna bez dana ide na njega).
+    if (env.presenceDay && env.changes.length) nextFocus = { ...(nextFocus || { at }), workDay: { date: env.presenceDay.date, at } };
     // Pritužba na prethodni upis: jedan dodir ga poništi — ispravka premješta, ne ostavlja duplikat
     // (03.11. „U plastika" je ostala u bilježnici i poslije „pogrešno, to treba u zadatak").
     const undoRow: ButtonRows = env.changes.length
