@@ -118,20 +118,25 @@ describe('poruka prijedloga', () => {
 describe('rupe u upisu', () => {
     const TODAY = '2026-10-27'; // utorak
     const wlogs = [
-        log('2026-10-21', 'amer', 'r9', 'v1', 'Brušenje'),           // prvi diktat Amera (sri)
-        log('2026-10-22', 'amer', 'r9', 'v1', 'Brušenje'),
-        log('2026-10-23', 'amer', 'r9', 'v1', undefined, { Entry_Source: undefined }), // ručno iz Knjige rada = potvrđeno
-        log('2026-10-24', 'kerim', 'r9', 'v1', 'Brušenje'),           // Kerimov prvi diktat (subota)
-        log('2026-10-20', 'edin', 'r9', 'v1', 'x', { Booking_Source: 'attendance', Entry_Source: undefined, Is_From_Attendance: true }),
+        log('2026-10-23', 'amer', 'r9', 'v1', undefined, { Entry_Source: undefined }),                // ručno
+        log('2026-10-23', 'edin', 'r9', 'v1', 'x', { Booking_Source: 'attendance', Entry_Source: undefined, Is_From_Attendance: true }), // iz šihtarice
+        log('2026-10-23', 'haris', 'r9', 'v1', 'x', { Work_Order_Deleted: true }),                    // obrisan nalog
+        log('2026-10-24', 'kerim', 'r9', 'v1', 'Brušenje'),
     ];
     const att = [
+        ...['amer', 'edin', 'haris'].map(w => ({ Worker_ID: w, Date: '2026-10-23', Status: 'Prisutan' })),
         { Worker_ID: 'kerim', Date: '2026-10-24', Status: 'Prisutan' },
         { Worker_ID: 'amer', Date: '2026-10-26', Status: 'Odmor' },
+        { Worker_ID: 'kerim', Date: '2026-10-26', Status: 'Prisutan' },
+        { Worker_ID: 'imer', Date: '2026-10-26', Status: 'Teren' },
     ];
     const gaps = findGaps({ today: TODAY, days: 7, workers, logs: wlogs, attendance: att });
 
-    it('prati se od prvog diktata; odsutan dan i ručni upis nisu rupe; vikend bez rada se preskače', () => {
-        expect(gaps).toEqual([{ date: '2026-10-26', workers: ['Kerim'] }]);
+    it('rupa = po šihtarici radio, a u Knjizi rada ništa; dan iz šihtarice je upisan rad', () => {
+        expect(gaps).toEqual([
+            { date: '2026-10-26', workers: ['Kerim', 'Imer'] },   // i radnik bez ijednog upisa preko Telegrama
+            { date: '2026-10-23', workers: ['Haris'] },           // Edin ima dan iz šihtarice, Amer ručni
+        ]);
     });
 
     it('subota je radni dan samo uz prisustvo', () => {

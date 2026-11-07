@@ -9,6 +9,7 @@
 import { addDays } from '@/lib/voice/dates';
 import { itemSteps } from '@/lib/materialGates';
 import { liveLogs } from '@/lib/projectFinance';
+import { aggregateLaborFromLogs } from '@/lib/laborAggregate';
 import { lastWorkDays } from '@/lib/workDiary';
 import { formatQty } from '@/lib/orderItemGroups';
 import { buildProjectHistory, type ProjectHistory } from '@/lib/projectHistory';
@@ -79,6 +80,26 @@ export async function loadFlowMaps(orgId: string, refs: { alias: string; id: str
         return { alias: ref.alias, name: ref.name, graph: o.Process_Graph, items: o.items || [] };
     });
     return flowMapsText(maps);
+}
+
+/**
+ * Novac do sada na projektu: rad po Knjizi rada + materijal iz sastavnice proizvoda. ERP sabira,
+ * model prepisuje. Prihod i profit su u ERP-u (Finansije), ovo je samo potrošeno.
+ */
+export async function projectCostLine(orgId: string, projectId: string): Promise<string> {
+    const db = adminDb();
+    const snap = await db.collection('work_order_items').where('Organization_ID', '==', orgId).where('Project_ID', '==', projectId).get();
+    const items = new Set(snap.docs.map(d => (d.data() as WorkOrderItem).ID));
+    const orderIds = Array.from(new Set(snap.docs.map(d => (d.data() as WorkOrderItem).Work_Order_ID).filter(Boolean)));
+    const logs = liveLogs((await Promise.all(orderIds.map(id => getWorkLogsForWorkOrder(orgId, id)))).flat())
+        .filter(l => !l.Work_Order_Item_ID || items.has(l.Work_Order_Item_ID));
+    const labor = Math.round(Array.from(aggregateLaborFromLogs(logs).values()).reduce((s, x) => s + x.cost, 0));
+    const products = await db.collection('products').where('Organization_ID', '==', orgId).where('Project_ID', '==', projectId).get();
+    const material = Math.round(products.docs.reduce((s, d) => {
+        const p = d.data() as { Material_Cost?: number; Quantity?: number; Status?: string };
+        return p.Status === 'Otkazano' ? s : s + (p.Material_Cost || 0) * ((p.Quantity || 0) > 0 ? p.Quantity! : 1);
+    }, 0));
+    return `Rad ${labor} KM (Knjiga rada) · materijal ${material} KM (sastavnica proizvoda) · ukupno ${labor + material} KM`;
 }
 
 /**

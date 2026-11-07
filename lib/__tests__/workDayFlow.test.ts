@@ -66,8 +66,14 @@ describe('ko je radio na čemu — dio rečenice radnika', () => {
     });
 
     it('upis Hase na Hamzinu kuhinju se odbija — on je rečen uz Lejlu i vrata', async () => {
-        const res = await runTool(env(said), 'log_work', { date: DAY, lines: [{ workers: ['W3'], orders: ['R1'] }] });
-        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Haso Mujić je u poruci rečen uz „Lejla - Ormar".*ne uz „Kovač - Kuhinja"/) });
+        // Ne na Hamzinu kuhinju — ERP ga upiše po njegovom dijelu rečenice (Lejla), uz razlog.
+        const e = env(said);
+        const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W3'], orders: ['R1'] }] });
+        // Njegov dio („na Lejli i na vratima za Hamzu") traži vrata, a nalog za vrata ne postoji → ERP nudi da ga napravi.
+        expect(res).toMatchObject({ ok: true, asked: expect.stringMatching(/^Haso: za „.*vratima.*" nema naloga\. Da ga napravim\?/) });
+        expect(e.summaries[0]).toMatch(/⚠️ Nije upisano: Haso Mujić je u poruci rečen uz „Lejla - Ormar", ne uz „Kovač - Kuhinja"/);
+        expect(logsOf('haso')).toHaveLength(0);
+        await undoTurn(e.turnId, 'u1');
     });
 
     it('„Senad" bez prezimena, a ima ih dvojica → pitanje, ne izbor', async () => {
@@ -185,7 +191,8 @@ describe('upis dana: pogrešan red ne ruši ostale, dan iz razgovora', () => {
         const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1'], orders: ['R1'] }, { workers: ['W3'], orders: ['R1'] }] });
         expect(res).toMatchObject({ ok: true, nije_upisano: [expect.stringMatching(/Haso Mujić je u poruci rečen uz „Lejla - Ormar"/)] });
         expect(logsOf('amer').length).toBeGreaterThan(0);
-        expect(logsOf('haso')).toHaveLength(0);
+        // Haso ne ide na kuhinju — ERP ga upiše po njegovom dijelu rečenice, na Lejlin nalog.
+        expect(logsOf('haso').map(l => l.Work_Order_ID)).toEqual(['rl']);
         expect(e.summaries.join('\n')).toMatch(/⚠️ Nije upisano: Haso Mujić je u poruci rečen uz „Lejla - Ormar", ne uz „Kovač - Kuhinja"\./);
         await undoTurn(e.turnId, 'u1');
     });
@@ -247,5 +254,65 @@ describe('skidanje s dana samo kad je rečeno', () => {
         expect(removalSaid(said, haso)).toBe(false);
         const res = await runTool(env(said), 'log_work', { date: DAY, clear: ['W3'] });
         expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Nije rečeno da Haso Mujić ne treba/) });
+    });
+});
+
+// Revizija 04.11. večer (izmišljena imena): „Senad uzglavlja za Lejlu" — model ga stavio na tuđi
+// nalog, red je ispao; „Amer i Edin bili na terenu (novi nalog, nazovi ga korekcije na Brdu)" —
+// novi nalog je dobio Senad, a teren je knjižen na naloge od zadnjeg dana.
+describe('teren i novi nalog iz iste poruke', () => {
+    const { nameOwners } = require('@/lib/assistant/grounding');
+
+    it('ispali radnik se upiše po svom dijelu rečenice — i na završen nalog', async () => {
+        store.set('work_orders/ru', { Work_Order_ID: 'ru', Organization_ID: 'org1', Name: 'Lejla - Uzglavlja', Status: 'Završeno', Work_Order_Type: 'Proizvodnja' });
+        store.set('work_order_items/iu', { ID: 'iu', Organization_ID: 'org1', Work_Order_ID: 'ru', Product_ID: 'u1', Product_Name: 'Uzglavlje kreveta', Project_ID: 'pl', Status: 'Završeno' });
+        const e = env('Amer je radio kuhinju za Hamzu, Senad Mehić uzglavlja za Lejlu');
+        const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1', 'W4'], orders: ['R1'] }] });
+        expect(res.ok).toBe(true);
+        expect(logsOf('amer').map(l => l.Work_Order_ID)).toEqual(['rk']);
+        expect(logsOf('senadm').map(l => l.Work_Order_ID)).toEqual(['ru']);
+        await undoTurn(e.turnId, 'u1');
+        store.delete('work_orders/ru'); store.delete('work_order_items/iu');
+    });
+
+    it('novi nalog ide radnicima uz koje je naziv rečen', async () => {
+        const said = 'Senad Mehić je radio na Lejli, a Amer i Edin su bili na terenu (možeš staviti novi razni poslovi nalog, nazovi ga korekcije na Brdu)';
+        const workers = WORKERS.map(w => ({ id: w.value.id, name: w.value.name }));
+        expect(nameOwners(said, 'korekcije na Brdu', workers)?.sort()).toEqual(['amer', 'edin']);
+        const res = await runTool(env(said), 'log_work', { date: DAY, lines: [{ workers: ['W4'], new_order: { name: 'korekcije na Brdu' } }] });
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/je rečen uz (Amer Hodžić, Edin Begić|Edin Begić, Amer Hodžić), ne uz Senad Mehić/) });
+        expect(docs('work_orders').find(w => w.Name === 'korekcije na Brdu')).toBeUndefined();
+    });
+
+    it('prisustvo ne pogađa naloge kad poruka govori o radu ili nalogu', async () => {
+        const e = env('Amer i Edin su bili na terenu, staviti novi nalog');
+        await runTool(e, 'set_presence', { date: DAY, workers: ['W1', 'W2'], status: 'Teren' });
+        expect(att('amer')[0].Status).toBe('Teren');
+        expect(logsOf('amer')).toHaveLength(0);
+        await undoTurn(e.turnId, 'u1');
+    });
+});
+
+describe('dio rečenice i puno ime (04.11. večer)', () => {
+    const workers = WORKERS.map(w => ({ id: w.value.id, name: w.value.name }));
+    const orders = [{ id: 'rkor', name: 'korekcije na Brdu' }];
+
+    it('dio radnika završava kad počne sljedeći radnik poslije njegovog posla', async () => {
+        const { workerSegment } = await import('@/lib/assistant/grounding');
+        const said = 'Haso je radio uzglavlja za Lejlu, a Amer i Edin su bili na terenu, nazovi ga korekcije na Brdu';
+        expect(workerSegment(said, workers[2], workers, orders)).toBe('haso radio uzglavlja lejlu');
+        expect(workerSegment(said, workers[0], workers, orders)).toMatch(/^amer edin bili terenu .*korekcije brdu$/);
+    });
+
+    it('drugi istog imena rečen punim imenom → golo ime je on, ovaj ispada', async () => {
+        const { shadowedNames } = await import('@/lib/assistant/grounding');
+        expect(shadowedNames('senad je radio, mislio sam na senada ibrica', ['senadm', 'senadi'], workers)).toEqual(['senadm']);
+        expect(shadowedNames('senad je radio na Lejli', ['senadm', 'senadi'], workers)).toEqual([]);
+        const e = env('Senad Ibrić i Amer su radili na Lejli');
+        const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1', 'W4', 'W5'], orders: ['R2'] }] });
+        expect(res).toMatchObject({ ok: true, nije_upisano: [expect.stringMatching(/Senad Mehić nije rečen/)] });
+        expect(logsOf('senadi').length).toBeGreaterThan(0);
+        expect(logsOf('senadm')).toHaveLength(0);
+        await undoTurn(e.turnId, 'u1');
     });
 });

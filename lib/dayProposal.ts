@@ -8,9 +8,8 @@
 //   • ko je danas odsutan (šihtarica) ili je već upisan, ne ulazi.
 // Korisnik potvrdi jednim klikom; upis ide istim putem kao diktat.
 //
-// Rupe: radni dan za koji radnik koji se prati nema potvrđen upis, a nije
-// bio odsutan. Prati se od radnikovog prvog diktata — prije toga je šihtarica
-// bila jedini izvor i tamo rupe nisu greška.
+// Rupe: radnik je po šihtarici radio, a u Knjizi rada za taj dan nema ničega.
+// Dan knjižen iz šihtarice je upisan rad, ne rupa.
 // jest: lib/__tests__/dayProposal.test.ts
 // ════════════════════════════════════════════════════════════════════
 
@@ -167,9 +166,10 @@ export function isWorkingDay(date: string, attendance: AttendanceLite[]): boolea
 }
 
 /**
- * Dani bez potvrđenog upisa u zadnjih `days` dana prije `today` (najnoviji prvi).
- * Radnik se prati od svog prvog diktata; odsutan dan nije rupa, a vikend je
- * rupa samo za radnika koji je tog dana u šihtarici prisutan.
+ * Dani u zadnjih `days` dana prije `today` (najnoviji prvi) kad je radnik po šihtarici radio,
+ * a u Knjizi rada za njega nema ničega. Dan knjižen iz šihtarice JESTE upisan rad, i kad mu
+ * proces nije potvrđen: Knjigu rada vlasnik vodi kroz šihtaricu. Ko nije označen kao prisutan
+ * ili na terenu nije rupa; važi za sve aktivne radnike, ne samo one s upisom preko Telegrama.
  */
 export function findGaps(input: {
     today: string;
@@ -179,25 +179,14 @@ export function findGaps(input: {
     attendance: AttendanceLite[];
 }): DayGap[] {
     const { today, workers, logs, attendance } = input;
-    const since = new Map<string, string>();
-    logs.filter(l => l.Entry_Source === 'telegram' && !l.Work_Order_Deleted).forEach(l => {
-        const d = day(l.Date);
-        const s = since.get(l.Worker_ID);
-        if (!s || d < s) since.set(l.Worker_ID, d);
-    });
     const gaps: DayGap[] = [];
     for (let i = 1; i <= input.days; i++) {
         const date = new Date(Date.parse(`${today}T12:00:00Z`) - i * 86_400_000).toISOString().slice(0, 10);
         if (!isWorkingDay(date, attendance)) continue;
-        const weekend = [0, 6].includes(new Date(`${date}T12:00:00Z`).getUTCDay());
         const missing = workers.filter(w => {
-            const start = since.get(w.Worker_ID);
-            if (!start || date < start) return false;
             const status = statusOf(attendance, w.Worker_ID, date);
-            if (status && ABSENT.has(status)) return false;
-            // Vikendom radi samo ko je u šihtarici prisutan; ostali nisu rupa.
-            if (weekend && !(status && PRESENT.has(status))) return false;
-            return !logs.some(l => l.Worker_ID === w.Worker_ID && day(l.Date) === date && confirmed(l));
+            if (!status || !PRESENT.has(status)) return false;
+            return !logs.some(l => l.Worker_ID === w.Worker_ID && day(l.Date) === date && !l.Work_Order_Deleted);
         });
         if (missing.length) gaps.push({ date, workers: missing.map(w => w.Name) });
     }
