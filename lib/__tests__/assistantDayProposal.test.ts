@@ -94,6 +94,9 @@ describe('prijedlog za raniji dan i preskakanje', () => {
     });
 
     it('rupa iz jutarnjeg pregleda: prijedlog za taj dan, upis s tim datumom', async () => {
+        const present = (worker: string, date: string) => store.set(`worker_attendance/${worker}-${date}`, { Organization_ID: 'org1', Worker_ID: worker, Date: date, Status: 'Prisutan' });
+        ['amer', 'edin', 'kerim'].forEach(w => present(w, '2026-10-26'));
+        ['amer', 'edin'].forEach(w => present(w, '2026-10-23'));
         const gaps = await gapsForDigest('org1', '2026-10-27');
         expect(gaps!.text).toMatch(/• pon 26\.10\. — Amer, Edin, Kerim/);
         expect(gaps!.text).toMatch(/• pet 23\.10\. — Amer, Edin/);

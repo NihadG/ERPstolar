@@ -105,6 +105,18 @@ export function workerMentioned(text: string, w: GroundRef, all?: GroundRef[]): 
     return !!all && workerNicknames(text, all).some(n => n.ids.length === 1 && n.ids[0] === w.id);
 }
 
+/**
+ * Radnik je u tekstu samo u posvojnom obliku („Tarikov projekat", „Tarikova kuća"): govori se
+ * o nečemu njegovom, a ne njemu. Takav spomen ne dodjeljuje zadatak.
+ */
+export function onlyPossessive(text: string, w: GroundRef): boolean {
+    const names = words(w.name);
+    const t = words(text);
+    const possessive = (x: string) => names.some(n => new RegExp(`^${n}(ov|ev|in)(a|o|e|u|i|og|om|oj|ih|im)?$`).test(x));
+    const has = t.filter(x => hit(x, names) || names.some(n => x.startsWith(n)));
+    return has.length > 0 && has.every(possessive);
+}
+
 /** Imena radnika koji NISU rečeni (prazno = sve u redu). „Svi" pokriva sve. */
 export function ungroundedWorkers(text: string, all: GroundRef[], ids: string[]): string[] {
     if (mentionsEveryone(text)) return [];
@@ -116,7 +128,7 @@ const GENERIC = new Set([
     'kuhinja', 'ormar', 'ormari', 'garderober', 'gardarober', 'garderoberi', 'gardaroberi', 'vrata', 'sto', 'stol', 'stolovi', 'komoda',
     'krevet', 'ostrvo', 'polica', 'police', 'element', 'elementi', 'plakar', 'kupatilo', 'regal', 'klupa', 'stolica', 'obloga',
     'dnevni', 'boravak', 'soba', 'sobi', 'djecija', 'djecijoj', 'spavaca', 'hodnik', 'ulaz', 'radni', 'ploca', 'nalog', 'montaza',
-    'izrada', 'stan', 'kuca', 'donji', 'gornji', 'visoki', 'zidni', 'tv',
+    'izrada', 'stan', 'kuca', 'donji', 'gornji', 'visoki', 'zidni', 'tv', 'projekat', 'projekt',
 ].map(w => stem(w)));
 
 const isGeneric = (w: string) => GENERIC.has(stem(w));
@@ -171,12 +183,18 @@ export function workerSegment(text: string, w: GroundRef, workers: GroundRef[], 
     const starts = workerPositions(t, w);
     if (!starts.length) return null;
     const workerAt = new Set(workers.filter(x => x.id !== w.id).flatMap(x => workerPositions(t, x)));
+    const own = new Set(workerPositions(t, w));
     const parts: string[] = [];
     for (const s of starts) {
         let end = t.length;
         let seenWork = false;
+        // Grupa imena („Amer, Edin i Senad su…") ide zajedno; sljedeći radnik POSLIJE riječi koja
+        // nije ime („Senad je radio uzglavlja…, a Amer i Edin…") počinje novi dio — i kad ERP
+        // u prvom dijelu nije prepoznao nijedan nalog (04.11.: završen nalog nije u listi).
+        let predicate = false;
         for (let i = s + 1; i < t.length; i++) {
-            if (workerAt.has(i) && seenWork) { end = i; break; }
+            if (workerAt.has(i) && (seenWork || predicate)) { end = i; break; }
+            if (!workerAt.has(i) && !own.has(i)) predicate = true;
             if (!seenWork && orders.some(o => orderMentioned(t.slice(s, i + 1).join(' '), o, orders))) seenWork = true;
         }
         parts.push(t.slice(s, end).join(' '));
@@ -230,6 +248,32 @@ export function kindConflict(text: string, w: GroundRef, workers: GroundRef[], o
     return said.length > 0 && own.length > 0 && !said.some(g => own.includes(g));
 }
 
+/**
+ * Kome je rečen naziv („Nedim je radio uzglavlja, a Amer i Edin su bili na terenu (nazovi
+ * ga korekcije na Brdu)"): grupa imena koja je zadnja ispred naziva u tekstu. null = naziv
+ * nije nađen ili ispred njega nema imena (tad se ne provjerava). 04.11.: novi nalog je
+ * otišao radniku iz prve rečenice umjesto onima uz koje je rečen.
+ */
+export function nameOwners(text: string, name: string, workers: GroundRef[]): string[] | null {
+    const t = words(text);
+    const want = words(name);
+    if (!want.length) return null;
+    const start = t.findIndex((_, i) => want.every((w, k) => t[i + k] && hit(w, [t[i + k]])));
+    if (start < 0) return null;
+    const at = (i: number) => workers.filter(w => words(w.name).some(n => hit(n, [t[i]])) || (w.aliases || []).some(a => phraseIn(a, [t[i]]))).map(w => w.id);
+    let last = -1;
+    for (let i = start - 1; i >= 0; i--) if (at(i).length) { last = i; break; }
+    if (last < 0) return null;
+    const out = new Set<string>(at(last));
+    for (let i = last - 1; i >= 0; i--) {
+        if (/^(i|a|,)$/.test(t[i])) continue;
+        const ids = at(i);
+        if (!ids.length) break;
+        ids.forEach(id => out.add(id));
+    }
+    return Array.from(out);
+}
+
 /** „Ne treba", „nije radio", „izbaci"… u blizini imena — radnika se skida s dana samo kad je to rečeno. */
 const REMOVE_SAID = /^(ne treba|nije radio|nije bio|nije dosao|nije trebao|izbaci|izbacit|ukloni|obrisi|makni|ne racunaj|ne upisuj|nikako)/;
 
@@ -243,6 +287,24 @@ export function removalSaid(text: string, w: GroundRef): boolean {
     return t.some((tok, i) => names.some(n => hit(n, [tok])) && (
         REMOVE_SAID.test(t.slice(i + 1, i + 8).join(' ').replace(/^(\w+ ){0,3}?(?=(ne treba|nije|izbac|ukloni|obrisi|makni|nikako))/, ''))
         || /\b(izbaci|ukloni|obrisi|makni|ne upisuj)\s*$/.test(t.slice(Math.max(0, i - 2), i).join(' '))));
+}
+
+/**
+ * Radnici rečeni samo imenom koje pripada drugom, punim imenom rečenom radniku („Senad Pašić …
+ * Senad je radio" — Senad Kalić nije rečen). Model zna staviti oba; ERP izbaci ovog (04.11.).
+ */
+export function shadowedNames(text: string, ids: string[], all: GroundRef[]): string[] {
+    const t = words(text);
+    const allTokens = tokens(foldText(text || ''));
+    return ids.filter(id => {
+        const w = all.find(x => x.id === id);
+        if (!w || (w.aliases || []).some(a => phraseIn(a, t)) || fullNameSaid(allTokens, words(w.name))) return false;
+        const said = words(w.name).filter(n => hit(n, t));
+        if (!said.length) return false;
+        const sharedBy = (n: string) => all.filter(x => x.id !== id && words(x.name).some(m => stem(m) === stem(n)));
+        if (said.some(n => !sharedBy(n).length)) return false;
+        return sharedBy(said[0]).some(r => fullNameSaid(allTokens, words(r.name)));
+    });
 }
 
 /** Ime i prezime rečeni jedno do drugog, bilo kojim redom („Senada Ibrića", „Ibrić Senad"). */
@@ -272,6 +334,9 @@ export function sharedFirstNames(text: string, ids: string[], all: GroundRef[]):
         const sharedBy = (n: string) => all.filter(x => x.id !== id && words(x.name).some(m => stem(m) === stem(n)));
         if (fullNameSaid(allTokens, words(w.name))) continue;
         if (said.some(n => !sharedBy(n).length)) continue;
+        // Drugi s istim imenom je rečen PUNIM imenom („mislio sam na Senada Pašića") → golo „Senad"
+        // je on, ne ovaj: nije nejasno, ovaj samo nije rečen (shadowedNames ga izbaci iz upisa).
+        if (sharedBy(said[0]).some(r => fullNameSaid(allTokens, words(r.name)))) continue;
         const rivals = sharedBy(said[0]);
         if (rivals.length && !out.some(o => o.token === said[0])) out.push({ token: said[0], ids: [id, ...rivals.map(r => r.id)] });
     }

@@ -70,7 +70,10 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Posao za radnike rečen kao „zadatak/napomena/dodaj za Amera i Edina…" — to je zadatak (i dopuna
     // postojećeg), ne bilježnica: 03.11. „u napomenu za Edina i Amera ubaciti da u E007 fali ogledalo"
     // i „dodati za Amera i Edina da ponesu U plastiku" otišli su u bilježnicu.
-    if (workerIds.length && /\b(zada[tc]\w*|napomen\w*|dodaj\w*|dodati|ubaci\w*|stavi|staviti|ponesu|ponijeti|neka)\b/.test(t)) kinds.add('task');
+    // Upis rada nije zadatak: „…bili na terenu (možeš staviti novi nalog …)" (04.11.) je postao zadatak,
+    // pa je prisustvo knjižilo naloge od zadnjeg dana. Riječ o nalogu / radu / šihtarici to isključuje.
+    const workReport = /\b(nalog\w*|sihtaric\w*|radio|radila|radili|bili na terenu|bio na terenu|bila na terenu)\b/.test(t);
+    if (workerIds.length && !workReport && /\b(zada[tc]\w*|napomen\w*|dodaj\w*|dodati|ubaci\w*|stavi|staviti|ponesu|ponijeti|neka)\b/.test(t)) kinds.add('task');
     if (/\b(naruci|naruči|narucio|naručio|narudzb|narudžb)\w*/.test(t) && !question) kinds.add('order');
     if (/\b(stig|dosa|dosl|dostav|isporuc)\w*/.test(t) && !question && !anyWorker) kinds.add('arrival');
     if (/\b(prisut|bolovanj|odmor|na terenu|nije dosao|nije došao|nisu dosli|nisu došli|odsut)\w*/.test(t) && (workerIds.length || mentionsEveryone(text))) kinds.add('presence');
@@ -82,7 +85,9 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     if (anyWorker && !kinds.has('task')
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
+    // „Ne može biti decimalni broj, ako je radni dan gotov" je o izvještaju, ne o proizvodnji.
     if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')
+        && !/^(ne moze|ne kontam|nije to|nije tacno)\b|\b(radni dan|decimal)/.test(t)
         && /\b(gotov|zavrs|napravljen|skrojen|srezan|kantiran|sklopljen|izbrusen|polakiran|zapakovan|montiran|ofarban|furniran|u toku|na (brusenj|lakiranj|kantiranj|krojenj|sklapanj|okivanj|montaz|furniranj|pakovanj|presovanj)|krenul|zapoce|zavrseno)\w*/.test(t)) kinds.add('progress');
     // Budući dan ili sat bez ičeg drugog = podsjetnik, kojim god glagolom: „Provjerit sa Senadom sutra
     // u 8 kako dovući staklo" (02.11.) nije bio ni u jednoj listi riječi, pa je bot odgovarao o staklu.

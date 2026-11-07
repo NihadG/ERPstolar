@@ -163,7 +163,21 @@ export function hasAttachmentHeader(contentType: string | undefined): boolean {
 export interface MailPart {
     filename?: string;
     mimeType?: string;
+    body?: { attachmentId?: string; size?: number };
     parts?: MailPart[];
+}
+
+/** PDF prilozi poruke (naziv, id priloga, veličina). */
+export function pdfParts(payload: MailPart | undefined): { name: string; attachmentId: string; size: number }[] {
+    const out: { name: string; attachmentId: string; size: number }[] = [];
+    const walk = (p?: MailPart) => {
+        if (!p) return;
+        const pdf = /\.pdf$/i.test(p.filename || '') || p.mimeType === 'application/pdf';
+        if (pdf && p.filename && p.body?.attachmentId) out.push({ name: p.filename, attachmentId: p.body.attachmentId, size: p.body.size || 0 });
+        (p.parts || []).forEach(walk);
+    };
+    walk(payload);
+    return out;
 }
 
 /** Imena priloga iz pune poruke. */

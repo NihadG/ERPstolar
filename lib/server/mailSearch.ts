@@ -7,9 +7,9 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { plainTextOf } from '@/lib/email/classify';
-import { attachmentNames, foundMailLines, gmailQuery, hasAttachmentHeader, unescapeSnippet, type FoundMail, type MailSearch } from '@/lib/email/search';
+import { attachmentNames, pdfParts, foundMailLines, gmailQuery, hasAttachmentHeader, unescapeSnippet, type FoundMail, type MailSearch } from '@/lib/email/search';
 import { toZoned } from '@/lib/assistant/datetime';
-import { getMessageFull, getMessageMeta, listMessageIds, mapLimit } from './gmail';
+import { getAttachment, getMessageFull, getMessageMeta, listMessageIds, mapLimit } from './gmail';
 
 export const MAX_RESULTS = 8;
 const HEADERS = ['From', 'To', 'Subject', 'Content-Type'];
@@ -60,6 +60,20 @@ async function linesFor(uid: string, ids: string[], tz: string): Promise<string[
         attachment: hasAttachmentHeader(m.headers['content-type']),
     }));
     return foundMailLines(mails, iso => toZoned(iso, tz).date);
+}
+
+/** Koliko PDF-ova jednog maila ide modelu i koliko smiju biti veliki (API prima do 32 MB, ovo čuva tokene). */
+const MAX_PDFS = 5;
+const MAX_PDF_BYTES = 8 * 1024 * 1024;
+
+/** PDF prilozi poruke kao base64; `file` = dio naziva, kad treba samo jedan. */
+export async function mailPdfs(uid: string, id: string, file = ''): Promise<{ pdfs: { name: string; data: string }[]; tooBig: string[] }> {
+    const m = await getMessageFull(uid, id);
+    const wanted = pdfParts(m.payload).filter(p => !file || p.name.toLowerCase().includes(file.toLowerCase()));
+    const tooBig = wanted.filter(p => p.size > MAX_PDF_BYTES).map(p => p.name);
+    const parts = wanted.filter(p => p.size <= MAX_PDF_BYTES).slice(0, MAX_PDFS);
+    const pdfs = await Promise.all(parts.map(async p => ({ name: p.name, data: Buffer.from(await getAttachment(uid, id, p.attachmentId)).toString('base64') })));
+    return { pdfs, tooBig };
 }
 
 /** Cijeli tekst jedne poruke (bez citata stare poruke), zaglavlja i imena priloga. */

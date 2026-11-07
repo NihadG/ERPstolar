@@ -203,7 +203,7 @@ describe('dnevni upis: cijela poruka u jednom pozivu', () => {
         const res = await runTool(env(), 'work_report', {});
         expect(res.ok).toBe(true);
         expect(res.lines).toEqual(expect.arrayContaining([
-            expect.stringMatching(/Edin \| 1 dan \| Kantiranje \| Corluka - Gardaroberi u djecijoj sobi \/ Gardarober \| upisano/),
+            expect.stringMatching(/Edin \| 1 dan \| Corluka - Gardaroberi u djecijoj sobi .*\| Kantiranje \| Gardarober \| upisano/),
         ]));
         const kuhinja = await runTool(env(), 'work_report', { work: 'kuhinja Čorluka' });
         expect((kuhinja.lines as string[]).every(l => /Kuhinja/.test(l))).toBe(true);

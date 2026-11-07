@@ -36,16 +36,17 @@ import {
 } from '@/lib/server/workDiary';
 import { clearWorkerDay, markPresence } from '@/lib/server/presence';
 import { createBotWorkOrder } from '@/lib/server/fieldWorkOrders';
-import { mentionsEveryone, orderMentioned, ordersForWorker, sharedFirstNames, titleSaid, workerSegment, kindConflict, removalSaid, ungroundedOrders, ungroundedWorkers, workerNicknames, workSaid } from './grounding';
-import { getOpenWorkOrderIdsForProject, loadProjectHistory, orderStatusLines } from './orderStatus';
+import { mentionsEveryone, onlyPossessive, orderMentioned, ordersForWorker, sharedFirstNames, titleSaid, workerSegment, kindConflict, removalSaid, nameOwners, shadowedNames, ungroundedOrders, ungroundedWorkers, workerNicknames, workSaid } from './grounding';
+import { getOpenWorkOrderIdsForProject, loadProjectHistory, orderStatusLines, projectCostLine } from './orderStatus';
 import { projectBriefText } from '@/lib/server/projectBrief';
-import { readMail, searchMail } from '@/lib/server/mailSearch';
+import { mailPdfs, readMail, searchMail } from '@/lib/server/mailSearch';
 import { loadMailPeople } from '@/lib/server/mailDirectory';
 import { searchPeople } from '@/lib/email/directory';
 import { dayLabel, diarySummary, presenceSummary, progressStepsSummary } from './diaryText';
 import { coverage } from '@/lib/workDiary';
 import { projectHistoryLines } from '@/lib/projectHistory';
 import { learnedAliases } from '@/lib/processVocabulary';
+import { workReportLines, workReportSummary } from '@/lib/workReport';
 import { aliasesOf, bestVocab, EXPIRES_DAYS, type VocabEntry, type VocabKind } from './vocab';
 import { learnVocab } from './vocabStore';
 import { arrivalDay, gatesForProjects, gatesText, loadStockRules, receiveArrival, receiveByName } from './materialAlerts';
@@ -124,6 +125,8 @@ export const TOOLS: Anthropic.Tool[] = [
                     items: { type: 'object', properties: { find: str, text: str }, required: ['find', 'text'] },
                 },
                 clear_notes: { ...bool, description: '„Izbaci/obriši bilješke/napomene iz zadatka" → true.' },
+                no_project: { ...bool, description: '„Nije vezano za projekat" → true: zadatak se odvoji od projekta.' },
+                no_worker: { ...bool, description: '„Nije za njega", „to je za mene" → true: zadatak se odvoji od radnika.' },
             },
             required: ['task'],
         },
@@ -578,6 +581,18 @@ export const TOOLS: Anthropic.Tool[] = [
         },
     },
     {
+        name: 'read_mail_pdf',
+        description: 'Pročitaj PDF priloge jednog maila (računi, predračuni, ponude, zapisnici): stavke, cijene, količine, napomene. id iz [id …] pretrage search_mail. Kad mail ima prilog, NIKAD ne traži od korisnika da ga pošalje ili prepiše — pročitaj ga ovdje.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                id: { ...str, description: 'id maila iz [id …].' },
+                file: { ...str, description: 'Dio naziva priloga, kad treba samo jedan (neobavezno).' },
+            },
+            required: ['id'],
+        },
+    },
+    {
         name: 'save_contact',
         description: 'Novi kontakt: „sačuvaj Marka iz Okova, marko@okovi.ba, komercijalista". Adresa mora biti napisana u poruci. supplier = naziv dobavljača iz ERP-a kad osoba radi kod dobavljača.',
         input_schema: {
@@ -704,6 +719,8 @@ export interface ToolEnv {
     refNotes?: string[];
     /** Tekst pročitan ovom porukom (cijeli mailovi) i ranije u razgovoru — izvor za tabelu „iz teksta". */
     readTexts?: string[];
+    /** Pročitan PDF prilog: njegov tekst ERP nema, pa tabela iz teksta ne može biti provjerena riječ po riječ. */
+    pdfRead?: boolean;
     /** Poruka kaže ko je na čemu radio (namjera „rad") — prisustvo tad ne knjiži po šihtarici. */
     workInMessage?: boolean;
     /** Dan iz razgovora (session.focus.workDay), kad ova poruka ne kaže dan — pickWorkDate. */
@@ -775,7 +792,7 @@ export function fieldHint(name: string, args: Record<string, unknown>): string |
     return unknown.length ? `Poslana polja koja ${name} ne zna: ${unknown.join(', ')}. Polja ovog alata: ${known.join(', ')} — ponovi s tim nazivima.` : null;
 }
 
-export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail', 'task_detail', 'task_pdf']);
+export const READ_TOOLS = new Set(['search_memory', 'find_material', 'product_materials', 'list_orders', 'work_report', 'order_status', 'material_status', 'project_brief', 'project_history', 'list_notebook', 'make_table', 'find_contact', 'search_mail', 'read_mail_pdf', 'task_detail', 'task_pdf']);
 
 /** Spisak (i tabela) koji složi ERP ide korisniku kakav jeste — bez drugog poziva modela. */
 export const DISPLAY_TOOLS = new Set(['list_notebook', 'make_table', 'task_pdf']);
@@ -837,9 +854,11 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         return { ok: false, error: `Naslov „${title}" nije iz poruke korisnika. Naslov složi samo od onoga što je rečeno u ovoj poruci (ne iz ranijeg razgovora).` };
     }
     const category = oneOf<TaskCategory>(a.category, CATEGORIES, 'general');
-    const worker = resolveAlias(env.ctx.workers, a.worker);
+    const said = resolveAlias(env.ctx.workers, a.worker);
+    // „Pogledati Tarikov projekat" je o njemu, ne za njega: posvojni oblik ne dodjeljuje zadatak.
+    const worker = said && env.groundText !== undefined && onlyPossessive(env.messageText ?? env.groundText, said) ? null : said;
     const named = resolveAlias(env.ctx.projects, a.project);
-    if (a.worker && !worker) return { ok: false, error: `Radnik ${String(a.worker)} ne postoji u listi.` };
+    if (a.worker && !said) return { ok: false, error: `Radnik ${String(a.worker)} ne postoji u listi.` };
     if (a.project && !named) return { ok: false, error: `Projekat ${String(a.project)} ne postoji u listi.` };
     // Projekat koji korisnik nije rekao se ne veže („završna ploča od Kerrocka" uz Budnju ≠ Čorluka).
     const project = named && projectSaid(env, named) ? named : null;
@@ -983,6 +1002,15 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     // Napomena u zadatku je korisnikov tekst (vidi se i na štampi): samo kad ju je tražio.
     // 04.11. bot je uz svaku izmjenu dopisivao „Izmjena: …", pa lista nije mogla na print.
+    if (a.no_project === true && (task.Links || []).some(l => l.Entity_Type === 'project')) {
+        patch.Links = (task.Links || []).filter(l => l.Entity_Type !== 'project');
+        did.push('odvojen od projekta');
+    }
+    if (a.no_worker === true && task.Assigned_Worker_ID) {
+        patch.Assigned_Worker_ID = '';
+        patch.Assigned_Worker_Name = '';
+        did.push('odvojen od radnika');
+    }
     if (a.clear_notes === true) { patch.Notes = ''; did.push('napomene obrisane'); }
     else if (text(a.note) && (env.groundText === undefined || NOTE_SAID.test(foldText(env.groundText)))) {
         const line = `[${shortDay(env.now.toISOString(), env.tz)}] ${text(a.note, 500)}${env.reporter !== 'ja' ? ` (${env.reporter})` : ''}`;
@@ -1891,6 +1919,16 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         if (!ids.length || ids.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(l.workers)} ne postoji u listi.` };
         // Isto ime dvojice bez prezimena: ostalo se upiše, za njega ERP pita dugmadima (izbor nosi __chosen).
         const chosen = new Set((Array.isArray(l.__chosen) ? l.__chosen : []).map(String));
+        // „Senad Pašić" rečen punim imenom → drugi Senad u istom redu nije rečen, ispada.
+        if (env.groundText !== undefined) {
+            const shadow = shadowedNames(env.workerGround ?? env.groundText, (ids as string[]).filter(id => !chosen.has(id)), workerRefs(env));
+            if (shadow.length) {
+                const nm = (id: string) => env.ctx.workers.find(w => w.value.id === id)?.value.name || id;
+                skippedPairs.push(`Upis odbijen: ${shadow.map(nm).join(', ')} nije rečen — ime je rečeno uz drugo prezime.`);
+                ids = ids.filter(id => !shadow.includes(id as string));
+                if (!ids.length) continue;
+            }
+        }
         const vague = sharedFirstNames(env.workerGround ?? env.groundText ?? '', (ids as string[]).filter(id => !chosen.has(id)), workerRefs(env))[0];
         if (vague && env.groundText !== undefined) {
             if (!deferred.some(d => d.token === vague.token)) deferred.push({ raw: l, token: vague.token, ids: vague.ids });
@@ -1918,6 +1956,15 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
             continue;
         }
         // Nalog ne postoji, a rečeno je da se napravi (ili je izabrano ERP-ovo dugme „➕ Nalog …").
+        // Novi nalog ide radnicima uz koje je naziv rečen, ne prvom redu koji ga model zakači.
+        if (l.new_order && typeof l.new_order === 'object' && (l.new_order as Args).__button !== true) {
+            const owners = nameOwners(env.groundText ?? env.messageText ?? '', text((l.new_order as Args).name, 90), workerRefs(env));
+            const strangers = owners ? (ids as string[]).filter(id => !owners.includes(id)) : [];
+            if (owners && strangers.length) {
+                const nm = (id: string) => env.ctx.workers.find(w => w.value.id === id)?.value.name || id;
+                return { ok: false, error: `Nalog „${text((l.new_order as Args).name, 90)}" je rečen uz ${owners.map(nm).join(', ')}, ne uz ${strangers.map(nm).join(', ')}. Stavi new_order u red tih radnika; ostale upiši na njihove naloge.` };
+            }
+        }
         const fresh = l.new_order && typeof l.new_order === 'object' ? await newOrderFor(env, l.new_order as Args) : null;
         if (fresh && 'error' in fresh) return { ok: false, error: fresh.error };
         const aliases = fresh ? [`@${fresh.id}`] : [...(text(l.order, 8) ? [l.order] : []), ...(Array.isArray(l.orders) ? l.orders : [])];
@@ -1949,6 +1996,15 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
                 skippedPairs.push(...pairs.map(p => p.message));
                 const bad = new Set(pairs.flatMap(p => p.workerIds));
                 ids = ids.filter(id => !bad.has(id as string));
+                // Ispali radnik dobija SVOJ red: posao iz njegovog dijela rečenice, bez naloga — ERP
+                // nađe nalog (i završen) ili ponudi novi. 04.11.: „Nedim uzglavlja za Kladanj" je samo ispao.
+                if (l.__retry !== true) {
+                    for (const id of Array.from(bad)) {
+                        const work = ownWork(env, id);
+                        const alias = env.ctx.workers.find(w => w.value.id === id)?.alias;
+                        if (work && alias) rawLines.push({ workers: [alias], work, __retry: true });
+                    }
+                }
             }
             if (!ids.length) continue;
         }
@@ -2174,7 +2230,7 @@ async function projectProducts(env: ToolEnv, projectId: string, said: string[]):
 }
 
 /** „Napravi (novi) nalog", „otvori nalog", „to je nov nalog" — tek tad model smije new_order. */
-const NEW_ORDER_SAID = /\b(napravi\w*|otvori\w*|kreiraj\w*|dodaj|novi|nov|nova)\s+(\w+\s+){0,2}nalog\w*|\bnov\w* nalog\w*/;
+const NEW_ORDER_SAID = /\b(napravi\w*|otvori\w*|kreiraj\w*|dodaj|kreni|pokreni|zapocni|novi|nov|nova)\s+(\w+\s+){0,3}nalog\w*|\bnov\w* nalog\w*/;
 
 /** Napravi nalog iz `new_order` (rečeno ili izabrano dugmetom); isti naziv u istoj poruci = isti nalog. */
 async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | { error: string }> {
@@ -2252,6 +2308,8 @@ async function newOrderQuestion(env: ToolEnv, raw: Args, rest: Args[], date: str
  */
 function orderOf(env: ToolEnv, alias: unknown): string | null {
     if (typeof alias === 'string' && alias.startsWith('@') && alias.length > 1) return alias.slice(1);
+    // Nalog napravljen ovom porukom još nije u listi: „napravi nalog X i popuni mu prazne dane".
+    if (typeof alias === 'string' && env.newOrders?.[foldText(alias)]) return env.newOrders[foldText(alias)];
     return resolveAlias(env.ctx.orders || [], alias)?.id ?? resolveAlias(env.diaryCandidates || [], alias);
 }
 
@@ -2354,15 +2412,11 @@ async function workReportTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (worker) rows = rows.filter(r => r.workerId === worker.id);
     // Sve riječi posla moraju se naći („kuhinja Čorluka" ne smije uhvatiti gardarobere Čorluke).
     if (work) rows = rows.filter(r => coverage(work, `${r.workOrderName} ${r.productName} ${r.projectName}`) >= 0.75);
-    const lines = rows.slice(0, 80).map(r => [
-        shortDay(`${r.date}T12:00:00Z`, env.tz), r.worker, dayLabel(r.dayFraction), r.process || 'bez procesa',
-        `${r.workOrderName}${r.productName && r.productName !== r.workOrderName ? ` / ${r.productName}` : ''}`,
-        r.confirmed ? 'upisano' : 'auto iz prisustva',
-    ].join(' | '));
+    const all = workReportLines(rows);
     return {
-        ok: true, from, to, total: rows.length, lines,
-        ...(rows.length > 80 ? { note: `Prikazano 80 od ${rows.length}. Suzi period ili posao.` } : {}),
-        legend: '„auto iz prisustva" = dan podijeljen automatski, proces nije potvrđen.',
+        ok: true, from, to, zbir: workReportSummary(rows), lines: all.slice(0, 60),
+        ...(all.length > 60 ? { note: `Prikazano 60 od ${all.length} redova. Suzi period ili posao.` } : {}),
+        legend: 'Brojeve dana prepiši iz „zbir" — ERP ih je sabrao, ne računaj sam. „auto iz prisustva" = dan podijeljen automatski, proces nije potvrđen.',
     };
 }
 
@@ -2513,6 +2567,21 @@ async function emailContactTool(env: ToolEnv, a: Args): Promise<ToolResult> {
  * projekta (njegovi ljudi + naziv) i vrati kratke redove; `id` čita jednu
  * poruku cijelu. Samo čitanje — ništa se u Gmailu ne mijenja.
  */
+/** PDF prilozi maila idu modelu kao dokumenti (brain.ts); za tabelu „iz teksta" važe kao pročitano. */
+async function readMailPdfTool(env: ToolEnv, a: Args): Promise<ToolResult> {
+    const id = text(a.id, 40);
+    if (!/^[0-9a-f]{8,32}$/i.test(id)) return { ok: false, error: 'id je oznaka iz [id …] u rezultatu pretrage.' };
+    try {
+        const { pdfs, tooBig } = await mailPdfs(env.uid, id, text(a.file, 80));
+        if (!pdfs.length) return { ok: false, error: tooBig.length ? `Prilog je prevelik za čitanje: ${tooBig.join(', ')}.` : 'Ovaj mail nema PDF priloga.' };
+        env.pdfRead = true;
+        noteRefs(env, [`pročitan PDF prilog maila [id ${id}]: ${pdfs.map(p => p.name).join(', ')}`]);
+        return { ok: true, files: pdfs.map(p => p.name), ...(tooBig.length ? { preveliki: tooBig } : {}), note: MAIL_IS_DATA, __documents: pdfs };
+    } catch (e) {
+        return emailToolError(e);
+    }
+}
+
 async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const id = text(a.id, 40);
     try {
@@ -3021,6 +3090,19 @@ async function materialArrivedTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 // ─── Utemeljenost: upisuje se samo rečeno ─────────────────────────────
 
 /** null = sve rečeno; inače poruka modelu zašto je upis odbijen. */
+/** Posao iz radnikovog dijela rečenice, bez imena radnika („nedim uzglavlja za kladanj" → „uzglavlja kladanj"). */
+function ownWork(env: ToolEnv, id: string): string {
+    const said = env.groundText ?? env.messageText;
+    const refs = workerRefs(env);
+    const w = refs.find(r => r.id === id);
+    if (!said || !w) return '';
+    const vocab = env.ctx.vocab || [];
+    const orders = (env.ctx.orders || []).map(o => ({ id: o.value.id, name: o.value.name, aliases: aliasesOf(vocab, 'order', o.value.id) }));
+    const seg = (workerSegment(said, w, refs, orders) || '').split(' . ')[0];
+    const names = new Set(refs.flatMap(r => tokens(foldText(r.name))).map(stem));
+    return seg.split(' ').filter(x => !names.has(stem(x)) && !/^(je|su|radio|radila|radili|na|za|i|a)$/.test(x)).join(' ').slice(0, 120);
+}
+
 function workerRefs(env: ToolEnv) {
     return env.ctx.workers.map(w => ({ id: w.value.id, name: w.value.name, aliases: aliasesOf(env.ctx.vocab || [], 'worker', w.value.id) }));
 }
@@ -3138,7 +3220,11 @@ async function setPresenceTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     const befores = new Map<string, Record<string, unknown> | null>();
     const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
-    const rows = await markPresence(env.orgId, { workerIds: ids, status, date, ...(env.workInMessage ? { book: false } : {}) }, track);
+    // Naloge od zadnjeg dana prisustvo pogađa samo za golo „prisutni su": ne kad je u poruci rad,
+    // nalog ili je ista poruka već upisala rad (04.11.: „bili na terenu (novi nalog …)" → Jerkini nalozi).
+    const noGuess = env.workInMessage || !!env.presenceDay
+        || /\b(nalog\w*|radio|radila|radili|sihtaric\w*)\b/.test(foldText(env.messageText || ''));
+    const rows = await markPresence(env.orgId, { workerIds: ids, status, date, ...(noGuess ? { book: false } : {}) }, track);
     const label = `prisustvo ${shortDay(`${date}T12:00:00Z`, env.tz)}`;
     await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
@@ -3309,7 +3395,8 @@ async function projectHistoryTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         first_work: history.span?.first || null,
         last_work: history.span?.last || null,
         lines: projectHistoryLines(history, label),
-        note: 'PRVI dan rada je početak (first_work), ZADNJI je zadnji upis. Odgovori tačno na pitanje, kratko.',
+        ...(project ? { trosak: await projectCostLine(env.orgId, project.id) } : {}),
+        note: 'PRVI dan rada je početak (first_work), ZADNJI je zadnji upis. „trosak" je ERP-ov zbir: prepiši ga, ne računaj. Odgovori tačno na pitanje, kratko.',
     };
 }
 
@@ -3452,7 +3539,7 @@ function textTable(env: ToolEnv, a: Args): ToolResult {
         .map(r => columns.map((_, i) => r[i] || ''));
     if (!rows.length) return { ok: false, error: 'tekst: nema redova (rows).' };
     const corpus = new Set(tokens(foldText([...(env.readTexts || []), env.talkText || ''].join('\n'))).map(stem));
-    const missing = rows.filter(r => {
+    const missing = env.pdfRead ? [] : rows.filter(r => {
         const w = tokens(foldText(r.join(' '))).filter(x => x.length >= 3);
         return w.length > 0 && w.filter(x => corpus.has(stem(x))).length / w.length < TEXT_ROW_SHARE;
     });

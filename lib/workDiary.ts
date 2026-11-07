@@ -12,7 +12,7 @@
 // Upis u bazu radi lib/server/workDiary.ts.
 // ════════════════════════════════════════════════════════════════════
 
-import { foldText, stem, tokens } from './voice/text';
+import { editDistance, foldText, stem, tokens } from './voice/text';
 import { tokenSimilarity } from './voice/match';
 import { nodeMatchesProcess } from './productProcesses';
 import { STANDARD_RENAMES } from './processStandard';
@@ -132,9 +132,11 @@ function processCoverage(query: string, haystack: string): number {
         while (i < a.length && i < b.length && a[i] === b[i]) i++;
         return i >= Math.max(4, Math.floor(Math.min(a.length, b.length) / 2));
     };
+    // Tipfeler, ne slična riječ: „stolovi" i „štokova" su sličnog početka, a drugo su.
+    const typo = (a: string, b: string) => tokenSimilarity(a, b) >= 0.82 && editDistance(a, b) <= (Math.min(a.length, b.length) >= 8 ? 2 : 1);
     let hit = 0;
     for (const w of q) {
-        if (h.some(x => x === w || stem(x) === stem(w) || tokenSimilarity(w, x) >= 0.82 || root(w, x))) hit++;
+        if (h.some(x => x === w || stem(x) === stem(w) || typo(w, x) || root(w, x))) hit++;
     }
     return hit / q.length;
 }

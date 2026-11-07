@@ -563,6 +563,8 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         ...(talkWorkDay ? { talkWorkDay } : {}),
         workerGround: [
             ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-3).map(t => t.text),
+            // „On i Haso…": zamjenica govori o radniku iz botovog zadnjeg odgovora.
+            ...(PRONOUN.test(foldText(message)) ? history.filter(t => t.role === 'model').slice(-1).map(t => t.text) : []),
             ...(input.session.pending?.options || []),
             message, pre.text,
         ].join('\n'),
@@ -761,7 +763,14 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
                 toolCalls.push(toolCallLog(use.name, use.input, out));
                 if (out.ok === false) allOk = false;
                 else usedInputs.push(JSON.stringify(use.input || {}));
-                results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), ...(out.ok === false ? { is_error: true } : {}) });
+                const { __documents: pdfs, ...plain } = out as typeof out & { __documents?: { name: string; data: string }[] };
+                results.push({
+                    type: 'tool_result', tool_use_id: use.id,
+                    content: pdfs?.length
+                        ? [{ type: 'text', text: JSON.stringify(plain) }, ...pdfs.map(p => ({ type: 'document' as const, title: p.name, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: p.data } }))]
+                        : JSON.stringify(plain),
+                    ...(out.ok === false ? { is_error: true } : {}),
+                });
             }
             // Pitanje (modelovo ili ERP-ovo s dugmadima) zaustavlja krug do odgovora.
             if (env.question || env.erpQuestion) break;
@@ -846,7 +855,7 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
     // Tekst tvrdi upis, a upisa nema — korisnik to mora vidjeti, ne lažnu potvrdu.
     // … ili poruka traži upis, a ni poslije ponovnog kruga ništa nije upisano.
     // (Na pitanje model smije reći „upisano je 22.10." — to je odgovor iz podataka.)
-    if (!env.changes.length && ((claimsWrite(modelText) && !(isQuestion || readUsed && !intent.expectsWrite))
+    if (!env.changes.length && !env.tables?.length && !env.documents?.length && ((claimsWrite(modelText) && !(isQuestion || readUsed && !intent.expectsWrite))
         || (!modelText && !env.summaries.length)
         || (guarded && !writeAttempted && intent.expectsWrite && !asksBack(modelText)))) {
         const msg = '⚠️ Ništa nije upisano — poruka nije razvrstana kako treba.\nPritisni „Pokušaj ponovo" ili je reci drugačije.';
@@ -935,6 +944,9 @@ export async function runPendingAction(input: {
     };
 }
 
+
+/** Zamjenica za osobu: poruka se naslanja na onog o kome je bot upravo govorio. */
+const PRONOUN = /\b(on|ona|oni|one|njega|njemu|nju|njoj|njih|njima|obojica|oba)\b/;
 
 const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
 
