@@ -40,6 +40,10 @@ export interface AssistantLink {
     digestDate?: string;
     /** Zadnji dan (lokalno) kad je poslan večernji prijedlog rada. */
     proposalDate?: string;
+    /** Termini 10:30 (a) i 14:30 (b): zadnji dan slanja, zadnja poruka i niz termina bez ijednog dodira. */
+    slotDates?: { a?: string; b?: string };
+    lastSlotId?: string;
+    slotMisses?: number;
 }
 
 export async function getLinkByTelegramId(telegramUserId: number): Promise<AssistantLink | null> {
@@ -59,6 +63,10 @@ export async function listLinks(): Promise<AssistantLink[]> {
 
 export async function setDigestDate(telegramUserId: number, date: string): Promise<void> {
     await adminDb().collection(COLLECTIONS.ASSISTANT_LINKS).doc(String(telegramUserId)).update({ digestDate: date });
+}
+
+export async function setSlotSent(telegramUserId: number, patch: Pick<AssistantLink, 'slotDates'> & Partial<Pick<AssistantLink, 'lastSlotId' | 'slotMisses'>>): Promise<void> {
+    await adminDb().collection(COLLECTIONS.ASSISTANT_LINKS).doc(String(telegramUserId)).update(patch);
 }
 
 export async function setProposalDate(telegramUserId: number, date: string): Promise<void> {
@@ -390,8 +398,9 @@ export async function undoTurn(turnId: string, uid: string): Promise<string[]> {
     const sent = new Set<string>();
     for (const op of ops) {
         if (op.before || !op.path.startsWith('orders/')) continue;
-        const order = (await db.doc(op.path).get()).data() as { Order_ID?: string; Status?: string } | undefined;
-        if (order?.Order_ID && order.Status !== 'Nacrt') sent.add(order.Order_ID);
+        const order = (await db.doc(op.path).get()).data() as { Order_ID?: string; Status?: string; Quick?: boolean } | undefined;
+        // Javljena narudžba (termin) nema stavki ni količina na materijalima — briše se bez posljedica.
+        if (order?.Order_ID && order.Status !== 'Nacrt' && !order.Quick) sent.add(order.Order_ID);
     }
 
     // Ista poruka je možda mijenjala i sastavnicu (višak, novi materijal) — ni

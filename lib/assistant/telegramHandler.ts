@@ -32,6 +32,7 @@ import { memoryButtonState } from './tools';
 import { loadNames } from './context';
 import { assistantTimezone, formatReminder, toZoned } from './datetime';
 import { createProposalMessage, handleProposalButton } from './dayProposals';
+import { consumeSlotText, handleSlotButton } from './slotRun';
 import { shortDate } from './dayProposalText';
 import { isIsoDate } from '@/lib/voice/dates';
 import { buildOpenMemory, buildTodayDigest } from './digest';
@@ -189,6 +190,14 @@ async function handleMessage(inc: MessageIncoming, link: AssistantLink): Promise
     }
 
     if (await consumeDraftText(inc.chatId, link, text)) return;
+    // Rečenica poslije „Novi posao" u terminu (10:30 / 14:30) ide terminu, ne modelu.
+    const slot = await consumeSlotText(link, text, new Date(), assistantTimezone()).catch(e => { console.error('[slots] rečenica:', e); return null; });
+    if (slot) {
+        if (heard) await sendMessage(inc.chatId, `🎙 „${heard}"`);
+        if (slot.messageId) await editMessageText(slot.chatId, slot.messageId, slot.text, slot.buttons);
+        else await sendMessage(inc.chatId, slot.text, slot.buttons);
+        return;
+    }
 
     const session = await getSession(inc.chatId);
     // „loše: …" kao odgovor na poruku bota (ili samo s tom riječi) = napomena za reviziju, ne naredba.
@@ -485,7 +494,16 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
         return;
     }
 
-    if (kind === 'done' || kind === 'snz') {
+    // Termin (10:30 / 14:30): spisak se mijenja na istoj poruci — bez modela.
+    if (kind === 'sl') {
+        const out = await handleSlotButton(link, arg, extra, new Date(), tz, inc.data.split(':')[3]);
+        await answerCallbackQuery(inc.callbackId, out.toast);
+        if (out.text) await editMessageText(inc.chatId, inc.messageId, out.text, out.buttons);
+        if (out.extra) await sendMessage(inc.chatId, out.extra.text, out.extra.buttons);
+        return;
+    }
+
+    if (kind === 'done' || kind === 'snz' || kind === 'rpoff') {
         let ref;
         try {
             ref = await taskRef(link.orgId, arg);
@@ -494,6 +512,20 @@ async function handleCallback(inc: CallbackIncoming, link: AssistantLink): Promi
             return;
         }
         const task = (await ref.get()).data() as Task;
+        if (kind === 'rpoff') {
+            // Gasi raspored; zadatak ostaje (vidi se u Zadacima), bez daljih podsjetnika.
+            await ref.update({ Reminder_Repeat: null, Reminder_Pending: false });
+            await answerCallbackQuery(inc.callbackId, 'Više se ne ponavlja');
+            await editMessageText(inc.chatId, inc.messageId, `${inc.messageText}\n\n🔕 Više se ne ponavlja`);
+            return;
+        }
+        // Ponavljajući: „Urađeno" vrijedi za danas — raspored ostaje, sljedeći termin je već zakazan.
+        if (kind === 'done' && task.Reminder_Repeat) {
+            const next = task.Reminder_Pending && task.Reminder_At ? formatReminder(task.Reminder_At, tz) : null;
+            await answerCallbackQuery(inc.callbackId, 'Označeno za danas');
+            await editMessageText(inc.chatId, inc.messageId, `✅ Urađeno: ${task.Title}${next ? `\n🔁 Sljedeći put: ${next}` : ''}`);
+            return;
+        }
         if (kind === 'done') {
             await setTaskStatus(link.orgId, arg, true);
             await answerCallbackQuery(inc.callbackId, task.Chat_Message ? 'Označeno kao poslano' : 'Označeno kao urađeno');

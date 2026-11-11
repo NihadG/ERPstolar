@@ -17,6 +17,7 @@ import { foldText, tokens, stem } from '@/lib/voice/text';
 import { findItem, sameItem, sortByFlat } from './checklistOrder';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
 import { formatReminder, resolveReminderAt, toZoned, zonedToUtcMs } from './datetime';
+import { firstOccurrence, parseRepeat, repeatLabel } from './repeat';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
 import { memoryLine, taskLine } from './prompt';
 import { getAllTasks, getItemsForWorkOrders } from '@/lib/server/fieldRepo';
@@ -88,7 +89,7 @@ const enumOf = (values: string[]) => ({ type: 'string', enum: values }) as const
 export const TOOLS: Anthropic.Tool[] = [
     {
         name: 'create_task',
-        description: 'Novi zadatak ili podsjetnik u ERP Zadacima. Za podsjetnik obavezno reminder_at.',
+        description: 'Novi zadatak ili podsjetnik u ERP Zadacima. Za podsjetnik obavezno reminder_at (prvi termin). Ponavljanje („svaki dan", „radnim danima", „petkom", „svaki mjesec") ERP prepozna sam iz poruke — JEDAN poziv, ne po jedan podsjetnik za svaki dan.',
         input_schema: {
             type: 'object',
             properties: {
@@ -127,6 +128,7 @@ export const TOOLS: Anthropic.Tool[] = [
                 clear_notes: { ...bool, description: '„Izbaci/obriši bilješke/napomene iz zadatka" → true.' },
                 no_project: { ...bool, description: '„Nije vezano za projekat" → true: zadatak se odvoji od projekta.' },
                 no_worker: { ...bool, description: '„Nije za njega", „to je za mene" → true: zadatak se odvoji od radnika.' },
+                stop_repeat: { ...bool, description: '„Prestani me podsjećati", „ne ponavljaj više" → true: ponavljajući podsjetnik se gasi.' },
             },
             required: ['task'],
         },
@@ -821,6 +823,8 @@ function checklistOf(v: unknown): string[] {
 const NOTE_SAID = /\b(napomen\w*|biljesk\w*|zabiljezi|zapisi|napisi u|dopisi)\b/;
 
 /** Rečeno je da zadatak otpada: „otkaži", „ne treba", „obriši", „zatvori", „poništi"… */
+/** Gašenje ponavljajućeg podsjetnika mora biti rečeno. */
+export const STOP_REPEAT_SAID = /\b(prestan\w*|ne ponavlj\w*|bez ponavljanja|vise ne\b|nemoj vise|ne treba vise|ugasi\w*|iskljuci\w*|stop\w*|dosta|samo (jednom|danas|sutra))\b/;
 const CANCEL_SAID = /\b(otkaz\w*|otkazi|ne treba|nece trebati|otpad\w*|obrisi|izbrisi|brisi|zatvori|ponisti|storn\w*|nema potrebe|ukini|makni)\b/;
 
 /** Isti naslov napravljen u ovom roku je isti zadatak (ispravka, ponovljena poruka). */
@@ -864,12 +868,16 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const project = named && projectSaid(env, named) ? named : null;
 
     const wantsReminder = !!text(a.reminder_at) || category === 'reminder';
-    const reminder = wantsReminder
+    const resolved = wantsReminder
         ? resolveReminderAt({ text: env.dateText, now: env.now, tz: env.tz, modelLocal: text(a.reminder_at) || null })
         : null;
-    if (wantsReminder && !reminder) {
+    if (wantsReminder && !resolved) {
         return { ok: false, error: 'Vrijeme podsjetnika je nejasno ili u prošlosti. Pitaj korisnika kada (ask_user).' };
     }
+    // Ponavljanje („svaki dan u 7", „radnim danima", „petkom") čita ERP iz ove poruke, ne model.
+    const repeat = resolved ? parseRepeat(env.dateText, resolved.time, resolved.date) : null;
+    const firstIso = resolved && repeat ? firstOccurrence(repeat, resolved.iso, env.tz) : resolved?.iso;
+    const reminder = resolved && firstIso ? { iso: firstIso, date: toZoned(firstIso, env.tz).date } : null;
     const dueDate = isIsoDate(a.due_date) ? a.due_date : reminder?.date;
 
     // Isti zadatak već postoji (isti naslov, isto vrijeme ili napravljen maloprije) → ne pravi drugi.
@@ -895,6 +903,7 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         checklist: Array.isArray(a.checklist) ? checklistOf(a.checklist) : undefined,
         links: project ? [projectLink(project)] : [],
         reminderAt: reminder?.iso,
+        reminderRepeat: repeat || undefined,
         source: 'telegram',
         sourceEntryId: env.entryId,
         createdByUid: env.uid,
@@ -906,8 +915,10 @@ async function createTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const alias = `T${env.ctx.tasks.length + 1}`;
     env.ctx.tasks.push({ alias, value: created });
     env.created.taskIds.push(taskId);
-    env.changes.push(`zadatak „${title}"`);
-    const reminderLabel = reminder ? formatReminder(reminder.iso, env.tz, env.now) : undefined;
+    env.changes.push(`zadatak „${title}"${repeat ? ` (ponavlja se: ${repeatLabel(repeat)} u ${repeat.Time})` : ''}`);
+    const reminderLabel = reminder
+        ? `${formatReminder(reminder.iso, env.tz, env.now)}${repeat ? `, pa ${repeatLabel(repeat)} u ${repeat.Time} 🔁` : ''}`
+        : undefined;
     env.summaries.push([
         `✅ ${title}${reminderLabel ? ` — ${reminderLabel}` : dueDate ? ` — rok ${dueDate}` : ''}${worker ? ` · ${worker.name}` : ''}`,
         ...(project ? [`📁 ${projectLabel(project)}`] : []),
@@ -955,10 +966,24 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (text(a.reminder_at)) {
         const r = resolveReminderAt({ text: env.dateText, now: env.now, tz: env.tz, modelLocal: text(a.reminder_at) });
         if (!r) return { ok: false, error: 'Novo vrijeme je nejasno ili u prošlosti. Pitaj korisnika (ask_user).' };
+        // „Neka bude svaki dan" uz novo vrijeme → ponavljanje; ponavljajući s novim satom zadrži raspored, novi sat.
+        const said = parseRepeat(env.dateText, r.time, r.date);
+        const repeat = said || (task.Reminder_Repeat && a.stop_repeat !== true ? { ...task.Reminder_Repeat, Time: r.time } : null);
+        const iso = repeat ? firstOccurrence(repeat, r.iso, env.tz) || r.iso : r.iso;
         // Rok koji je bio isti dan kao stari podsjetnik ide zajedno s njim.
-        if (task.Reminder_At && task.Due_Date === toZoned(task.Reminder_At, env.tz).date) patch.Due_Date = r.date;
-        Object.assign(patch, { Reminder_At: r.iso, Reminder_Pending: true, Reminder_Sent_At: '' });
-        reminderLabel = formatReminder(r.iso, env.tz, env.now);
+        if (task.Reminder_At && task.Due_Date === toZoned(task.Reminder_At, env.tz).date) patch.Due_Date = toZoned(iso, env.tz).date;
+        Object.assign(patch, { Reminder_At: iso, Reminder_Pending: true, Reminder_Sent_At: '' });
+        if (repeat) patch.Reminder_Repeat = repeat;
+        reminderLabel = `${formatReminder(iso, env.tz, env.now)}${repeat ? `, pa ${repeatLabel(repeat)} u ${repeat.Time} 🔁` : ''}`;
+    }
+    if (a.stop_repeat === true) {
+        if (!task.Reminder_Repeat) return { ok: false, error: `Zadatak „${task.Title}" nema ponavljanje.` };
+        if (env.groundText !== undefined && !STOP_REPEAT_SAID.test(foldText(env.groundText))) {
+            return { ok: false, error: 'Gašenje ponavljanja nije rečeno („prestani", „ne ponavljaj", „više ne treba").' };
+        }
+        patch.Reminder_Repeat = null;
+        // Već poslan današnji termin: dalje se ne šalje ništa.
+        if (!text(a.reminder_at)) patch.Reminder_Pending = false;
     }
     if (text(a.title)) patch.Title = text(a.title, 120);
     const oldTitle = task.Title;
@@ -999,6 +1024,7 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     if (sorted) did.push('složeno po stanovima');
     if (patch.Title) did.push(`naslov „${oldTitle}" → „${String(patch.Title)}"`);
     if (reminderLabel) did.push(`podsjetnik ${reminderLabel}`);
+    if (a.stop_repeat === true) did.push('ponavljanje ugašeno');
 
     // Napomena u zadatku je korisnikov tekst (vidi se i na štampi): samo kad ju je tražio.
     // 04.11. bot je uz svaku izmjenu dopisivao „Izmjena: …", pa lista nije mogla na print.
@@ -1031,6 +1057,7 @@ async function updateTaskTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     else if (patch.Status === 'cancelled') lines.push(`✖ Otkazano: ${task.Title}`);
     else if (patch.Status) lines.push(`↺ ${task.Title} — ${patch.Status === 'in_progress' ? 'u toku' : 'ponovo otvoreno'}`);
     if (reminderLabel) lines.push(`⏰ ${task.Title} → ${reminderLabel}`);
+    if (a.stop_repeat === true) lines.push(`🔕 Više se ne ponavlja: ${task.Title}`);
     if (patch.Title) lines.push(`✏️ Naslov: ${task.Title}`);
     if (sorted || removed.length || edited.length) {
         lines.push(`${sorted ? '↕️ Složeno po stanovima' : removed.length && !edited.length ? '➖ Izbačeno' : '✏️ Izmijenjeno'}: ${task.Title}`,

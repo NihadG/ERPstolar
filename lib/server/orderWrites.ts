@@ -281,6 +281,42 @@ export async function createDraftOrder(orgId: string, input: DraftInput): Promis
     return { orderId, orderNumber, paths };
 }
 
+/**
+ * Javljena narudžba: naručeno mimo ERP-a (telefon, Viber, kolega), odmah „Poslano", bez stavki.
+ * Za šta je, piše u `Quick_Target`; stavke i iznos dolaze kad stigne račun.
+ */
+export async function createQuickOrder(orgId: string, input: {
+    supplierId: string;
+    supplierName: string;
+    target: NonNullable<Order['Quick_Target']>;
+    at: Date;
+}): Promise<CreatedDraft> {
+    const db = adminDb();
+    const existing = await db.collection('orders').where('Organization_ID', '==', orgId).get();
+    const orderNumber = nextOrderNumber(existing.docs.map(d => (d.data() as Order).Order_Number));
+    const orderId = uuidv4();
+    const now = input.at.toISOString();
+    const order: Order & { Organization_ID: string } = {
+        Order_ID: orderId,
+        Organization_ID: orgId,
+        Order_Number: orderNumber,
+        Name: input.target.Name,
+        Supplier_ID: input.supplierId,
+        Supplier_Name: input.supplierName,
+        Order_Date: now,
+        Status: 'Poslano',
+        Sent_At: now,
+        Quick: true,
+        Quick_Target: input.target,
+        Expected_Delivery: '',
+        Total_Amount: 0,
+        Notes: 'Javljeno botu (naručeno mimo ERP-a).',
+    };
+    const ref = db.collection('orders').doc();
+    await ref.set(order);
+    return { orderId, orderNumber, paths: [ref.path] };
+}
+
 // ─── Čitanje i slanje ─────────────────────────────────────────────────
 
 export async function getOrderWithItems(orgId: string, orderId: string): Promise<Order | null> {

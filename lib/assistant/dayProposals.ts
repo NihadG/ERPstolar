@@ -131,6 +131,33 @@ async function bookProposal(
     return { text: `${diarySummary(result, dayName)}${note}`, buttons: [[{ text: '↩️ Poništi', data: `undo:${turnId}` }]], toast: 'Upisano' };
 }
 
+/**
+ * „Sve isto" / „Ostalo isto" iz termina: svjež prijedlog za dan (već upisani i odsutni
+ * ispadaju sami) i upis svih redova. Poništava se kao i prijedlog (turnId dp-<id>).
+ */
+export async function bookDayAsProposed(link: AssistantLink, date: string, today: string): Promise<
+    { ok: true; workers: number; turnId: string } | { ok: false; error: string }
+> {
+    const proposal = await loadDayProposal(link.orgId, date);
+    if (!proposal.lines.length) return { ok: false, error: 'Nema šta upisati — svi su već upisani ili odsutni.' };
+    const ref = adminDb().collection(COL).doc();
+    const doc: StoredProposal = {
+        Proposal_ID: ref.id, Organization_ID: link.orgId, Owner_UID: link.uid, Date: date,
+        Proposal: JSON.parse(JSON.stringify(proposal)), Excluded: [], Status: 'open', Created_At: new Date().toISOString(),
+    };
+    await ref.set(doc);
+    const out = await bookProposal(link, ref, doc, today);
+    if (!out.buttons?.length) return { ok: false, error: out.toast || out.text || 'Upis nije prošao.' };
+    return { ok: true, workers: new Set(proposal.lines.flatMap(l => l.workerIds)).size, turnId: `dp-${ref.id}` };
+}
+
+/** Koliko radnika i naloga nosi prijedlog za dan (za red u terminu); null kad nema ničega. */
+export async function dayProposalSize(orgId: string, date: string): Promise<{ workers: number; orders: number } | null> {
+    const p = await loadDayProposal(orgId, date);
+    if (!p.lines.length) return null;
+    return { workers: new Set(p.lines.flatMap(l => l.workerIds)).size, orders: new Set(p.lines.map(l => l.workOrderId)).size };
+}
+
 /** Rupe za jutarnji pregled; null kad ih nema. */
 export async function gapsForDigest(orgId: string, today: string): Promise<ProposalReply | null> {
     const [workers, logs, attendance] = await Promise.all([

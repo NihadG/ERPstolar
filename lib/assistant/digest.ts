@@ -7,6 +7,7 @@
 
 import { getAllTasks } from '@/lib/server/fieldRepo';
 import { formatReminder, toZoned } from './datetime';
+import { repeatLabel } from './repeat';
 import { listMemory } from './store';
 import type { MemoryItem, Task } from '@/lib/types';
 
@@ -23,7 +24,7 @@ function shortDay(day: string): string {
 
 function taskLabel(t: Task, tz: string, now: Date): string {
     const bits = [t.Title];
-    if (t.Reminder_At) bits.push(formatReminder(t.Reminder_At, tz, now));
+    if (t.Reminder_At) bits.push(`${formatReminder(t.Reminder_At, tz, now)}${t.Reminder_Repeat ? ` 🔁 ${repeatLabel(t.Reminder_Repeat)}` : ''}`);
     if (t.Assigned_Worker_Name) bits.push(t.Assigned_Worker_Name);
     return `• ${bits.join(' — ')}`;
 }

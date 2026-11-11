@@ -12,6 +12,7 @@ import { adminDb } from '@/lib/server/firebaseAdmin';
 import { sendMessage, type ButtonRows } from '@/lib/telegram/api';
 import { addDays } from '@/lib/voice/dates';
 import { toZoned, zonedToUtcMs } from './datetime';
+import { nextOccurrence, repeatLabel } from './repeat';
 import { buildTodayDigest } from './digest';
 import { createProposalMessage, gapsForDigest, isWorkingDayFor } from './dayProposals';
 import { materialDigest } from './materialAlerts';
@@ -27,15 +28,35 @@ const DIGEST_UNTIL_HOUR = 11;
 const PROPOSAL_FROM_MIN = 16 * 60 + 30;
 const PROPOSAL_UNTIL_MIN = 20 * 60;
 
-export function reminderButtons(taskId: string): ButtonRows {
+export function reminderButtons(taskId: string, repeating = false): ButtonRows {
+    // Ponavljajući: „Urađeno" vrijedi za danas (raspored ostaje), a gasi se posebnim dugmetom.
+    if (repeating) {
+        return [
+            [{ text: '✅ Urađeno', data: `done:${taskId}` }, { text: '⏰ Za sat', data: `snz:${taskId}:1h` }],
+            [{ text: '🔕 Ne ponavljaj više', data: `rpoff:${taskId}` }],
+        ];
+    }
     return [
         [{ text: '✅ Urađeno', data: `done:${taskId}` }],
         [{ text: '⏰ Za sat', data: `snz:${taskId}:1h` }, { text: '🌅 Sutra u 8', data: `snz:${taskId}:tm` }],
     ];
 }
 
+/**
+ * Šta se upisuje poslije slanja: jednokratni se gasi, ponavljajući ostaje na
+ * čekanju sa sljedećim terminom (i kad je ovaj bio odgođen — raspored ide po `Time`).
+ */
+export function afterSendPatch(t: Pick<Task, 'Reminder_Repeat'>, now: Date, tz: string): Record<string, unknown> {
+    const nowIso = now.toISOString();
+    const next = t.Reminder_Repeat ? nextOccurrence(t.Reminder_Repeat, now, tz) : null;
+    return next
+        ? { Reminder_At: next, Reminder_Pending: true, Reminder_Sent_At: nowIso }
+        : { Reminder_Pending: false, Reminder_Sent_At: nowIso };
+}
+
 export function reminderText(t: Task): string {
     const lines = [`⏰ ${t.Title}`];
+    if (t.Reminder_Repeat) lines[0] += ` 🔁 ${repeatLabel(t.Reminder_Repeat)}`;
     if (t.Description) lines.push(t.Description);
     const project = t.Links?.find(l => l.Entity_Type === 'project');
     if (project) lines.push(`📁 ${project.Entity_Name}`);
@@ -81,9 +102,9 @@ export async function sendDueReminders(now: Date, tz: string): Promise<{ sent: n
         try {
             // Poruka za Viber/WhatsApp stiže kao kartica s gotovim tekstom i dugmadima.
             const body = t.Chat_Message ? `⏰ Vrijeme je za poruku\n${chatCardText(t.Chat_Message)}` : reminderText(t);
-            await sendMessage(link.chatId, body, t.Chat_Message ? chatCardButtons(t.Chat_Message, t.Task_ID) : reminderButtons(t.Task_ID));
+            await sendMessage(link.chatId, body, t.Chat_Message ? chatCardButtons(t.Chat_Message, t.Task_ID) : reminderButtons(t.Task_ID, !!t.Reminder_Repeat));
             await noteBotMessage(link.chatId, 'podsjetnik', body, now);
-            await doc.ref.update({ Reminder_Pending: false, Reminder_Sent_At: nowIso });
+            await doc.ref.update(afterSendPatch(t, now, tz));
             sent++;
         } catch (e) {
             // Ostaje na čekanju — sljedeći tick pokušava ponovo.
