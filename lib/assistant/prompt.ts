@@ -13,6 +13,7 @@
 
 import { calendarHint } from '@/lib/voice/dates';
 import { describeNow, formatReminder, toZoned } from './datetime';
+import { repeatLabel } from './repeat';
 import { projectLabel, type AssistantContext } from './context';
 import { relevantMemory } from './memoryRules';
 import { aliasesOf, type VocabKind } from './vocab';
@@ -36,7 +37,7 @@ export function memoryLine(alias: string, m: MemoryItem, tz: string): string {
 
 export function taskLine(alias: string, t: Task, tz: string, now: Date): string {
     const parts = [alias, t.Title];
-    if (t.Reminder_At) parts.push(`podsjetnik ${formatReminder(t.Reminder_At, tz, now)}${t.Reminder_Pending ? '' : ' (poslan)'}`);
+    if (t.Reminder_At) parts.push(`podsjetnik ${formatReminder(t.Reminder_At, tz, now)}${t.Reminder_Pending ? '' : ' (poslan)'}${t.Reminder_Repeat ? ` 🔁 ${repeatLabel(t.Reminder_Repeat)} u ${t.Reminder_Repeat.Time}` : ''}`);
     if (t.Due_Date) parts.push(`rok ${t.Due_Date.slice(0, 10)}`);
     if (t.Assigned_Worker_Name) parts.push(`radnik: ${t.Assigned_Worker_Name}`);
     const project = t.Links?.find(l => l.Entity_Type === 'project');

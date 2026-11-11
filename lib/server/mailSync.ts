@@ -27,6 +27,8 @@ import { companyOf } from '@/lib/assistant/orderDocuments';
 import { addressedToMe, followMessage, followOf, needsReply, nextFollowAt } from '@/lib/email/followUp';
 import { companyTag } from '@/lib/email/compose';
 import { getLinkByUid, noteBotMessage } from '@/lib/assistant/store';
+import { assistantTimezone, toZoned } from '@/lib/assistant/datetime';
+import { inNoticeWindow } from '@/lib/assistant/slots';
 import { sendMessage } from '@/lib/telegram/api';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import type { EmailDraft, MailInboxItem, Order, Project, Supplier } from '@/lib/types';
@@ -133,6 +135,7 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
     // „Luxco treba ugraditi…" u masovnom mailu gradilišta znači tebe.
     const tag = companyTag((await companyOf(account.Organization_ID)).name || '');
     let notified = 0;
+    const hold = !noticeTime(now);
     // Imenik: kome si pisao i ko od poznatih je pisao tebi (ime, datum).
     const seen: MailHeaders[] = [];
 
@@ -165,7 +168,10 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
         const follow = followOf(item.Kind, needsReply(addressing), addressedToMe(addressing));
         if (follow) Object.assign(item, { Follow: follow, Follow_Count: 0, Next_Follow_At: nextFollowAt(item.Received_At, follow, 0) });
 
-        if (link && NOTIFY_KINDS.has(item.Kind)) {
+        // Izvan termina (10:30 / 14:30) se ne zvoni: obavijest čeka sljedeći termin (flushMailNotices).
+        if (link && hold && (NOTIFY_KINDS.has(item.Kind) || follow === 'reply')) {
+            item.Notify_Pending = NOTIFY_KINDS.has(item.Kind) ? 'doc' : 'reply';
+        } else if (link && NOTIFY_KINDS.has(item.Kind)) {
             const m = mailMessage(item, o => orderNo.get(o));
             await sendMessage(link.chatId, m.text, m.buttons.length ? m.buttons : undefined);
             // „Ova ponuda se odnosi na Švicarsku" (03.11.) — bot mora znati koja je to poruka i njen id.
@@ -226,6 +232,45 @@ export async function closeReplied(uid: string, threadId: string, sentAt: string
     });
     await Promise.all(open.map(d => d.ref.set({ Done_At: sentAt, Done_How: 'replied', Next_Follow_At: null }, { merge: true })));
     return open.length;
+}
+
+/** Da li je sada prvih 15 minuta termina (10:30 / 14:30) — jedino tada bot sam javlja poštu. */
+function noticeTime(now: Date): boolean {
+    const z = toZoned(now, assistantTimezone());
+    return inNoticeWindow(z.hour * 60 + z.minute);
+}
+
+/** U terminu: obavijesti o pošti koje su čekale (najviše 5 po korisniku, ostale u sljedećem terminu). */
+export async function flushMailNotices(now = new Date()): Promise<number> {
+    if (!noticeTime(now)) return 0;
+    const db = adminDb();
+    const snap = await db.collection(COLLECTIONS.MAIL_INBOX).where('Notify_Pending', 'in', ['doc', 'reply']).get();
+    const perOwner = new Map<string, number>();
+    const orderNos = new Map<string, Map<string, string>>();
+    let sent = 0;
+    for (const doc of snap.docs.sort((a, b) => String(a.data().Received_At).localeCompare(String(b.data().Received_At)))) {
+        const item = doc.data() as MailInboxItem;
+        const n = perOwner.get(item.Owner_UID) || 0;
+        if (n >= 5) continue;
+        const link = await getLinkByUid(item.Owner_UID);
+        if (!link || item.Done_At) { await doc.ref.set({ Notify_Pending: null }, { merge: true }); continue; }
+        if (!orderNos.has(item.Organization_ID)) {
+            const orders = await db.collection(COLLECTIONS.ORDERS).where('Organization_ID', '==', item.Organization_ID).get();
+            orderNos.set(item.Organization_ID, new Map(orders.docs.map(d => [(d.data() as Order).Order_ID, (d.data() as Order).Order_Number])));
+        }
+        const no = (id: string) => orderNos.get(item.Organization_ID)!.get(id);
+        const m = item.Notify_Pending === 'doc' ? mailMessage(item, no) : followMessage(item, now, no);
+        try {
+            await sendMessage(link.chatId, m.text, m.buttons.length ? m.buttons : undefined);
+            await noteBotMessage(link.chatId, `pošta [id ${item.Message_ID}]`, m.text, now);
+            await doc.ref.set({ Notify_Pending: null, Notified_At: now.toISOString() }, { merge: true });
+            perOwner.set(item.Owner_UID, n + 1);
+            sent++;
+        } catch (e) {
+            console.error('[mail] obavijest u terminu:', e instanceof Error ? e.message : e);
+        }
+    }
+    return sent;
 }
 
 /** Svi povezani sandučići (sat). Greška jednog ne zaustavlja ostale. */

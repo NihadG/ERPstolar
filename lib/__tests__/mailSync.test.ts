@@ -11,6 +11,10 @@ jest.mock('@/lib/telegram/api', () => ({
     editMessageText: jest.fn(async () => undefined),
     answerCallbackQuery: jest.fn(async () => undefined),
 }));
+// Obavijesti o pošti idu samo u terminu (10:30 / 14:30). Testovi ispod podrazumijevaju da je termin;
+// zadržavanje van termina i slanje u terminu provjerava poseban slučaj na kraju.
+let inSlot = true;
+jest.mock('@/lib/assistant/slots', () => ({ ...jest.requireActual('@/lib/assistant/slots'), inNoticeWindow: () => inSlot }));
 jest.mock('@/lib/server/orderPdf', () => ({
     buildOrderPdf: () => Buffer.from('%PDF-1.4 lazni'),
     orderPdfFileName: (o: { Order_Number: string }) => `Narudzba_${o.Order_Number}.pdf`,
@@ -18,7 +22,7 @@ jest.mock('@/lib/server/orderPdf', () => ({
 
 import { fakeDocs as docs, fakeStore as store } from '@/lib/testing/fakeFirestore';
 import { getEmailAccount, saveEmailAccount, GMAIL_SCOPES } from '@/lib/server/gmail';
-import { syncAllMailboxes, syncMailbox } from '@/lib/server/mailSync';
+import { flushMailNotices, syncAllMailboxes, syncMailbox } from '@/lib/server/mailSync';
 import { handleMailButton } from '@/lib/assistant/mailButtons';
 import { answerCallbackQuery, editMessageText, sendMessage } from '@/lib/telegram/api';
 import type { EmailDraft, MailInboxItem } from '@/lib/types';
@@ -87,6 +91,7 @@ const btn = (id: string, action: string) => handleMailButton({ chatId: 77, messa
 beforeEach(async () => {
     store.clear();
     jest.clearAllMocks();
+    inSlot = true;
     gmail = { historyId: '100', added: [], messages: new Map(), sent: [] };
     (global as any).fetch = fetchMock;
     process.env = { ...ENV, GOOGLE_OAUTH_CLIENT_ID: 'cid', GOOGLE_OAUTH_CLIENT_SECRET: 'secret', EMAIL_TOKEN_KEY: 'test-kljuc-dovoljno-dug' };
@@ -341,5 +346,26 @@ describe('imenik pošte i popunjavanje unazad', () => {
         expect(item('n1')).toMatchObject({ Kind: 'contact', Project_IDs: ['p1'] });
         const lejla = (store.get('mail_people/u1') as any).People[0];
         expect(lejla).toMatchObject({ Count: 2, Last_At: '2026-10-30T09:00:00.000Z' });
+    });
+});
+
+describe('obavijesti samo u terminu', () => {
+    it('van termina se mail zapamti bez zvonjenja; u terminu stigne jednom', async () => {
+        await syncMailbox(await account());
+        inSlot = false;
+        deliver({ id: 'h1', threadId: 'th-o1', from: 'Amra Delić <amra@staklo-demo.example>', subject: 'RE: Narudžba ogledala', snippet: '3 kom spremna za preuzimanje' });
+        expect(await syncMailbox(await account())).toBe(0);
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(item('h1')).toMatchObject({ Kind: 'ready', Notify_Pending: 'doc' });
+        expect(item('h1')?.Notified_At).toBeUndefined();
+        expect(await flushMailNotices()).toBe(0);   // još nije termin
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        inSlot = true;
+        expect(await flushMailNotices()).toBe(1);
+        expect((sendMessage as jest.Mock).mock.calls.map(c => c[0])).toEqual([77]);
+        expect(item('h1')).toMatchObject({ Notify_Pending: null, Notified_At: expect.any(String) });
+        expect(await flushMailNotices()).toBe(0);   // ne javlja dvaput
+        expect(sendMessage).toHaveBeenCalledTimes(1);
     });
 });

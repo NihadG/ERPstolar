@@ -97,6 +97,8 @@ Pitaj koju da radiš i ne počinji bez odgovora.
 
 ## 6. Popravka (na odobrenje)
 
+Popravka se gradi po skillu **`bot-gradnja`** (`.claude/skills/bot-gradnja/SKILL.md`): ugovor izmjene, sloj, ljestvica pravila, provjere po sloju, testovi po principu. Koraci ispod su sažetak. Kod razlike važi `bot-gradnja`.
+
 1. Grana od `main`. Commit i push tek kad korisnik kaže.
 2. Popravka, deterministička gdje god može.
 3. **Regresioni test** sa slučajem iz revizije, prepričanim s izmišljenim imenima i adresama `.example`:

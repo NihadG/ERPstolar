@@ -435,6 +435,14 @@ export interface Order {
     /** Dobavljač je javio da je spremno — njegov stvarni rok (supplierLeadDays). */
     Ready_At?: string;
     Invoice?: { No: string; Date: string; Message_ID: string };
+    /**
+     * JAVLJENA NARUDŽBA (od 11/2026): naručeno telefonom, Viberom ili preko kolege i samo
+     * javljeno botu u terminu (lib/assistant/slotRun.ts). Bez stavki — za šta je, piše u
+     * `Quick_Target`; stavke i iznos dolaze s računom.
+     */
+    Quick?: boolean;
+    Quick_Target?: { Kind: 'project' | 'job' | 'multi' | 'stock' | 'none'; ID?: string; Name: string };
+    Received_Date?: string;
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
@@ -621,6 +629,8 @@ export interface MailInboxItem {
     State: 'new' | 'applied' | 'dismissed';
     Applied?: string;
     Notified_At?: string;
+    /** Obavijest čeka termin (10:30 / 14:30): 'doc' = dokument dobavljača, 'reply' = čeka tvoj odgovor. */
+    Notify_Pending?: 'doc' | 'reply' | null;
     /** PRAĆENJE: podsjetnici dok se ne riješi (odgovor u niti, preuzeto, dugme). */
     Follow?: MailFollow;
     Follow_Count?: number;
@@ -773,6 +783,14 @@ export interface TaskChecklistGroup {
     name: string;
 }
 
+/** Raspored ponavljajućeg podsjetnika. Dani: 0 = nedjelja … 6 = subota; Time = lokalno „HH:MM". */
+export interface ReminderRepeat {
+    Every: 'day' | 'workday' | 'week' | 'month';
+    Time: string;
+    Days?: number[];
+    Day_Of_Month?: number;
+}
+
 export interface Task {
     Task_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization
@@ -815,6 +833,11 @@ export interface Task {
     /** true dok podsjetnik čeka slanje — po ovom polju tick traži (indeks). */
     Reminder_Pending?: boolean;
     Reminder_Sent_At?: string;
+    /**
+     * PONAVLJANJE (od 11/2026): „svaki dan u 7", „radnim danima", „petkom".
+     * Tick poslije slanja pomjeri `Reminder_At` na sljedeći termin (lib/assistant/repeat.ts).
+     */
+    Reminder_Repeat?: ReminderRepeat;
     /**
      * PORUKA ZA VIBER/WHATSAPP (od 11/2026): zadatak je „pošalji ovo tom čovjeku".
      * Kad dođe vrijeme (ili odmah), bot pošalje gotov tekst s dugmadima koja
