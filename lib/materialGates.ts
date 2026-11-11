@@ -84,7 +84,8 @@ const NEED_BY: Record<string, string[]> = {
     osb: ['Krojenje OSB-a', 'Izrada podkonstrukcije od OSB-a'],
     hpl: ['Krojenje HPL-a', 'Presovanje HPL-a'],
     furnir: ['Priprema furnira', 'Furniranje'],
-    kerrock: ['Krojenje Kerrocka'],
+    // Stari naziv ostaje dok se standard ne primijeni na nalog (spajanje 11.11.).
+    kerrock: ['Krojenje i lijepljenje Kerrocka', 'Krojenje Kerrocka'],
     corian: ['Krojenje Coriana'],
     kant: ['Kantiranje iverala', 'Kantiranje furnira', 'Kantiranje krila'],
     hdf: ['Krojenje leđa', 'Postavljanje leđa', 'Sklapanje kutija'],

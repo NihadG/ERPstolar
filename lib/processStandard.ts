@@ -25,7 +25,7 @@ import type { ProcessCatalogItem, ProcessMaterialRule } from './types';
  * Pravila koja standard upiše nose je (Standard_Version); Auto prijedlog primijeni
  * standard ponovo čim baza ima stariju verziju („zadnja pravila aplikacije").
  */
-export const STANDARD_VERSION = '2026-10-30.1';
+export const STANDARD_VERSION = '2026-11-11.1';
 
 /** Kanonski redoslijed proizvodnje. Procesi van liste ostaju u katalogu, iza ovih. */
 export const STANDARD_CATALOG: string[] = [
@@ -59,8 +59,8 @@ export const STANDARD_CATALOG: string[] = [
     'Farbanje',
     'Lakiranje',
     // Akrilni kamen: vlastita grana; prije završnog sklapanja i okivanja (krajevi grana se vežu za kasniji).
-    'Krojenje Kerrocka',
-    'Lijepljenje Kerrocka',
+    // 11.11.: krojenje i lijepljenje Kerrocka rade se zajedno — jedna faza.
+    'Krojenje i lijepljenje Kerrocka',
     'Brušenje Kerrocka',
     'Montaža Kerrocka',
     'Krojenje Coriana',
@@ -70,6 +70,8 @@ export const STANDARD_CATALOG: string[] = [
     'Završno sklapanje',
     'Okivanje',
     'Pakovanje',
+    // Montaža na objektu, zadnji korak (11.11.: „nalozi su na montaži, sve faze prije su gotove").
+    'Montaža',
 ];
 
 /** Stari nazivi → kanonski. Spaja se u katalogu, pravilima, planovima, nalozima i dnevnicama. */
@@ -92,6 +94,8 @@ export const STANDARD_RENAMES: { canonical: string; members: string[] }[] = [
     { canonical: 'Kantiranje furnira', members: ['Kantiranje fronti'] },
     // Do 29.10. jedna „Izrada podkonstrukcije" (samo od OSB-a); jela/smreka dobija vlastiti korak.
     { canonical: 'Izrada podkonstrukcije od OSB-a', members: ['Izrada podkonstrukcije'] },
+    // 11.11.: krojenje i lijepljenje Kerrocka su jedna faza (stari planovi, nalozi i dnevnice se spajaju).
+    { canonical: 'Krojenje i lijepljenje Kerrocka', members: ['Krojenje Kerrocka', 'Lijepljenje Kerrocka'] },
 ];
 
 export type StandardRule = RuleLite & { note: string };
@@ -183,7 +187,7 @@ export const STANDARD_RULES: StandardRule[] = [
     rule(['jela', 'iveral'], ['Izrada podkonstrukcije od jele/smreke', 'Sklapanje kutija'], 'Iveral se sklapa na podkonstrukciju od jele/smreke', { notFor: [...ORMAR, ...KREVET] }),
 
     // ── Akrilni kamen ──
-    rule(['kerrock'], ['Krojenje Kerrocka', 'Lijepljenje Kerrocka', 'Brušenje Kerrocka', 'Montaža Kerrocka'], 'Kerrock — krojenje, lijepljenje, brušenje, montaža'),
+    rule(['kerrock'], ['Krojenje i lijepljenje Kerrocka', 'Brušenje Kerrocka', 'Montaža Kerrocka'], 'Kerrock — krojenje i lijepljenje (jedna faza), brušenje, montaža'),
     rule(['corian'], ['Krojenje Coriana', 'Lijepljenje Coriana', 'Brušenje Coriana', 'Montaža Coriana'], 'Corian — isto kao Kerrock'),
 ];
 

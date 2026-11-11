@@ -233,9 +233,14 @@ describe('ispravke: krevet, kuhinja, komoda, HPL, OSB, Kerrock/Corian', () => {
         expect(plan('Stol', M('J / s masiv')).nodes).toEqual(['Priprema masive', 'Izrada podkonstrukcije od jele/smreke']);
     });
 
-    it('Kerrock i Corian: krojenje, lijepljenje, brušenje, montaža', () => {
+    it('Kerrock: krojenje i lijepljenje su jedna faza; Corian: krojenje, lijepljenje, brušenje, montaža', () => {
         expect(Array.from(plan('Pult', M('Kerrock / 101 Bijela')).edges)).toEqual([
-            'Krojenje Kerrocka > Lijepljenje Kerrocka', 'Lijepljenje Kerrocka > Brušenje Kerrocka', 'Brušenje Kerrocka > Montaža Kerrocka']);
+            'Krojenje i lijepljenje Kerrocka > Brušenje Kerrocka', 'Brušenje Kerrocka > Montaža Kerrocka']);
+        // Stari nazivi (planovi, nalozi, dnevnice) se spajaju u novu fazu.
+        expect(canonicalProcessName('Krojenje Kerrocka')).toBe('Krojenje i lijepljenje Kerrocka');
+        expect(canonicalProcessName('lijepljenje kerrocka')).toBe('Krojenje i lijepljenje Kerrocka');
+        expect(STANDARD_CATALOG).not.toContain('Lijepljenje Kerrocka');
+        expect(STANDARD_CATALOG[STANDARD_CATALOG.length - 1]).toBe('Montaža');
         expect(plan('Pult', M('Corian Glacier White')).nodes).toEqual(['Krojenje Coriana', 'Lijepljenje Coriana', 'Brušenje Coriana', 'Montaža Coriana']);
         expect(materialTypeFromName('Kerrock ljepilo')).toBe('ljepilo');
         // „Bijela" nije jela/smreka (prije je „Kerrock / 101 Bijela" bio jela).
