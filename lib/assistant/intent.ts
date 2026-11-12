@@ -12,7 +12,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { foldText } from '@/lib/voice/text';
-import { workerMentioned, workerNicknames, mentionsEveryone, sharedFirstNames, type GroundRef } from './grounding';
+import { workerMentioned, workerNicknames, mentionsEveryone, othersLikeLast, sharedFirstNames, type GroundRef } from './grounding';
 
 export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'table' | 'question';
 
@@ -115,6 +115,8 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Poruka koja POČINJE kao pitanje („na kojim nalozima rade Amer i Edin danas", „šta je Amer radio") nije upis rada.
     if (anyWorker && !kinds.has('task') && !asks
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
+    // „Ostali rade kao jučer" je upis dana i bez ijednog imena (ERP upiše nespomenute po zadnjem danu).
+    if (!asks && othersLikeLast(text)) kinds.add('work');
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
     // „Ne može biti decimalni broj, ako je radni dan gotov" je o izvještaju, ne o proizvodnji.
     if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')

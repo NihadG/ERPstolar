@@ -36,6 +36,19 @@ export function mentionsEveryone(text: string): boolean {
     return false;
 }
 
+/**
+ * „Ostali rade kao jučer", „svi ostali isto", „ostatak ekipe kao prethodni dan": radnici koje poruka
+ * ne imenuje rade ono što i zadnji potvrđeni dan. 11.11.: model je nabrojao 13 radnika, ERP ih je
+ * odbio kao „nespomenute", pa je bot pitao za svakog.
+ */
+export function othersLikeLast(text: string): boolean {
+    const t = foldText(text);
+    const others = /\b(ostali|ostale|ostalima|ostatak|ostalih|svi drugi|ostala ekipa)\b/;
+    const same = /\b(kao (i )?(jucer|juce|prije|prethodn\w*|zadnj\w*|do sad\w*|obicno)|isto|isti|isto kao|na istom|nepromijenjen\w*|nastavljaju|nastavili|nastavio)\b/;
+    const m = others.exec(t);
+    return !!m && same.test(t.slice(m.index, m.index + 80));
+}
+
 /** „Svi nalozi", „sve naloge", „na svemu". */
 export function mentionsAllOrders(text: string): boolean {
     return /\b(svi nalozi|sve naloge|svim nalozima|svi poslovi|na svemu)\b/.test(foldText(text));
@@ -255,23 +268,69 @@ export function kindConflict(text: string, w: GroundRef, workers: GroundRef[], o
  * otišao radniku iz prve rečenice umjesto onima uz koje je rečen.
  */
 export function nameOwners(text: string, name: string, workers: GroundRef[]): string[] | null {
-    const t = words(text);
+    const t = clauseTokens(text);
     const want = words(name);
     if (!want.length) return null;
-    const start = t.findIndex((_, i) => want.every((w, k) => t[i + k] && hit(w, [t[i + k]])));
-    if (start < 0) return null;
-    const at = (i: number) => workers.filter(w => words(w.name).some(n => hit(n, [t[i]])) || (w.aliases || []).some(a => phraseIn(a, [t[i]]))).map(w => w.id);
+    // Naziv se traži po dužim riječima („korekcije na Brdu" → korekcije, brdu), kao i `words`.
+    const long = t.map((x, i) => (/^[a-z0-9]{3,}$/.test(x) ? i : -1)).filter(i => i >= 0);
+    const k0 = long.findIndex((_, k) => want.every((w, j) => long[k + j] !== undefined && hit(w, [t[long[k + j]]])));
+    if (k0 < 0) return null;
+    const start = long[k0];
+    const at = (i: number) => /^[a-z0-9]{3,}$/.test(t[i])
+        ? workers.filter(w => words(w.name).some(n => hit(n, [t[i]])) || (w.aliases || []).some(a => phraseIn(a, [t[i]]))).map(w => w.id)
+        : [];
     let last = -1;
     for (let i = start - 1; i >= 0; i--) if (at(i).length) { last = i; break; }
     if (last < 0) return null;
-    const out = new Set<string>(at(last));
-    for (let i = last - 1; i >= 0; i--) {
-        if (/^(i|a|,)$/.test(t[i])) continue;
-        const ids = at(i);
-        if (!ids.length) break;
-        ids.forEach(id => out.add(id));
+    return Array.from(sameGroup(t, last, at));
+}
+
+/**
+ * Riječi koje ne prekidaju grupu radnika: veznici („i", „sa", „zajedno"), pomoćni glagoli i
+ * „radio", vrijeme („jučer i danas", „cijeli dan"). „Nedim je jučer i danas sa Aldinom radio na
+ * noćnim ormarićima" (11.11.): oba su radila isto, a ERP je uzimao samo zadnje ime.
+ */
+const GROUP_GLUE = new Set([
+    'i', 'sa', 's', 'skupa', 'zajedno', 'takodje', 'isto', 'kao',
+    'je', 'su', 'sam', 'smo', 'ste', 'bio', 'bila', 'bili', 'bile', 'ce', 'ces', 'cemo',
+    'radio', 'radila', 'radili', 'radile', 'radi', 'rade', 'radit', 'raditi', 'poceo', 'poceli', 'nastavio', 'nastavili',
+    'jucer', 'danas', 'sutra', 'prekjucer', 'jutros', 'jucerasnji', 'ujutro', 'popodne', 'cijeli', 'cio', 'cijelo', 'dan',
+    'dana', 'oba', 'obadva', 'ova', 'ovaj', 'ove', 'ovog', 'sedmice', 'sedmicu', 'opet', 'jos', 'vec', 'ponovo',
+]);
+/** Riječi koje počinju drugu grupu: „…, a Amer i Edin su bili na terenu", „…, dok je Senad…". */
+const GROUP_BREAK = /^(a|ali|dok|nego|ili|pa|onda|\.|;|!|\?|\n)$/;
+
+/** Tokeni s interpunkcijom koja dijeli rečenice (za razliku od `words`, čuva i kratke riječi). */
+function clauseTokens(text: string): string[] {
+    const folded = (text || '').replace(/(^|[^\p{L}])što(?![\p{L}])/giu, '$1 ').toLowerCase().replace(/đ/g, 'dj').normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return folded.match(/[a-z0-9]+|[.;!?\n]/g) || [];
+}
+
+/** Radnici u istoj grupi kao radnik na `from`: unazad i unaprijed preko veznika, vremena i „radio". */
+function sameGroup(t: string[], from: number, at: (i: number) => string[]): Set<string> {
+    const out = new Set<string>(at(from));
+    for (const step of [-1, 1]) {
+        for (let i = from + step; i >= 0 && i < t.length; i += step) {
+            if (GROUP_BREAK.test(t[i])) break;
+            const ids = at(i);
+            if (ids.length) { ids.forEach(id => out.add(id)); continue; }
+            if (!GROUP_GLUE.has(t[i])) break;
+        }
     }
-    return Array.from(out);
+    return out;
+}
+
+/**
+ * Radnici koji idu zajedno s ovim radnikom u poruci („Nedim je sa Aldinom radio…", „Amer i Edin
+ * su jučer…"): isti posao važi za sve njih. Samo ime rečeno jednom; prazno kad radnik nije rečen.
+ */
+export function workerGroup(text: string, w: GroundRef, workers: GroundRef[]): string[] {
+    const t = clauseTokens(text);
+    const at = (i: number) => /^[a-z0-9]{3,}$/.test(t[i])
+        ? workers.filter(x => words(x.name).some(n => hit(n, [t[i]])) || (x.aliases || []).some(a => phraseIn(a, [t[i]]))).map(x => x.id)
+        : [];
+    const pos = t.findIndex((_, i) => at(i).includes(w.id));
+    return pos < 0 ? [] : Array.from(sameGroup(t, pos, at));
 }
 
 /** „Ne treba", „nije radio", „izbaci"… u blizini imena — radnika se skida s dana samo kad je to rečeno. */
