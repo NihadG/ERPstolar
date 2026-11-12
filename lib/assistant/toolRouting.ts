@@ -29,10 +29,10 @@ export const ALL_TOOLS_DEF: Anthropic.Tool = {
 };
 
 /** Pitanje: sve za čitanje, PDF narudžbe („pošalji mi PDF") i pitanje nazad. */
-const QUESTION_EXTRA = new Set(['order_pdf', 'ask_user']);
+export const QUESTION_EXTRA = new Set(['order_pdf', 'ask_user']);
 
 /** Mail: nacrt, ko je ko, pošta, i narudžba koju mail nosi (možda je prvo treba napraviti). */
-const EMAIL_TOOLS = new Set([
+export const EMAIL_TOOLS = new Set([
     'email_order', 'email_contact', 'reply_mail', 'link_mail', 'find_contact', 'save_contact', 'search_mail', 'read_mail_pdf',
     'list_orders', 'order_status', 'project_brief', 'create_order', 'manage_order', 'order_pdf', 'ask_user',
 ]);

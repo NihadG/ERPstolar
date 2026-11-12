@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { fold } from '../command/search';
-import { emailDomain, isSharedMailDomain, matchSender, normalizeEmail, splitEmails } from '../contacts';
+import { emailDomain, firmLabel, isSharedMailDomain, matchSender, normalizeEmail, splitEmails } from '../contacts';
 import { parseMailbox } from './addresses';
 import { orderMentioned, type GroundRef } from '../assistant/grounding';
 import type { Contact, MailKind } from '../types';
@@ -92,6 +92,17 @@ export function classifyMail(mail: IncomingMail, ctx: MailContext): MailClass {
     if (!supplierId && !isSharedMailDomain(sender.email)) {
         const domain = emailDomain(sender.email);
         supplierId = ctx.suppliers.find(s => splitEmails(s.Email || '').some(e => emailDomain(e) === domain))?.Supplier_ID;
+    }
+    // Ista firma na drugoj domeni: računi stižu sa sistemske adrese centrale („…@okovi-demo.at"),
+    // a u Kontaktima su prodavci s „…@okovi-demo.ba" (10.11.2026). Samo kad ime firme vodi na JEDNOG dobavljača.
+    if (!supplierId) {
+        const label = firmLabel(sender.email);
+        if (label) {
+            const ids = new Set<string>();
+            ctx.suppliers.forEach(s => { if (splitEmails(s.Email || '').some(e => firmLabel(e) === label)) ids.add(s.Supplier_ID); });
+            ctx.contacts.forEach(c => { if (c.Supplier_ID && firmLabel(c.Email) === label) ids.add(c.Supplier_ID); });
+            if (ids.size === 1) supplierId = Array.from(ids)[0];
+        }
     }
     const known = !!ctx.people?.has(sender.email);
     if (!thread && !contact && !match.viaDomain && !supplierId && !known) return base;   // nepoznat — ne diramo

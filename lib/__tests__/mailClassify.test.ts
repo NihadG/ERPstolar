@@ -144,3 +144,46 @@ describe('poruka u Telegramu', () => {
         expect(mailMessage(item({ Kind: 'site', From_Name: 'Selma', Supplier_Name: undefined }), no).buttons[0][0].data).toBe('mx:abc:n');
     });
 });
+
+// Revizija 11.11.2026 (P-067): računi stižu sa sistemske adrese na drugoj domeni iste firme.
+import { firmLabel, firmLabels } from '../contacts';
+import { invoiceBatchMessage } from '../assistant/mailText';
+import { gmailQuery } from '../email/search';
+
+describe('ista firma na drugoj domeni', () => {
+    it.each([
+        ['prodaja@okovi-demo.example', 'okovi-demo'],
+        ['racuni@mail.okovi-demo.at', 'okovi-demo'],
+        ['info@firma.co.ba', 'firma'],
+        ['okovi-demo.com.ba', 'okovi-demo'],
+        ['neko@gmail.com', ''],
+        ['neko@bih.net.ba', ''],
+        ['a@abc.ba', ''],
+        ['nije adresa', ''],
+    ])('ime firme iz „%s" → „%s"', (from, label) => expect(firmLabel(from)).toBe(label));
+
+    it('račun s druge domene iste firme se prepozna kao račun tog dobavljača', () => {
+        const r = classifyMail(mail('Okovi Servis <RACUNI@okovi-demo.at>', '9960755928', 'Poštovani poslovni partneru, U prilogu dostavljamo Vaš račun u PDF-formatu.'), ctx);
+        expect(r).toMatchObject({ kind: 'invoice', supplierId: 's-okovi', supplierName: 'Okovi Demo', docNo: '9960755928' });
+        // Firma iz Kontakata (dobavljač bez adrese na kartici) važi isto.
+        expect(classifyMail(mail('fakture@staklo-demo.at', 'Račun 77001', 'u prilogu'), ctx)).toMatchObject({ kind: 'invoice', supplierId: 's-staklo' });
+    });
+
+    it('nepoznata firma i ime koje vodi na dva dobavljača se ne diraju', () => {
+        expect(classifyMail(mail('racuni@nepoznato-demo.at', '9960755928', 'U prilogu dostavljamo Vaš račun'), ctx).kind).toBe('ignore');
+        const two: MailContext = { ...ctx, suppliers: [...ctx.suppliers, { Supplier_ID: 's-okovi2', Name: 'Okovi Demo Tuzla', Email: 'tuzla@okovi-demo.net' }] };
+        expect(classifyMail(mail('racuni@okovi-demo.at', '9960755928', 'U prilogu dostavljamo Vaš račun'), two).kind).toBe('ignore');
+    });
+
+    it('pretraga firme traži i po imenu bez države; smeće u imenu ne ulazi u upit', () => {
+        expect(firmLabels(['okovi-demo.example', 'prodaja@okovi-demo.example', 'x@gmail.com'])).toEqual(['okovi-demo']);
+        expect(gmailQuery({ domains: ['okovi-demo.example'], firms: ['okovi-demo'], direction: 'in', days: 10 }))
+            .toBe('{from:okovi-demo.example from:okovi-demo} -in:sent newer_than:10d -category:promotions -category:social');
+        expect(gmailQuery({ firms: ['a b', 'x)', 'OR'], words: 'račun' })).not.toMatch(/from:|to:/);
+    });
+
+    it('više računa istog dobavljača je jedna obavijest', () => {
+        const inv = (no: string) => ({ Kind: 'invoice', Doc_No: no, Supplier_Name: 'Okovi Demo', From_Name: 'Okovi Servis' }) as unknown as MailInboxItem;
+        expect(invoiceBatchMessage([inv('9960755924'), inv('9960755925'), inv('9960755928')])).toBe('🧾 Okovi Demo: 3 računa (9960755924, 9960755925, 9960755928)');
+    });
+});

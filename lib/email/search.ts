@@ -20,6 +20,11 @@ export interface MailSearch {
     addresses?: string[];
     /** Domeni firmi („rama-glas.com") — svi ljudi iz firme, i nove niti. */
     domains?: string[];
+    /**
+     * Imena firmi bez države („okovi-demo") — Gmail ih traži u adresi pošiljaoca/primaoca,
+     * pa nalazi i poštu iste firme s druge domene (računi iz centrale s .at, prodavci s .ba).
+     */
+    firms?: string[];
     /** Ime bez adrese („merima") — Gmail ga traži u zaglavljima Od/Za. */
     names?: string[];
     /** Fraza koja može stajati umjesto adresa (naziv projekta). */
@@ -80,12 +85,13 @@ export function gmailQuery(s: MailSearch): string {
     const domains = Array.from(new Set((s.domains || []).map(domain).filter(Boolean))).slice(0, 4);
     const people = [...addresses.filter(a => !domains.includes(a.slice(a.indexOf('@') + 1))), ...domains];
     const names = Array.from(new Set((s.names || []).map(name).filter(n => n.length >= 3))).slice(0, 3);
+    const firms = Array.from(new Set((s.firms || []).map(f => f.toLowerCase()).filter(f => /^[a-z0-9-]{4,}$/.test(f)))).slice(0, 3);
     const phrase = terms(s.phrase || '').join(' ');
-    if (!words.length && !people.length && !names.length && !phrase) return '';
+    if (!words.length && !people.length && !names.length && !firms.length && !phrase) return '';
 
     parts.push(...words.map(wordTerm));
     const who: string[] = [];
-    const sides = [...people, ...names];
+    const sides = [...people, ...firms, ...names];
     if (sides.length) {
         if (s.direction !== 'out') who.push(...sides.map(a => `from:${a}`));
         if (s.direction !== 'in') who.push(...sides.map(a => `to:${a}`), ...people.map(a => `cc:${a}`));

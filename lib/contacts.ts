@@ -50,6 +50,32 @@ export function isSharedMailDomain(email: string): boolean {
     return SHARED_DOMAINS.has(emailDomain(email));
 }
 
+/** Dio domene koji nije ime firme: „firma.co.ba", „firma.com.ba". */
+const SECOND_LEVEL = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac']);
+
+/**
+ * Ime firme iz adrese ili domene, bez države: „prodaja@okovi-demo.ba" i
+ * „racuni@mail.okovi-demo.at" → „okovi-demo". Ista firma često piše s više domena
+ * (prodavci s .ba, računi iz centrale s .at — 10.11.2026). Dijeljeni domeni (gmail.com)
+ * i imena kraća od 4 znaka ne znače firmu → ''.
+ */
+export function firmLabel(emailOrDomain: string): string {
+    const raw = normalizeEmail(emailOrDomain);
+    const domain = raw.includes('@') ? emailDomain(raw) : raw;
+    if (!domain || SHARED_DOMAINS.has(domain)) return '';
+    const parts = domain.split('.').filter(Boolean);
+    if (parts.length < 2) return '';
+    parts.pop();
+    if (parts.length > 1 && SECOND_LEVEL.has(parts[parts.length - 1])) parts.pop();
+    const label = parts[parts.length - 1] || '';
+    return /^[a-z0-9-]{4,}$/.test(label) ? label : '';
+}
+
+/** Imena firmi iz adresa/domena (jedinstvena, bez praznih). */
+export function firmLabels(emailsOrDomains: string[]): string[] {
+    return Array.from(new Set(emailsOrDomains.map(firmLabel).filter(Boolean)));
+}
+
 // ── Imena ────────────────────────────────────────────────────────────
 
 const COMPANY_WORD = /(^|[\s,])(d\.?o\.?o|gmbh|ltd|obrt|shk|studio|group|in[zž]enjering|company)(?=[\s.,]|$)/i;

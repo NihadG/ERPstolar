@@ -22,6 +22,16 @@ const quote = (s: string, n = 220) => {
     return t.length > n ? `${t.slice(0, n)}…` : t;
 };
 
+/**
+ * Više računa istog dobavljača između dva termina → jedna obavijest, bez dugmadi
+ * (računi znaju stići 4–5 u par minuta; raspored po projektima je sljedeća faza plana).
+ */
+export function invoiceBatchMessage(items: MailInboxItem[]): string {
+    const who = items[0].Supplier_Name || items[0].From_Name;
+    const numbers = items.map(i => i.Doc_No).filter(Boolean);
+    return `🧾 ${who}: ${items.length} računa${numbers.length ? ` (${numbers.join(', ')})` : ''}`;
+}
+
 export function mailMessage(item: MailInboxItem, orderNumber: (id: string) => string | undefined): { text: string; buttons: ButtonRows } {
     const id = item.Message_ID;
     const who = `${item.From_Name}${item.Supplier_Name && !item.From_Name.includes(item.Supplier_Name) ? ` · ${item.Supplier_Name}` : ''}`;

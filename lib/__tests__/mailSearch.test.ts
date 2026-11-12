@@ -113,7 +113,8 @@ describe('alat search_mail', () => {
         store.delete('contacts/c1');
         store.set('suppliers/s1', { Supplier_ID: 's1', Organization_ID: 'org1', Name: 'Staklorez', Email: 'info@staklo-rez.example' });
         await runTool(env(), 'search_mail', { who: 'Stakloreza' });
-        expect(list.mock.calls[0][1]).toBe('{from:staklo-rez.example to:staklo-rez.example cc:staklo-rez.example} newer_than:120d -category:promotions -category:social');
+        // I ime firme bez države: računi iz centrale stižu s druge domene iste firme (10.11.).
+        expect(list.mock.calls[0][1]).toBe('{from:staklo-rez.example from:staklo-rez to:staklo-rez.example to:staklo-rez cc:staklo-rez.example} newer_than:120d -category:promotions -category:social');
     });
 
     it('nije u Kontaktima ni dobavljač → imenik pošte (ljudi kojima si pisao)', async () => {

@@ -142,7 +142,8 @@ describe('prijedlog za aplikaciju i dokument za print', () => {
     });
 
     it('„napravi mi dokument šta Amer i Edin trebaju sutra uraditi" je prikaz, ne upis ni pošta', () => {
-        expect(messageIntent('Možeš li mi napraviti dokument šta Amer i Edin treba sutra da urade?', workers, facts()).kinds).toEqual(['table', 'question']);
+        // „Možeš li…?" je molba botu, ne pitanje — ali dokument je i dalje prikaz bez upisa.
+        expect(messageIntent('Možeš li mi napraviti dokument šta Amer i Edin treba sutra da urade?', workers, facts())).toMatchObject({ kinds: ['table'], expectsWrite: false });
         expect(messageIntent('Isprintaj mi listu za Amera', workers, facts()).expectsWrite).toBe(false);
     });
 });
