@@ -23,7 +23,7 @@ Otvori `docs/bot/dnevnik-unapredjenja.md`:
 npm run bot:export
 ```
 
-Skripta `scripts/bot-review/export.cjs` uzima poruke od zadnje revizije (kursor) ili zadnjih 14 dana: signale, napomene, alate, potrošnju i snimak firme. Sve sprema u `.bot-review/<datum>/` (gitignore). Opcije: `--days N`, `--since ISO`, `--no-snapshot`.
+Skripta `scripts/bot-review/export.cjs` uzima poruke od zadnje revizije (kursor) ili zadnjih 14 dana: signale, napomene, alate, potrošnju, termine 10:30 / 14:30 (`slots.json`), Telegram vezu (`links.json`) i snimak firme. Sve sprema u `.bot-review/<datum>/` (gitignore). Opcije: `--days N`, `--since ISO`, `--no-snapshot`.
 
 - Ovo je čitanje produkcijske baze i traži korisnikovo odobrenje. Ako ga klasifikator dozvola blokira, ne zaobilazi ga. Zamoli korisnika da sam pokrene `npm run bot:export` u terminalu ili da odobri.
 - Stvarne poruke i imena ostaju u `.bot-review/`. Nikad ih ne kopiraj u repo, test ili PR.
@@ -39,6 +39,7 @@ npm run bot:triage
 Piše `.bot-review/<datum>/triage.md` (`lib/assistant/reviewReport.ts`):
 
 - red metrika za dnevnik;
+- termini: svaki u jednom redu (dodiri, riješene stavke, upisano) i koliko ih je bez ijednog dodira;
 - korisnikove napomene prve;
 - zatim grupe po signalu, od najgoreg: ispravio si → poništeno → nije upisano → AI nije radio → tvrdio upis → „nemam“ → nešto nije upisano → alat pao → … → sporo.
 
@@ -76,6 +77,11 @@ U `docs/bot/dnevnik-unapredjenja.md`:
 - **Metrike po reviziji:** dodaj red iz `triage.md` i preimenuj ga u datum revizije.
 - **Otvorene potrebe:** nova potreba dobija sljedeći `P-NNN`. Dokaz piši tako da se razumije bez stvarnih podataka: ID unosa, datum i citat s **izmišljenim imenima** (dobavljač → „Staklorez“, osoba → „Amra“). Postojećoj potrebi dopiši novi dokaz.
 - **Status:** otvoreno → u PR-u (#broj) → spojeno, čeka potvrdu u Telegramu → Urađeno (s datumom).
+- **Stalni skup:** poruke koje su otkrile grešku idu u `.bot-review/stalni-skup/<datum revizije>/`:
+  - `npx cross-env SKUP_FROM=.bot-review/<izvoz> SKUP_GROUP=<datum> SKUP_IDS=<id>,<id> SKUP_CUT=<ISO prije prve poruke> [SKUP_CARRY=1] jest lib/__tests__/botSkup.real.test.ts`;
+  - `SKUP_CUT` vraća snimak firme na trenutak prije poruka, a `SKUP_CARRY=1` je za razgovor od više poruka;
+  - u `expect.json` za svaku poruku upiši `why` (P-NNN) i provjere (`calls`, `noWrites`, `outcomeNot`, `replyHas`/`replyNot`, `errorsNot`, `logs`, `logsMin`; vidi `lib/assistant/replaySet.ts`). Poruka bez provjere je samo kontekst;
+  - provjere prvo pusti nad onim što je bot tada uradio: moraju pasti tamo gdje je bot griješio.
 - **Moje upute:** dopiši samo ono što je korisnik rekao kao trajno pravilo („uvijek…“, „nikad…“, „ubuduće…“).
 - **Odbijeno:** ono što je korisnik odbio, s razlogom.
 
@@ -105,7 +111,8 @@ Popravka se gradi po skillu **`bot-gradnja`** (`.claude/skills/bot-gradnja/SKILL
    - mozak s modelom iz skripte: `lib/__tests__/assistantBrain.test.ts`;
    - čista logika: odgovarajući `lib/__tests__/*.test.ts`.
 4. `npx tsc --noEmit -p .` i `npx jest`.
-5. **Ponavljanje stvarnih poruka** (`npm run bot:replay`): pravi model nad snimkom, mreža samo prema Anthropicu.
+5. **Stalni skup** (`npm run bot:replay:skup`): sve provjere iz ranijih revizija moraju proći. Test pada i `skup.md` kaže koja poruka i šta.
+   **Ponavljanje stvarnih poruka** (`npm run bot:replay`): pravi model nad snimkom, mreža samo prema Anthropicu.
    - Prije i poslije uporedi `report.md` (`lib/assistant/replayReport.ts`): oznake popravljeno/pogoršano i tokeni.
    - Traži `ANTHROPIC_API_KEY` u `.env.local` i košta API pozive, pa reci koliko poruka i pitaj prije pokretanja.
    - Bez ključa reci da nije pokrenuto. Ne tvrdi da je provjereno.

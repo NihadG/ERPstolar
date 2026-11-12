@@ -1,4 +1,4 @@
-import { metricsRow, reviewMetrics, reviewReport, type ReviewEntry } from '@/lib/assistant/reviewReport';
+import { metricsRow, reviewMetrics, reviewReport, slotReview, type ReviewEntry, type ReviewSlot } from '@/lib/assistant/reviewReport';
 
 // Izmišljene poruke; oblik kao .bot-review/<datum>/entries.json.
 const usage = { calls: 2, input: 1000, cacheRead: 10000, cacheWrite5m: 0, cacheWrite1h: 0, output: 100, models: ['m'], ms: 3000 };
@@ -32,4 +32,27 @@ describe('trijaža za reviziju', () => {
         expect(md.match(/`e1`/g)).toHaveLength(1);
         expect(md).not.toContain('Šta imam sutra');
     });
+});
+
+describe('termini u trijaži', () => {
+    const slot = (date: string, kind: 'a' | 'b', taps: number, items: ReviewSlot['state']['items']): ReviewSlot =>
+        ({ id: `${date}${kind}`, created: `${date}T09:30:00Z`, state: { kind, date, items, flow: null, taps, undo: [] } });
+    const orders = { suppliers: [], moreSuppliers: [], projects: [], jobs: [], waiting: [] };
+
+    it('svaki termin jedan red: dan, termin, dodiri, riješene stavke i upisano; broj termina bez dodira', () => {
+        const md = slotReview([
+            slot('2026-11-11', 'a', 0, [{ id: 'orders', data: orders, done: [] }]),
+            slot('2026-11-11', 'b', 9, [
+                { id: 'day', data: { date: '2026-11-11', label: 'danas', workers: 13, orders: 5 }, done: ['Spisak za upis dana je ispod'], closed: true },
+                { id: 'round', data: { orders: [] }, done: ['Procesi: 3 ažurirano'], closed: true },
+                { id: 'orders', data: orders, done: [] },
+            ]),
+        ]);
+        expect(md).toContain('## Termini (2)');
+        expect(md).toContain('Bez ijednog dodira: 1 · dodira ukupno: 9');
+        expect(md).toContain('| 11.11. | 10:30 | 0 | · Narudžbe | — |');
+        expect(md).toContain('| 11.11. | 14:30 | 9 | ✅ Upis dana, ✅ Obilazak, · Narudžbe | Spisak za upis dana je ispod; Procesi: 3 ažurirano |');
+    });
+
+    it('izvoz bez termina (stariji) ne dodaje ništa', () => expect(slotReview([])).toBe(''));
 });

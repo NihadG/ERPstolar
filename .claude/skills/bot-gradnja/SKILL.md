@@ -99,11 +99,12 @@ Prođi samo dijelove koje izmjena dira, ali njih **cijele**.
 1. **Test principa** (`lib/__tests__/*.test.ts`, uzor `botPrincipi.test.ts`): `it.each` preko svih formulacija iz ugovora plus „slične, ali nisu". Samo izmišljena imena i `.example` adrese, nikad stvarni.
 2. **Mozak sa skriptovanim modelom** (`assistantBrain.test.ts`) kad se mijenja tok u `brain.ts`: čuvar se okida, okida se samo jednom, izlaz je tačan.
 3. `npx tsc --noEmit -p .` i `npx jest`. Na Windows worktreeju dodaj `--testPathIgnorePatterns "/node_modules/" "/\.next/" "/tests/"`.
-4. **Ponavljanje stvarnih poruka** (`npm run bot:replay`) za svaku izmjenu ponašanja modela (prompt, opis alata, skup alata, čuvar):
+4. **Stalni skup** (`npm run bot:replay:skup`) za svaku izmjenu bota: poruke koje su jednom pošle po zlu (`.bot-review/stalni-skup/<grupa>/`) sa svojim provjerama u `expect.json` (`lib/assistant/replaySet.ts`). Svaka provjera mora proći. Ako padne, izmjena nije gotova, ili je provjera zastarjela pa se mijenja uz razlog u izvještaju. Prije pokretanja reci koliko poruka i koliko košta, pa pitaj (kao replay ispod).
+5. **Ponavljanje stvarnih poruka** (`npm run bot:replay`) za svaku izmjenu ponašanja modela (prompt, opis alata, skup alata, čuvar):
    - prije pokretanja reci koliko poruka i koliko otprilike košta, pa pitaj;
    - uporedi `report.md` prije i poslije: popravljeno, pogoršano, tokeni po poruci;
    - poruke koje su se promijenile pusti **3 puta**, jer model ne odgovara uvijek isto. Jedan prolaz nije dokaz.
-5. Šta nije pokrenuto, reci da nije. Ne tvrdi da je provjereno.
+6. Šta nije pokrenuto, reci da nije. Ne tvrdi da je provjereno.
 
 ## 6. Provjera zastarjelosti (pri promjeni modela ili kad čuvar dugo ćuti)
 

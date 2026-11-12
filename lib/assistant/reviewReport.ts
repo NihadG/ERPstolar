@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════
 // TRIJAŽA ZA REVIZIJU BOTA — iz izvoza dnevnika poruka (čisto)
 //
-// Ulaz je .bot-review/<datum>/entries.json (scripts/bot-review/export.cjs).
+// Ulaz je .bot-review/<datum>/entries.json i slots.json (scripts/bot-review/export.cjs).
 // Izlaz: red metrika za docs/bot/dnevnik-unapredjenja.md, tvoje napomene
 // prve, pa poruke grupisane po signalu — od onoga što najviše boli.
 // Ovo je deterministički dio revizije; uzrok po slučaju traži skill
@@ -12,6 +12,7 @@
 import type { AssistantOutcome, AssistantUsage } from '@/lib/types';
 import { SIGNAL_LABEL, type Signal } from './signals';
 import { billedTokens } from './usage';
+import type { SlotState } from './slots';
 
 export interface ReviewEntry {
     id: string;
@@ -108,6 +109,34 @@ export function reviewReport(entries: ReviewEntry[], label: string): string {
     if (failedQuiet.length) {
         out.push(`## Nije upisano / AI nije radio, bez signala (${failedQuiet.length})`, '');
         failedQuiet.forEach(e => out.push(...entryBlock(e)));
+    }
+    return out.join('\n');
+}
+
+// ─── Termini 10:30 / 14:30 (slots.json iz izvoza) ─────────────────────
+
+export interface ReviewSlot {
+    id: string;
+    created: string;
+    state: SlotState;
+}
+
+const ITEM_NAME: Record<SlotState['items'][number]['id'], string> = { orders: 'Narudžbe', round: 'Obilazak', day: 'Upis dana' };
+
+/** Svaki termin u jednom redu: kad, koliko dodira, koje stavke su riješene i šta je upisano. */
+export function slotReview(slots: ReviewSlot[]): string {
+    if (!slots.length) return '';
+    const silent = slots.filter(s => !s.state.taps).length;
+    const out = [
+        `## Termini (${slots.length})`, '',
+        `Bez ijednog dodira: ${silent} · dodira ukupno: ${slots.reduce((a, s) => a + (s.state.taps || 0), 0)}`, '',
+        '| Dan | Termin | Dodira | Stavke | Upisano |', '|---|---|---|---|---|',
+    ];
+    for (const s of slots) {
+        const st = s.state;
+        const items = st.items.map(i => `${i.closed ? '✅' : '·'} ${ITEM_NAME[i.id]}`).join(', ');
+        const done = st.items.flatMap(i => i.done).join('; ').replace(/\|/g, '/');
+        out.push(`| ${st.date.slice(8, 10)}.${st.date.slice(5, 7)}. | ${st.kind === 'a' ? '10:30' : '14:30'} | ${st.taps || 0} | ${items} | ${done || '—'} |`);
     }
     return out.join('\n');
 }
