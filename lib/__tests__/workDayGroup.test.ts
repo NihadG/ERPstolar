@@ -163,3 +163,81 @@ describe('ostali kao jučer', () => {
         expect(await runTool(env('Haso je radio'), 'log_work', { date: DAY, others_like_last: true })).toMatchObject({ ok: false, error: 'Nema ničega za upis.' });
     });
 });
+
+// P-074 (stalni skup, 12.11.): na pitanje „➕ Nalog: …" korisnik odgovori tekstom, model pošalje
+// i new_order i like_last → ERP je upisao jučerašnji nalog. U sljedećoj ispravci projekat je bio
+// rečen tri poruke ranije, pa ERP nije htio napraviti nalog.
+describe('ispravka tekstom: rečen nalog ide ispred „isto kao jučer"', () => {
+    it.each([
+        ['nov nalog', 'Haso je jučer i danas radio na novom proizvodu, noćni ormarići za Hamzu', { new_order: { name: 'Noćni ormarići Hamza' } }, 'new'],
+        ['postojeći nalog', 'Haso danas radi kuhinju za Hamzu, isto kao jučer', { orders: ['R1'] }, 'rk'],
+        ['bez naloga — zadnji dan', 'Haso isto kao jučer', {}, 'rl'],
+    ])('%s + like_last („%s") → upis na rečeni nalog', async (_, said, extra, where) => {
+        const e = env(said);
+        const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W3'], like_last: true, ...extra }] });
+        expect(res.ok).toBe(true);
+        const expected = where === 'new' ? docs('work_orders').find(w => w.Name === 'Noćni ormarići Hamza')!.Work_Order_ID : where;
+        expect(logsOf('haso').length > 0 && logsOf('haso').every(l => l.Work_Order_ID === expected)).toBe(true);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    const earlier = 'Amer je jučer i danas sa Edinom radio na novom proizvodu, to su noćni ormarići za Hamzu';
+    const now = 'Pa stavio si da Amer i Edin rade na kuhinji, a ne na noćnik ormarićima, a ako ne možeš napraviti taj nalog, onda ih samo ostavi prisutne';
+    const fix = (talk: string | undefined, project: string) => {
+        const e = env(now);
+        if (talk !== undefined) e.talkUser = `${talk}\n${now}`;
+        return { e, args: { date: DAY, lines: [{ workers: ['W1', 'W2'], replace: true, new_order: { name: 'Noćni ormarići', project } }] } };
+    };
+
+    it('projekat rečen maloprije + njegov proizvod rečen sada → nalog s proizvodima, oba radnika na njemu', async () => {
+        const { e, args } = fix(earlier, 'P1');
+        expect(await runTool(e, 'log_work', args)).toMatchObject({ ok: true });
+        const order = docs('work_orders').find(w => w.Name === 'Noćni ormarići')!;
+        expect(docs('work_order_items').filter(i => i.Work_Order_ID === order.Work_Order_ID)).toHaveLength(2);
+        expect(logsOf('amer').length > 0 && logsOf('amer').every(l => l.Work_Order_ID === order.Work_Order_ID)).toBe(true);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    it.each([
+        ['projekat nije rečen u razgovoru', undefined, 'P1'],
+        ['rečen je drugi projekat, a on nema taj proizvod', 'Amer i Edin rade za Lejlin stan', 'P2'],
+    ])('%s → pita za projekat, ništa ne pravi', async (_, talk, project) => {
+        const { e, args } = fix(talk, project);
+        const res = await runTool(e, 'log_work', args);
+        expect(res).toMatchObject({ ok: false });
+        expect(String((res as { error?: string }).error)).toContain('nije rečen');
+        expect(docs('work_orders').find(w => w.Name === 'Noćni ormarići')).toBeUndefined();
+    });
+});
+
+describe('„ostali kao jučer" ne dira imenovane; posao tekstom ne zaobilazi proizvod bez naloga', () => {
+    it('poziv bez ijednog reda: upiše samo nespomenute, imenovani čekaju svoj red', async () => {
+        const e = env('Haso danas radi na novom proizvodu, noćni ormarići za Hamzu. Ovi ostali danas rade kao i jučer');
+        expect((await runTool(e, 'log_work', { date: DAY, others_like_last: true })).ok).toBe(true);
+        expect(logsOf('haso')).toHaveLength(0);
+        expect(logsOf('senadi').map(l => l.Work_Order_ID)).toEqual(['rk']);
+        await undoTurn(e.turnId, 'u1');
+    });
+
+    it('rečen proizvod bez naloga, a model kaže drugi posao istog projekta tekstom → pitanje, ne upis', async () => {
+        const e = env('Amer i Edin danas noćni ormarići za Hamzu');
+        const res = await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1', 'W2'], work: 'Kovač - Kuhinja' }] });
+        expect(res).toMatchObject({ ok: true });
+        expect(e.erpQuestion!.options.map(o => o.label)).toEqual(['➕ Nalog: Noćni ormarići (2 proizvoda)', 'Ipak: Kovač - Kuhinja', 'Preskoči']);
+        expect(logsOf('amer')).toHaveLength(0);
+        // „Ipak: …" upiše posao kako je rečen, bez ponovnog pitanja.
+        const keep = env('Amer i Edin danas noćni ormarići za Hamzu');
+        expect(await runTool(keep, 'log_work', e.erpQuestion!.options[1].args)).toMatchObject({ ok: true });
+        expect(keep.erpQuestion).toBeUndefined();
+        expect(logsOf('amer').length > 0 && logsOf('amer').every(l => l.Work_Order_ID === 'rk')).toBe(true);
+        await undoTurn(keep.turnId, 'u1');
+    });
+
+    it('posao tekstom koji ima nalog ne pita ništa', async () => {
+        const e = env('Amer je radio kuhinju za Hamzu');
+        expect(await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1'], work: 'kuhinja Hamza' }] })).toMatchObject({ ok: true });
+        expect(e.erpQuestion).toBeUndefined();
+        expect(logsOf('amer').map(l => l.Work_Order_ID)).toEqual(['rk']);
+        await undoTurn(e.turnId, 'u1');
+    });
+});
