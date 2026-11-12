@@ -126,7 +126,7 @@ describe('termin 14:30', () => {
     it('obilazak: dodir upisuje proces na nalog', async () => {
         let v: View = await tap(hub, 'Obilazak');
         expect(v.text).toContain('Hotel — vrata — dokle su stigli?');
-        expect(v.buttons!.flat().map(b => b.text)).toEqual(['Brušenje gotovo', 'Isto', '‹ Nazad']);
+        expect(v.buttons!.flat().map(b => b.text)).toEqual(['Brušenje gotovo', 'Isto', 'Dalje od ovoga…', 'Sve gotovo', '‹ Nazad']);
         v = await tap(v, 'Brušenje gotovo');
         const procs = docs('work_order_items').find(i => i.ID === 'v1')!.Processes as { Process_Name: string; Status: string }[];
         expect(procs.find(p => p.Process_Name === 'Brušenje')!.Status).toBe('Završeno');

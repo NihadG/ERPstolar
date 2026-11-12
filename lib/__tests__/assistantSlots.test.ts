@@ -8,7 +8,7 @@
 //   4. više projekata, zaliha i posao bez projekta su ravnopravni odgovori
 //   5. zastario dodir ne mijenja ništa; Poništi vraća stavku
 import {
-    inNoticeWindow, newSlotState, orderLine, roundOptions, slotDone, slotDue, slotReopen, slotTap, slotText, slotUndo, slotView,
+    dayBookedLine, inNoticeWindow, newSlotState, orderLine, roundOptions, slotDone, slotDue, slotReopen, slotTap, slotText, slotUndo, slotView,
     type SlotItem, type SlotState,
 } from '@/lib/assistant/slots';
 
@@ -34,9 +34,10 @@ const round = (): SlotItem => ({
 const day = (): SlotItem => ({ id: 'day', done: [], data: { date: '2026-11-10', label: 'danas', workers: 13, orders: 5 } });
 
 const texts = (s: SlotState) => slotView(s).buttons.flat().map(b => b.text);
-/** Dodir po natpisu dugmeta — kao korisnik. */
+/** Dodir po natpisu dugmeta — kao korisnik (tačan natpis ima prednost). */
 function tap(s: SlotState, label: string) {
-    const b = slotView(s).buttons.flat().find(x => x.text === label || x.text.includes(label));
+    const all = slotView(s).buttons.flat();
+    const b = all.find(x => x.text === label) || all.find(x => x.text.includes(label));
     if (!b) throw new Error(`Nema dugmeta „${label}" među: ${texts(s).join(' | ')}`);
     return slotTap(s, b.action);
 }
@@ -175,9 +176,85 @@ describe('obilazak', () => {
                 { label: 'Lakiranje u toku', process: 'Lakiranje', state: 'started' },
                 { label: 'Lakiranje gotovo', process: 'Lakiranje', state: 'done' },
             ],
+            later: ['Okivanje'],
         });
         // Nalog bez koraka na redu (ili samo „Rad") ne ulazi u obilazak.
-        expect(roundOptions([{ name: 'Rad', state: 'active', inProgress: 0, done: 0, total: 1 }]).options).toEqual([]);
+        expect(roundOptions([{ name: 'Rad', state: 'active', inProgress: 0, done: 0, total: 1 }])).toMatchObject({ options: [], later: [] });
+    });
+
+    it('„Dalje od ovoga…": nezavršeni koraci iza onih na redu, redom toka; dug tok zadrži zadnja dva', () => {
+        const step = (name: string, state: 'done' | 'active' | 'blocked') => ({ name, state, inProgress: 0, done: state === 'done' ? 2 : 0, total: 2 });
+        const names = ['Krojenje', 'Kantiranje', 'Priprema furnira', 'Furniranje', 'Brušenje', 'Lakiranje', 'Okivanje', 'Sklapanje', 'Pakovanje', 'Završno sklapanje', 'Montaža'];
+        const rows = names.map((n, i) => step(n, i === 0 ? 'done' : i === 1 ? 'active' : 'blocked'));
+        const { later } = roundOptions(rows);
+        expect(later).toHaveLength(8);
+        expect(later.slice(0, 2)).toEqual(['Priprema furnira', 'Furniranje']);
+        expect(later.slice(-2)).toEqual(['Završno sklapanje', 'Montaža']);
+        expect(later).not.toContain('Kantiranje');
+        // Kratak tok: svi kasniji koraci, bez završenih.
+        expect(roundOptions(rows.slice(0, 4)).later).toEqual(['Priprema furnira', 'Furniranje']);
+    });
+});
+
+describe('obilazak: pogon je dalje nego što ERP zna', () => {
+    const withLater = (): SlotItem => {
+        const r = round();
+        if (r.id === 'round') r.data.orders[0].later = ['Okivanje', 'Montaža'];
+        return r;
+    };
+    const open = () => tap(newSlotState('b', '2026-11-10', [withLater(), orders()]), 'Obilazak').state;
+
+    it('uz korak na redu: „Isto", „Dalje od ovoga…" i „Sve gotovo"', () => {
+        expect(texts(open())).toEqual(['Lakiranje u toku', 'Lakiranje gotovo', 'Isto', 'Dalje od ovoga…', 'Sve gotovo', '‹ Nazad']);
+        // Nalog bez kasnijih koraka nema „Dalje"; stari termin (bez polja later) radi kao prije, uz „Sve gotovo".
+        const second = tap(open(), 'Isto').state;
+        expect(texts(second)).toEqual(['Okivanje gotovo', 'Isto', 'Sve gotovo', '‹ Nazad']);
+    });
+
+    it.each([
+        ['Okivanje', 'Okivanje'],
+        ['Montaža', 'Montaža'],
+    ])('„Dalje od ovoga…" → %s = taj korak u toku (prethodni se upišu kao gotovi), pa sljedeći nalog', (label, process) => {
+        const list = tap(open(), 'Dalje od ovoga…');
+        expect(list.effect).toBeUndefined();
+        expect(slotView(list.state).text).toContain('Hotel — stolovi — šta je sad u toku?\nKoraci prije toga se upišu kao gotovi.');
+        expect(texts(list.state)).toEqual(['Okivanje', 'Montaža', 'Sve gotovo', '‹ Nazad']);
+        const out = tap(list.state, label);
+        expect(out.effect).toEqual({ type: 'progress', orderId: 'o1', orderName: 'Hotel — stolovi', process, state: 'started' });
+        expect(slotView(out.state).text).toContain('Kuća — vrata — dokle su stigli?\nNalog 2 od 2');
+    });
+
+    it('„Sve gotovo" traži potvrdu; „Ne" vraća na nalog bez upisa; „Da" završava nalog bez procesa', () => {
+        const ask = tap(open(), 'Sve gotovo');
+        expect(ask.effect).toBeUndefined();
+        expect(slotView(ask.state).text).toContain('Hotel — stolovi — sve gotovo?');
+        expect(texts(ask.state)).toEqual(['Da, sve gotovo', 'Ne', '‹ Nazad']);
+        const no = tap(ask.state, 'Ne');
+        expect(no.effect).toBeUndefined();
+        expect(texts(no.state)[0]).toBe('Lakiranje u toku');
+        const yes = tap(ask.state, 'Da, sve gotovo');
+        expect(yes.effect).toEqual({ type: 'progress', orderId: 'o1', orderName: 'Hotel — stolovi', state: 'done' });
+        expect(slotView(yes.state).text).toContain('Nalog 2 od 2');
+        // I iz liste kasnijih koraka.
+        expect(texts(tap(tap(open(), 'Dalje od ovoga…').state, 'Sve gotovo').state)[0]).toBe('Da, sve gotovo');
+    });
+
+    it('„Nazad" iz podkoraka vraća na pitanje za isti nalog, ne na spisak', () => {
+        for (const sub of ['Dalje od ovoga…', 'Sve gotovo']) {
+            const back = tap(tap(open(), sub).state, 'Nazad');
+            expect(back.effect).toBeUndefined();
+            expect(slotView(back.state).text).toContain('Hotel — stolovi — dokle su stigli?');
+        }
+        // I kad je obilazak jedina stavka termina.
+        const only = newSlotState('b', '2026-11-10', [withLater()]);
+        expect(texts(only)).not.toContain('‹ Nazad');
+        expect(texts(tap(only, 'Dalje od ovoga…').state)).toContain('‹ Nazad');
+    });
+
+    it('na kraju obilaska jedan red: „Dalje" i „Sve gotovo" se broje kao ažurirano', () => {
+        let s = tap(tap(open(), 'Dalje od ovoga…').state, 'Montaža').state;
+        s = tap(tap(s, 'Sve gotovo').state, 'Da, sve gotovo').state;
+        expect(slotView(s).text).toBe('🕥 14:30 · još 1 od 2\n\n✅ Procesi: 2 ažurirano');
     });
 });
 
@@ -198,6 +275,41 @@ describe('upis dana', () => {
         expect(texts(diff.state)).toEqual(['Ostalo isto', 'Spisak', '‹ Nazad']);
         expect(tap(diff.state, 'Ostalo isto').effect).toMatchObject({ type: 'day_same' });
         expect(tap(diff.state, 'Spisak').effect).toEqual({ type: 'day_list', date: '2026-11-10' });
+    });
+});
+
+describe('upis dana vidi ono što je već rečeno', () => {
+    const partly = (rest: string[], workers = rest.length): SlotItem =>
+        ({ id: 'day', done: [], data: { date: '2026-11-10', label: 'danas', workers, orders: 2, booked: 9, rest } });
+
+    it('dio dana upisan: spisak kaže „još N", pitanje je samo za ostale, po imenu', () => {
+        const s = newSlotState('b', '2026-11-10', [partly(['Amer', 'Edin']), orders()]);
+        expect(texts(s)[0]).toBe('👷 Upis dana · još 2 radnika');
+        const q = tap(s, 'Upis dana').state;
+        expect(slotView(q).text).toContain('Upisano danas: 9 radnika. Ostali kao prethodni radni dan?\nOstali: Amer, Edin');
+        expect(texts(q)).toEqual(['Ostali isto', 'Ima izmjena', '‹ Nazad']);
+        expect(tap(q, 'Ostali isto').effect).toEqual({ type: 'day_same', date: '2026-11-10', label: 'danas' });
+    });
+
+    it.each([
+        [['Amer', 'Edin', 'Senad', 'Lejla'], 6, 'Ostali: Amer, Edin, Senad, Lejla i još 2'],
+        [['Amer'], 1, 'Ostali: Amer'],
+    ])('imena ostalih: %j od %i', (rest, workers, line) => {
+        const q = tap(newSlotState('b', '2026-11-10', [partly(rest, workers), orders()]), 'Upis dana').state;
+        expect(slotView(q).text).toContain(line);
+    });
+
+    it('sav dan već upisan: stavka stiže zatvorena, s redom i bez dugmeta', () => {
+        const d = { date: '2026-11-10', label: 'danas', workers: 0, orders: 0, booked: 11 };
+        const s = newSlotState('b', '2026-11-10', [{ id: 'day', data: d, done: [dayBookedLine(d)], closed: true }, orders()]);
+        expect(slotView(s).text).toBe('🕥 14:30 · još 1 od 2\n\n✅ Dan već upisan: 11 radnika');
+        expect(texts(s)).toEqual(['🧾 Narudžbe']);
+        expect(dayBookedLine({ ...d, label: 'jučer', booked: 1 })).toBe('Dan već upisan (jučer): 1 radnik');
+    });
+
+    it('napomena (tri termina bez odgovora) stoji ispod naslova', () => {
+        const s = newSlotState('b', '2026-11-10', [day(), orders()], 'Tri termina bez odgovora.');
+        expect(slotView(s).text).toBe('🕥 14:30 · još 2 od 2\nTri termina bez odgovora.');
     });
 });
 

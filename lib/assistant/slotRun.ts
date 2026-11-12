@@ -9,7 +9,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { adminDb } from '@/lib/server/firebaseAdmin';
-import { attachItems, getBookableWorkOrders, getItemsForWorkOrders, getWorkLogsInRange } from '@/lib/server/fieldRepo';
+import { attachItems, getBookableWorkOrders, getItemsForWorkOrders, getWorkLogsInRange, getWorkOrderRef } from '@/lib/server/fieldRepo';
 import { createBotWorkOrder } from '@/lib/server/fieldWorkOrders';
 import { createQuickOrder, listOrders } from '@/lib/server/orderWrites';
 import { setProgress } from '@/lib/server/workDiary';
@@ -20,7 +20,7 @@ import type { Order, Project, Supplier, WorkOrder } from '@/lib/types';
 import { toZoned } from './datetime';
 import { bookDayAsProposed, createProposalMessage, dayProposalSize, isWorkingDayFor } from './dayProposals';
 import {
-    newSlotState, orderLine, plural, roundOptions, slotDone, slotDue, slotReopen, slotTap, slotText, slotUndo, slotView,
+    dayBookedLine, newSlotState, orderLine, plural, roundOptions, slotDone, slotDue, slotReopen, slotTap, slotText, slotUndo, slotView,
     type DayData, type OrdersData, type Pick, type RoundData, type SlotEffect, type SlotItem, type SlotKind, type SlotState,
 } from './slots';
 import { listLinks, noteBotMessage, recordOp, setSlotSent, undoTurn, type AssistantLink } from './store';
@@ -118,9 +118,9 @@ function roundData(orders: WorkOrder[], logs: { Work_Order_ID?: string; Date?: s
             name: r.name, state: r.state as 'done' | 'active' | 'blocked', done: r.done, total: r.total,
             inProgress: r.perItem.filter(p => p.status === 'U toku').length,
         }));
-        const { last, options } = roundOptions(rows);
-        if (!options.length) continue;
-        out.push({ id: o.Work_Order_ID, name: short(o.Name || o.Work_Order_Number || 'Nalog', 34), last, options });
+        const { last, options, later } = roundOptions(rows);
+        if (!options.length && !later.length) continue;
+        out.push({ id: o.Work_Order_ID, name: short(o.Name || o.Work_Order_Number || 'Nalog', 34), last, options, ...(later.length ? { later } : {}) });
         if (out.length === MAX_ROUND) break;
     }
     return { orders: out };
@@ -129,6 +129,16 @@ function roundData(orders: WorkOrder[], logs: { Work_Order_ID?: string; Date?: s
 async function dayData(orgId: string, date: string, label: string): Promise<DayData | null> {
     const size = await dayProposalSize(orgId, date);
     return size ? { date, label, ...size } : null;
+}
+
+/**
+ * Upis dana kao stavka. Sav dan već upisan → u 14:30 stiže zatvoren, s redom (bez pitanja);
+ * jučerašnji dan u 10:30 tada ne dolazi uopšte.
+ */
+function dayItemOf(day: DayData | null, showBooked: boolean): SlotItem | null {
+    if (!day) return null;
+    if (!day.workers) return day.booked && showBooked ? { id: 'day', data: day, done: [dayBookedLine(day)], closed: true } : null;
+    return { id: 'day', data: day, done: [] };
 }
 
 /** Stavke termina: 10:30 = Narudžbe, Obilazak (+ jučerašnji upis dana ako je ostao); 14:30 = Upis dana, Obilazak, Narudžbe. */
@@ -143,7 +153,7 @@ export async function buildSlotItems(orgId: string, kind: SlotKind, date: string
     const round = roundData(orders, logs, addDays(date, -1));
     const items: SlotItem[] = [];
     const push = (it: SlotItem | null) => { if (it) items.push(it); };
-    const dayItem: SlotItem | null = day ? { id: 'day', data: day, done: [] } : null;
+    const dayItem = dayItemOf(day, kind === 'b');
     const roundItem: SlotItem | null = round.orders.length ? { id: 'round', data: round, done: [] } : null;
     const ordersItem: SlotItem = { id: 'orders', data: od, done: [] };
     if (kind === 'b') { push(dayItem); push(roundItem); push(ordersItem); }
@@ -197,6 +207,20 @@ export async function sendSlots(now: Date, tz: string): Promise<number> {
 
 // ─── Upisi ────────────────────────────────────────────────────────────
 
+/** „Sve gotovo" u obilasku: nalog u Završeno, danom zadnjeg završenog proizvoda (trag za Poništi). */
+async function closeWorkOrder(
+    orgId: string, workOrderId: string, days: string[], today: string,
+    track: (path: string, data: Record<string, unknown> | null) => void,
+): Promise<void> {
+    const ref = await getWorkOrderRef(orgId, workOrderId);
+    if (!ref) return;
+    const data = (await ref.get()).data() as WorkOrder | undefined;
+    if (!data || data.Status === 'Završeno') return;
+    track(ref.path, data as unknown as Record<string, unknown>);
+    const day = days.length ? days.slice().sort().at(-1)! : today;
+    await ref.update({ Status: 'Završeno', Completed_At: `${day}T15:00:00.000Z` });
+}
+
 interface Ran { ok: boolean; line?: string; turnId?: string; close?: boolean; error?: string; extra?: { text: string; buttons?: ButtonRows } }
 
 async function runEffect(link: AssistantLink, slotId: string, state: SlotState, effect: SlotEffect, now: Date, tz: string): Promise<Ran> {
@@ -234,11 +258,14 @@ async function runEffect(link: AssistantLink, slotId: string, state: SlotState, 
 
     if (effect.type === 'progress') {
         const befores = new Map<string, Record<string, unknown> | null>();
+        const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
         const res = await setProgress(link.orgId, {
-            workOrderIds: [effect.orderId], process: effect.process, exactProcess: true, state: effect.state, today,
-        }, (path, data) => { if (!befores.has(path)) befores.set(path, data); });
+            workOrderIds: [effect.orderId], ...(effect.process ? { process: effect.process, exactProcess: true } : {}), state: effect.state, today,
+        }, track);
         if (!res.ok) return { ok: false, error: res.error };
-        await Promise.all(Array.from(befores.entries()).map(([path, before]) => op(path, before, `${effect.orderName}: ${effect.process}`)));
+        // „Sve gotovo": proizvodi su završeni (dan zadnjeg rada), pa se i nalog zatvara — tim danom.
+        if (!effect.process) await closeWorkOrder(link.orgId, effect.orderId, res.orders.flatMap(o => o.products.map(p => p.date)), today, track);
+        await Promise.all(Array.from(befores.entries()).map(([path, before]) => op(path, before, `${effect.orderName}: ${effect.process || 'sve gotovo'}`)));
         // Red se piše tek na kraju obilaska (slots.finishRound); ovdje samo trag za Poništi.
         return { ok: true, turnId: befores.size ? turnId : undefined };
     }
@@ -246,8 +273,13 @@ async function runEffect(link: AssistantLink, slotId: string, state: SlotState, 
     if (effect.type === 'day_same') {
         const res = await bookDayAsProposed(link, effect.date, today);
         if (!res.ok) return { ok: false, error: res.error };
-        const who = `${res.workers} ${plural(res.workers, 'radnik', 'radnika', 'radnika')}`;
-        return { ok: true, line: `Dan upisan (${effect.label}): ${who}`, turnId: res.turnId, close: true };
+        const n = (k: number) => `${k} ${plural(k, 'radnik', 'radnika', 'radnika')}`;
+        // Svi su u međuvremenu upisani porukom: ništa novo, stavka se samo zatvara.
+        if (!res.workers) return { ok: true, line: `Dan već upisan (${effect.label}): ${n(res.booked)}`, close: true };
+        const line = res.booked
+            ? `Dan upisan (${effect.label}): ${n(res.booked)} ranije + ${n(res.workers)} kao prethodni dan`
+            : `Dan upisan (${effect.label}): ${n(res.workers)}`;
+        return { ok: true, line, turnId: res.turnId, close: true };
     }
 
     // day_list: stari prijedlog s kvačicama, kao posebna poruka.
@@ -289,6 +321,21 @@ async function settle(link: AssistantLink, slotId: string, tapped: { state: Slot
     return { state, toast: ran.line ? 'Upisano' : undefined, extra: ran.extra };
 }
 
+/** Otvaranje upisa dana: brojevi iz ERP-a sada, ne iz časa slanja. Sve upisano → stavka se zatvara. */
+async function freshDay(orgId: string, state: SlotState, action: string): Promise<SlotState> {
+    if (action[0] !== 'o' || state.flow) return state;
+    const i = Number(action.slice(1));
+    const it = state.items[i];
+    if (!it || it.id !== 'day' || it.closed) return state;
+    const day = await dayData(orgId, it.data.date, it.data.label);
+    if (!day || (day.workers === it.data.workers && (day.booked || 0) === (it.data.booked || 0))) return state;
+    const items = state.items.slice();
+    items[i] = day.workers
+        ? { ...it, data: day }
+        : { ...it, data: day, done: [...it.done, dayBookedLine(day)], closed: true };
+    return { ...state, items };
+}
+
 /** Dugme na poruci termina. */
 export async function handleSlotButton(link: AssistantLink, slotId: string, action: string, now: Date, tz: string, stamp?: string): Promise<SlotReply & { extra?: Ran['extra'] }> {
     const found = await load(link, slotId);
@@ -313,8 +360,16 @@ export async function handleSlotButton(link: AssistantLink, slotId: string, acti
         return reply(slotId, state, 'Poništeno');
     }
 
-    const tapped = slotTap(slot.State, action);
-    if (tapped.state === slot.State) return { text: '', toast: tapped.toast || 'Ovo dugme više ne važi.' };
+    // Upis dana se otvara sa svježim stanjem: diktat poslije slanja termina se vidi odmah.
+    const current = await freshDay(link.orgId, slot.State, action);
+    if (current !== slot.State && current.items.find(i => i.id === 'day')?.closed) {
+        // Dodir se broji (termin nije „bez odgovora", staro dugme više ne važi).
+        const state = { ...current, taps: current.taps + 1 };
+        await save(ref, state, now);
+        return reply(slotId, state, 'Dan je već upisan');
+    }
+    const tapped = slotTap(current, action);
+    if (tapped.state === current) return { text: '', toast: tapped.toast || 'Ovo dugme više ne važi.' };
     const out = await settle(link, slotId, tapped, now, tz);
     await save(ref, out.state, now);
     return { ...reply(slotId, out.state, out.toast), extra: out.extra };

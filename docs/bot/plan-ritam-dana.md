@@ -61,9 +61,13 @@ Korist: materijal i dnevnice koji odu mimo sistema više ne nestaju, nego se vid
 
 U oba termina, samo nalozi na kojima se radilo od prošlog obilaska. Po nalogu jedno pitanje „dokle su stigli?", dugmad su sljedeći koraci iz toka tog naloga i „Isto". Prethodne korake ERP zaključi sam (postoji).
 
+Kad je pogon dalje nego što ERP zna (P-072): „Dalje od ovoga…" otvori kasnije korake toka — izabrani je u toku, svi prije njega gotovi. „Sve gotovo" (uz potvrdu „Da, sve gotovo") završi sve proizvode danom zadnjeg rada i zatvori nalog. „Nazad" iz ta dva koraka vraća na isti nalog.
+
 ## Upis dana (14:30)
 
 „Je li danas sve kao juče?" → Sve isto (1 dodir) ili Ima izmjena → jedna izgovorena rečenica s razlikama. Radnik bez posla u sistemu dobija dugme „Bez projekta".
+
+Termin vidi jutarnji diktat (P-073): kad je dio dana već upisan, pitanje je „Upisano danas: N. Ostali kao prethodni radni dan?" s imenima ostalih, a „Ostali isto" upiše samo njih. Sav dan upisan prije 14:30 → red „✅ Dan već upisan", bez pitanja. Stavka se pri otvaranju čita iz ERP-a ponovo, pa se vidi i diktat poslije slanja termina.
 
 ## Faze
 

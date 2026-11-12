@@ -136,9 +136,11 @@ async function bookProposal(
  * ispadaju sami) i upis svih redova. Poništava se kao i prijedlog (turnId dp-<id>).
  */
 export async function bookDayAsProposed(link: AssistantLink, date: string, today: string): Promise<
-    { ok: true; workers: number; turnId: string } | { ok: false; error: string }
+    { ok: true; workers: number; booked: number; turnId?: string } | { ok: false; error: string }
 > {
     const proposal = await loadDayProposal(link.orgId, date);
+    // Dan je u međuvremenu sav upisan (diktat poslije slanja termina): to je uspjeh, ne greška.
+    if (!proposal.lines.length && proposal.booked.length) return { ok: true, workers: 0, booked: proposal.booked.length };
     if (!proposal.lines.length) return { ok: false, error: 'Nema šta upisati — svi su već upisani ili odsutni.' };
     const ref = adminDb().collection(COL).doc();
     const doc: StoredProposal = {
@@ -148,14 +150,26 @@ export async function bookDayAsProposed(link: AssistantLink, date: string, today
     await ref.set(doc);
     const out = await bookProposal(link, ref, doc, today);
     if (!out.buttons?.length) return { ok: false, error: out.toast || out.text || 'Upis nije prošao.' };
-    return { ok: true, workers: new Set(proposal.lines.flatMap(l => l.workerIds)).size, turnId: `dp-${ref.id}` };
+    return { ok: true, workers: new Set(proposal.lines.flatMap(l => l.workerIds)).size, booked: proposal.booked.length, turnId: `dp-${ref.id}` };
 }
 
-/** Koliko radnika i naloga nosi prijedlog za dan (za red u terminu); null kad nema ničega. */
-export async function dayProposalSize(orgId: string, date: string): Promise<{ workers: number; orders: number } | null> {
+/** Imena za koja termin pita, da se vidi na koga se „Ostali isto" odnosi. */
+const REST_NAMES = 4;
+
+/**
+ * Koliko radnika i naloga prijedlog za dan još nosi i koliko ih je već upisano
+ * (jutarnji diktat, aplikacija). null kad nema ni prijedloga ni upisa.
+ */
+export async function dayProposalSize(orgId: string, date: string): Promise<{ workers: number; orders: number; booked: number; rest: string[] } | null> {
     const p = await loadDayProposal(orgId, date);
-    if (!p.lines.length) return null;
-    return { workers: new Set(p.lines.flatMap(l => l.workerIds)).size, orders: new Set(p.lines.map(l => l.workOrderId)).size };
+    if (!p.lines.length && !p.booked.length) return null;
+    const names = Array.from(new Set(p.lines.flatMap(l => l.workerNames)));
+    return {
+        workers: new Set(p.lines.flatMap(l => l.workerIds)).size,
+        orders: new Set(p.lines.map(l => l.workOrderId)).size,
+        booked: p.booked.length,
+        rest: names.slice(0, REST_NAMES),
+    };
 }
 
 /** Rupe za jutarnji pregled; null kad ih nema. */
