@@ -22,7 +22,7 @@ import { loadMailPeople, notePeople, peopleStale, refreshMailPeople } from './ma
 import type { MailHeaders } from '@/lib/email/directory';
 import { loadContacts } from './emailDrafts';
 import { classifyMail, type MailClass, type MailContext, type MailOrderRef } from '@/lib/email/classify';
-import { mailMessage, NOTIFY_KINDS } from '@/lib/assistant/mailText';
+import { invoiceBatchMessage, mailMessage, NOTIFY_KINDS } from '@/lib/assistant/mailText';
 import { companyOf } from '@/lib/assistant/orderDocuments';
 import { addressedToMe, followMessage, followOf, needsReply, nextFollowAt } from '@/lib/email/followUp';
 import { companyTag } from '@/lib/email/compose';
@@ -169,7 +169,8 @@ export async function syncMailbox(account: EmailAccount, now = new Date()): Prom
         if (follow) Object.assign(item, { Follow: follow, Follow_Count: 0, Next_Follow_At: nextFollowAt(item.Received_At, follow, 0) });
 
         // Izvan termina (10:30 / 14:30) se ne zvoni: obavijest čeka sljedeći termin (flushMailNotices).
-        if (link && hold && (NOTIFY_KINDS.has(item.Kind) || follow === 'reply')) {
+        // Račun uvijek čeka (i u terminu), da ih flushMailNotices javi zajedno, a ne jedan po jedan.
+        if (link && (hold || item.Kind === 'invoice') && (NOTIFY_KINDS.has(item.Kind) || follow === 'reply')) {
             item.Notify_Pending = NOTIFY_KINDS.has(item.Kind) ? 'doc' : 'reply';
         } else if (link && NOTIFY_KINDS.has(item.Kind)) {
             const m = mailMessage(item, o => orderNo.get(o));
@@ -248,12 +249,37 @@ export async function flushMailNotices(now = new Date()): Promise<number> {
     const perOwner = new Map<string, number>();
     const orderNos = new Map<string, Map<string, string>>();
     let sent = 0;
-    for (const doc of snap.docs.sort((a, b) => String(a.data().Received_At).localeCompare(String(b.data().Received_At)))) {
+    const docs = snap.docs.sort((a, b) => String(a.data().Received_At).localeCompare(String(b.data().Received_At)));
+    // Više računa istog dobavljača (znaju stići 4–5 u par minuta) ide kao JEDNA obavijest.
+    const invoiceKey = (i: MailInboxItem) => `${i.Owner_UID}|${i.Supplier_ID || i.From}`;
+    const invoices = new Map<string, typeof docs>();
+    for (const d of docs) {
+        const i = d.data() as MailInboxItem;
+        if (i.Kind === 'invoice' && i.Notify_Pending === 'doc' && !i.Done_At) invoices.set(invoiceKey(i), [...(invoices.get(invoiceKey(i)) || []), d]);
+    }
+    const batched = new Set<string>();
+    for (const doc of docs) {
         const item = doc.data() as MailInboxItem;
+        if (batched.has(doc.id)) continue;
         const n = perOwner.get(item.Owner_UID) || 0;
         if (n >= 5) continue;
         const link = await getLinkByUid(item.Owner_UID);
         if (!link || item.Done_At) { await doc.ref.set({ Notify_Pending: null }, { merge: true }); continue; }
+        const group = item.Kind === 'invoice' ? invoices.get(invoiceKey(item)) || [] : [];
+        if (group.length > 1) {
+            const text = invoiceBatchMessage(group.map(d => d.data() as MailInboxItem));
+            try {
+                await sendMessage(link.chatId, text);
+                await noteBotMessage(link.chatId, `pošta [id ${group.map(d => (d.data() as MailInboxItem).Message_ID).join(', ')}]`, text, now);
+                await Promise.all(group.map(d => d.ref.set({ Notify_Pending: null, Notified_At: now.toISOString() }, { merge: true })));
+                group.forEach(d => batched.add(d.id));
+                perOwner.set(item.Owner_UID, n + 1);
+                sent++;
+            } catch (e) {
+                console.error('[mail] obavijest u terminu:', e instanceof Error ? e.message : e);
+            }
+            continue;
+        }
         if (!orderNos.has(item.Organization_ID)) {
             const orders = await db.collection(COLLECTIONS.ORDERS).where('Organization_ID', '==', item.Organization_ID).get();
             orderNos.set(item.Organization_ID, new Map(orders.docs.map(d => [(d.data() as Order).Order_ID, (d.data() as Order).Order_Number])));

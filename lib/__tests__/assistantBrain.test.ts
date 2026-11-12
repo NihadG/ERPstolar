@@ -135,6 +135,20 @@ describe('asistent od poruke do baze', () => {
         expect(out.reply).toContain('1.3.2027');
     });
 
+    // Revizija 11.11. (P-071): na pitanje je model pokušao upis rada.
+    it('čisto pitanje ne upisuje ni kad model pokuša: ERP odbije upis i model odgovori iz podataka', async () => {
+        const before = docs('tasks').length;
+        mockSent.length = 0;
+        const out = await say('Na čemu radi ekipa danas', [
+            { calls: [{ name: 'create_task', args: { title: 'Na čemu radi ekipa danas', category: 'general' } }] },
+            { text: 'Danas nema upisanog rada.' },
+        ]);
+        expect(docs('tasks')).toHaveLength(before);
+        expect(lastToolResult(mockSent[1])).toMatchObject({ ok: false, error: expect.stringContaining('Poruka je pitanje') });
+        expect(out.changed).toBeFalsy();
+        expect(out.reply).toContain('Danas nema upisanog rada');
+    });
+
     it('nepostojeća oznaka radnika se odbija i model dobija grešku', async () => {
         const before = docs('tasks').length;
         mockSent.length = 0;

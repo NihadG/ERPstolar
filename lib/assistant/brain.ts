@@ -49,7 +49,7 @@ import { addUsage, emptyUsage } from './usage';
 import { presenceQuestion } from './presenceAsk';
 import { workersWithoutPresence } from '@/lib/server/presence';
 import { mentionNote } from './mentions';
-import { ALL_TOOLS, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
+import { ALL_TOOLS, QUESTION_EXTRA, TOOL_SET_LABEL, toolSetFor, toolsFor, type ToolSet } from './toolRouting';
 import { isComplaint, turnSignals } from './signals';
 import { CONTINUATION_MINUTES, continuesPrevious, inheritedAsk, type UnfinishedAsk } from './continuation';
 
@@ -479,8 +479,11 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
     });
     // Nedovršen zahtjev („podsjeti me sutra u 8…" na koji je bot samo odgovorio) traži upis i u dopuni.
     const intent = inherited
-        ? { ...ownIntent, kinds: Array.from(new Set([...inherited.kinds, ...ownIntent.kinds.filter(k => k !== 'question')])), expectsWrite: true }
+        ? { ...ownIntent, kinds: Array.from(new Set([...inherited.kinds, ...ownIntent.kinds.filter(k => k !== 'question')])), expectsWrite: true, pureQuestion: false }
         : ownIntent;
+    // Čisto pitanje ne upisuje ništa, ni kad model pokuša (11.11.: „na kojim nalozima rade Amer i Edin
+    // danas" → pokušaj upisa rada). Odgovor na botovo pitanje i pritužba nisu pitanje u tom smislu.
+    const questionOnly = intent.pureQuestion && !input.session.pending && !complaint;
     const writeKinds = intent.kinds.filter(k => k !== 'question' && k !== 'table');
     // „Pogrešno totalno", „ma nešto je pogrešno, nemoj ništa raditi": pritužba bez novog sadržaja ne
     // pravi ništa novo (izmjena postojećeg i dalje smije). Kratka ili s „nemoj / ne radi ništa".
@@ -750,9 +753,17 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
                     results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify({ ok: true, note: 'Sad imaš sve alate — pozovi onaj koji treba.' }) });
                     continue;
                 }
+                const args = (use.input || {}) as Record<string, unknown>;
+                // PDF narudžbe („pošalji mi PDF") je prikaz i ostaje dozvoljen na pitanje.
+                if (questionOnly && WRITE_TOOLS.has(use.name) && !QUESTION_EXTRA.has(use.name)) {
+                    const out = { ok: false, error: QUESTION_NO_WRITE };
+                    toolCalls.push(toolCallLog(use.name, use.input, out));
+                    allOk = false;
+                    results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(out), is_error: true });
+                    continue;
+                }
                 if (WRITE_TOOLS.has(use.name)) writeAttempted = true;
                 if (READ_TOOLS.has(use.name)) readUsed = true;
-                const args = (use.input || {}) as Record<string, unknown>;
                 const ran = noNewWrites && NEW_WRITES.has(use.name)
                     ? { ok: false, error: 'Korisnik je rekao da je pogrešno — ne pravi ništa novo. Reci šta si razumio i pitaj šta treba drugačije.' }
                     : await runTool(env, use.name, args);
@@ -948,7 +959,9 @@ export async function runPendingAction(input: {
 /** Zamjenica za osobu: poruka se naslanja na onog o kome je bot upravo govorio. */
 const PRONOUN = /\b(on|ona|oni|one|njega|njemu|nju|njoj|njih|njima|obojica|oba)\b/;
 
-const NOT_WRITTEN_NOTE = 'ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
+/** Model je na čisto pitanje pokušao upis: ERP ga odbije i kaže šta umjesto toga. */
+const QUESTION_NO_WRITE = 'Poruka je pitanje — ništa se ne upisuje. Odgovori iz podataka (alati za čitanje). Ako korisnik uz pitanje očito traži i izmjenu, pitaj ga jednim pitanjem (ask_user) da potvrdi šta da upišem.';
+const NOT_WRITTEN_NOTE ='ERP: ništa nije upisano — tekst odgovora nije upis. Ako poruka traži upis, pozovi alat (svaka stvar svojim pozivom ili u items). Ako poruka ne traži upis, odgovori bez tvrdnje da je nešto zapisano.';
 
 interface Missing { sizes: string[]; locations: string[]; workers: string[]; times: string[] }
 

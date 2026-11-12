@@ -65,7 +65,7 @@ import { inboxRef } from '@/lib/server/mailSync';
 import { COLLECTIONS } from '@/lib/services/shared/collections';
 import { gmailQuery, type MailSearch } from '@/lib/email/search';
 import { parseAddressList, parseMailbox } from '@/lib/email/addresses';
-import { firmDomains, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
+import { firmDomains, firmLabels, isValidEmail, normalizeEmail, searchContacts, searchFirms, splitEmails } from '@/lib/contacts';
 import { queryTokens } from '@/lib/command/search';
 import { tableFileName, type TableDoc } from '@/lib/tables/table';
 import { requestedColumns } from '@/lib/tables/columns';
@@ -2646,9 +2646,10 @@ async function searchMailTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 }
 
 /** Osoba, firma ili projekat → adrese, domeni i imena za Gmail upit (pretraga i odgovor na mail). */
-async function mailTarget(env: ToolEnv, who: string, project: ProjectRef | null): Promise<Pick<MailSearch, 'addresses' | 'domains' | 'names' | 'phrase'>> {
+async function mailTarget(env: ToolEnv, who: string, project: ProjectRef | null): Promise<Pick<MailSearch, 'addresses' | 'domains' | 'firms' | 'names' | 'phrase'>> {
     const addresses: string[] = [];
     const domains: string[] = [];
+    const firmNames: string[] = [];
     const names: string[] = [];
     let phrase = '';
     const contacts = who || project ? await loadContacts(env.orgId) : [];
@@ -2667,6 +2668,8 @@ async function mailTarget(env: ToolEnv, who: string, project: ProjectRef | null)
             if (!found.length) found.push(...searchPeople(await loadMailPeople(env.uid), who).slice(0, 4).map(p => p.Email));
             addresses.push(...found);
             domains.push(...firmDomains([...firms.flatMap(f => splitEmails(f.Email || '')), ...firmPeople.map(c => c.Email), ...people.filter(c => c.Supplier_ID).map(c => c.Email)]));
+            // Ista firma piše i s druge domene (računi iz centrale): traži se i po imenu firme iz domene.
+            firmNames.push(...firmLabels(domains));
             // Nikog u Kontaktima ni među dobavljačima → Gmail traži ime u zaglavljima Od/Za.
             if (!found.length) names.push(...queryTokens(who).filter(t => t.length >= 3).slice(0, 2));
         }
@@ -2674,7 +2677,7 @@ async function mailTarget(env: ToolEnv, who: string, project: ProjectRef | null)
         addresses.push(...contacts.filter(c => (c.Project_Roles || []).some(r => r.Project_ID === project.id)).map(c => c.Email));
         phrase = project.name || '';
     }
-    return { addresses, domains, names, phrase };
+    return { addresses, domains, firms: firmNames, names, phrase };
 }
 
 /**
@@ -3601,51 +3604,60 @@ function askUserTool(env: ToolEnv, a: Args): ToolResult {
     return { ok: true, note: 'Pitanje je poslano. Ne radi ništa više dok korisnik ne odgovori.' };
 }
 
+/**
+ * Izvršenje po nazivu alata. Svaki alat iz TOOLS mora biti ovdje (i obrnuto) — to čuva
+ * lib/__tests__/assistantToolWiring.test.ts. 10.11. je `read_mail_pdf` bio u spisku i u uputi,
+ * a bez izvršenja: bot je javljao „Nepoznat alat" na svaki račun u prilogu.
+ */
+export const TOOL_HANDLERS: Record<string, (env: ToolEnv, args: Args) => ToolResult | Promise<ToolResult>> = {
+    create_task: createTaskTool,
+    update_task: updateTaskTool,
+    remember: rememberTool,
+    update_memory: updateMemoryTool,
+    search_memory: searchMemoryTool,
+    find_material: findMaterialTool,
+    create_order: createOrderTool,
+    product_materials: productMaterialsTool,
+    list_orders: listOrdersTool,
+    manage_order: manageOrderTool,
+    log_work: logWorkTool,
+    fill_work_days: fillWorkDaysTool,
+    set_presence: setPresenceTool,
+    set_progress: setProgressTool,
+    order_status: orderStatusTool,
+    work_report: workReportTool,
+    order_pdf: orderPdfTool,
+    email_order: emailOrderTool,
+    email_contact: emailContactTool,
+    reply_mail: replyMailTool,
+    link_mail: linkMailTool,
+    find_contact: findContactTool,
+    chat_message: chatMessageTool,
+    search_mail: searchMailTool,
+    read_mail_pdf: readMailPdfTool,
+    save_contact: saveContactTool,
+    learn_name: learnNameTool,
+    material_status: materialStatusTool,
+    material_arrived: materialArrivedTool,
+    project_brief: projectBriefTool,
+    project_history: projectHistoryTool,
+    list_notebook: listNotebookTool,
+    make_table: makeTableTool,
+    task_detail: taskDetailTool,
+    task_pdf: taskPdfTool,
+    ask_user: askUserTool,
+};
+
 export async function runTool(env: ToolEnv, name: string, args: Args): Promise<ToolResult> {
     // „Preskoči" na ERP-ovom pitanju: ništa se ne upisuje.
     if (args && args.__skip === true) {
         env.summaries.push('↷ Preskočeno — to nisam upisao.');
         return { ok: true, skipped: true };
     }
+    const handler = Object.prototype.hasOwnProperty.call(TOOL_HANDLERS, name) ? TOOL_HANDLERS[name] : undefined;
+    if (!handler) return { ok: false, error: `Nepoznat alat ${name}.` };
     try {
-        switch (name) {
-            case 'create_task': return await createTaskTool(env, args);
-            case 'update_task': return await updateTaskTool(env, args);
-            case 'remember': return await rememberTool(env, args);
-            case 'update_memory': return await updateMemoryTool(env, args);
-            case 'search_memory': return await searchMemoryTool(env, args);
-            case 'find_material': return await findMaterialTool(env, args);
-            case 'create_order': return await createOrderTool(env, args);
-            case 'product_materials': return await productMaterialsTool(env, args);
-            case 'list_orders': return await listOrdersTool(env, args);
-            case 'manage_order': return await manageOrderTool(env, args);
-            case 'log_work': return await logWorkTool(env, args);
-            case 'fill_work_days': return await fillWorkDaysTool(env, args);
-            case 'set_presence': return await setPresenceTool(env, args);
-            case 'set_progress': return await setProgressTool(env, args);
-            case 'order_status': return await orderStatusTool(env, args);
-            case 'work_report': return await workReportTool(env, args);
-            case 'order_pdf': return await orderPdfTool(env, args);
-            case 'email_order': return await emailOrderTool(env, args);
-            case 'email_contact': return await emailContactTool(env, args);
-            case 'reply_mail': return await replyMailTool(env, args);
-            case 'link_mail': return await linkMailTool(env, args);
-            case 'find_contact': return await findContactTool(env, args);
-            case 'chat_message': return await chatMessageTool(env, args);
-            case 'search_mail': return await searchMailTool(env, args);
-            case 'save_contact': return await saveContactTool(env, args);
-            case 'learn_name': return await learnNameTool(env, args);
-            case 'material_status': return await materialStatusTool(env, args);
-            case 'material_arrived': return await materialArrivedTool(env, args);
-            case 'project_brief': return await projectBriefTool(env, args);
-            case 'project_history': return await projectHistoryTool(env, args);
-            case 'list_notebook': return await listNotebookTool(env, args);
-            case 'make_table': return await makeTableTool(env, args);
-            case 'task_detail': return taskDetailTool(env, args);
-            case 'task_pdf': return taskPdfTool(env, args);
-            case 'ask_user': return askUserTool(env, args);
-            default: return { ok: false, error: `Nepoznat alat ${name}.` };
-        }
+        return await handler(env, args);
     } catch (e) {
         console.error(`[assistant] alat ${name} pao:`, e);
         return { ok: false, error: 'Upis nije uspio (greška na serveru).' };

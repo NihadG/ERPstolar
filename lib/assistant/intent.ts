@@ -20,6 +20,8 @@ export interface MessageIntent {
     kinds: MessageKind[];
     /** Poruka traži upis (nije samo pitanje). */
     expectsWrite: boolean;
+    /** Samo pitanje (ili tabela/dokument): ERP tada ne dozvoljava upis ni kad ga model pokuša. */
+    pureQuestion: boolean;
     /** Rečeni radnici (ID) — ime, prezime ili naučeni nadimak. „Svi" se ovdje ne širi. */
     workerIds: string[];
     /** Riječi koje su vjerovatno nadimak radnika („Kemo" → Kemal); više ID-jeva = nejasno. */
@@ -34,6 +36,37 @@ export const NOTEBOOK_SAID = /\b(biljesk\w*|biljezi|zabiljezi\w*|biljeznic\w*|za
 const FUTURE_DAY =/^(sutra|prekosutra|ponedjeljak|utorak|srijedu|srijeda|cetvrtak|petak|subotu|subota|nedjelju|nedjelja)$/;
 
 const QUESTION_START =/^(sta|šta|koliko|gdje|kad|kada|ko|koji|koja|koje|da li|jel|je li|ima li|imam li|imamo li|kako|zasto|zašto|pokazi|pokaži|posalji mi|pošalji mi|treba mi pdf|daj mi)\b/;
+/** Upitna riječ iza prijedloga: „na kojim nalozima rade…", „na čemu je…", „za koga je…", „od čega…" (11.11.). */
+const PREPOSITION_QUESTION = /^(na|u|za|od|sa|s|kod|po|iz|do|o|pred|prema|bez|kroz|uz|pod|nad)\s+(koj\w*|cemu|cem|cim|cime|cega|koga|kome|kim|ciji\w*|sta|koliko)\b/;
+/** Glagol + „li" na početku: „imaju li…", „jesu li…", „treba li…", „može li Amer…". */
+const VERB_LI = /^[a-z]+ li\b/;
+/**
+ * Molba botu u obliku pitanja („možeš li upisati…", „hoćeš li otkazati…?", „da li možeš…") je nalog,
+ * ne pitanje — upitnik na kraju je ne pretvara u pitanje. „Može li Amer sutra na montažu" nije molba botu.
+ */
+const POLITE_REQUEST = /^((da li|jel|je li|je l)\s+)?(mozes|mozete|hoces|hocete|bi li|bil|bi mogao|bi mogla|biste)\b/;
+const REMINDER_QUESTION = /^(hoces li|da li ces|jel ces)\b/;
+
+const startsAsQuestion = (t: string) => QUESTION_START.test(t) || PREPOSITION_QUESTION.test(t) || VERB_LI.test(t);
+
+/**
+ * Da li je poruka pitanje. `asks` = sama poruka počinje kao pitanje (ne samo upitnik na kraju) —
+ * tada rečeni radnik i „rade / radio" nisu upis rada („na kojim nalozima rade Amer i Edin danas").
+ * Pitanje u zadnjoj rečenici važi i iza zalijepljenog teksta („…obratite se kontakt osobi. Imaju li
+ * ovakvi mailovi od…" 10.11. je obrađeno kao upis).
+ */
+export function questionOf(text: string): { question: boolean; asks: boolean } {
+    const t = foldText(text).trim();
+    // „Hoćeš li me napomenuti sutra … i kad" pita za podsjetnik koji postoji (03.11. — bot je pravio novi);
+    // „hoćeš li me napomenuti sutra u 8 da…" bez „kad" je molba. „Jesi li upisao…" je uvijek pitanje.
+    if (REMINDER_QUESTION.test(t) && /\b(i kad|kad|kada|u koliko|koliko sati)\b/.test(t)) return { question: true, asks: true };
+    if (POLITE_REQUEST.test(t)) return { question: false, asks: false };
+    const asks = startsAsQuestion(t);
+    const sentences = text.split(/(?<=[.!?])\s+|\n+/).map(s => foldText(s).trim()).filter(Boolean);
+    const last = sentences.length > 1 ? sentences[sentences.length - 1] : '';
+    const lastAsks = !!last && !POLITE_REQUEST.test(last) && startsAsQuestion(last);
+    return { question: asks || lastAsks || /\?\s*$/.test(text.trim()), asks };
+}
 
 export function messageIntent(text: string, workers: GroundRef[], facts: { dims: string[]; widths: string[]; locations: string[] }): MessageIntent {
     const t = foldText(text).trim();
@@ -59,10 +92,7 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     // Nadimak („Kemo") samo kao napomena modelu — u pokrivenost ulaze rečena imena.
     const nicknames = [...workerNicknames(text, workers), ...shared];
     const anyWorker = workerIds.length > 0 || nicknames.length > 0;
-    // „Hoćeš li me napomenuti sutra … i kad" pita za podsjetnik koji postoji (03.11. — bot je pravio novi);
-    // „hoćeš li me napomenuti sutra u 8 da…" bez „kad" je molba. „Jesi li upisao…" je uvijek pitanje.
-    const question = /\?\s*$/.test(text.trim()) || QUESTION_START.test(t)
-        || /^jesi li\b/.test(t) || (/^(hoces li|da li ces|jel ces)\b/.test(t) && /\b(i kad|kad|kada|u koliko|koliko sati)\b/.test(t));
+    const { question, asks } = questionOf(text);
 
     if (/\b(napomeni|napomenuti|podsjeti|podsjetiti|podsjetnik|javi mi|napisi mi|napiši mi|posalji mi poruku|pošalji mi poruku|ne zaboravi|zapamti da)\b/.test(t)
         || (times.length && /\b(trebam|moram|treba|javiti|nazvati|zvati|naruciti|naručiti|platiti|otici|otići|pitati)\b/.test(t))) kinds.add('reminder');
@@ -76,13 +106,14 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
     if (workerIds.length && !workReport && /\b(zada[tc]\w*|napomen\w*|dodaj\w*|dodati|ubaci\w*|stavi|staviti|ponesu|ponijeti|neka)\b/.test(t)) kinds.add('task');
     if (/\b(naruci|naruči|narucio|naručio|narudzb|narudžb)\w*/.test(t) && !question) kinds.add('order');
     if (/\b(stig|dosa|dosl|dostav|isporuc)\w*/.test(t) && !question && !anyWorker) kinds.add('arrival');
-    if (/\b(prisut|bolovanj|odmor|na terenu|nije dosao|nije došao|nisu dosli|nisu došli|odsut)\w*/.test(t) && (workerIds.length || mentionsEveryone(text))) kinds.add('presence');
+    if (/\b(prisut|bolovanj|odmor|na terenu|nije dosao|nije došao|nisu dosli|nisu došli|odsut)\w*/.test(t) && (workerIds.length || mentionsEveryone(text)) && !asks) kinds.add('presence');
     if ((facts.locations.length && (facts.dims.length || facts.widths.length || /\b(fali|fale|nije postavljen|nisam postavio|pogresno|pogrešno|ima|imam|stoji|u stanu|na hodniku)\b/.test(t)))
         || /\b(u kombiju|na hodniku|u stanu)\b/.test(t)) kinds.add('notebook');
     // Zadatak ili podsjetnik nosi stanje stvari u sebi („ogledala su ispred stana", „ključa nije bilo"):
     // bilježnica samo kad je rečena. Inače jedna poruka napravi zadatak + 8 bilješki (03.11.).
     if ((kinds.has('task') || kinds.has('reminder')) && !NOTEBOOK_SAID.test(t)) kinds.delete('notebook');
-    if (anyWorker && !kinds.has('task')
+    // Poruka koja POČINJE kao pitanje („na kojim nalozima rade Amer i Edin danas", „šta je Amer radio") nije upis rada.
+    if (anyWorker && !kinds.has('task') && !asks
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
     // „Ne može biti decimalni broj, ako je radni dan gotov" je o izvještaju, ne o proizvodnji.
@@ -131,6 +162,7 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         kinds: Array.from(kinds),
         // Pitanje može i upisati („…, šta još fali?"), ali tad ne tjeramo upis.
         expectsWrite: writeKinds.length > 0 && !question,
+        pureQuestion: question && writeKinds.length === 0,
         workerIds,
         nicknames,
         times: Array.from(new Set(times)),

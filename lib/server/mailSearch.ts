@@ -27,7 +27,7 @@ export async function searchMail(uid: string, s: MailSearch, tz: string): Promis
     if (!query) return { query, lines: [] };
     let ids = await listMessageIds(uid, query, MAX_RESULTS);
     let widened: 'words' | 'who' | undefined;
-    const hasWho = !!(s.addresses?.length || s.domains?.length || s.names?.length || s.phrase);
+    const hasWho = !!(s.addresses?.length || s.domains?.length || s.firms?.length || s.names?.length || s.phrase);
     if (ids.length < 2 && s.words && hasWho) {
         const byWords = await listMessageIds(uid, gmailQuery({ words: s.words, days: s.days, direction: s.direction, attachment: s.attachment }), MAX_RESULTS);
         if (byWords.some(id => !ids.includes(id))) {
