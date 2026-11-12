@@ -730,6 +730,11 @@ export interface ToolEnv {
     talkWorkDay?: string;
     /** Korisnikove poruke zadnjih 30 min (uvijek, ne samo kad je nastavak) — radnik rečen maloprije je rečen. */
     workerGround?: string;
+    /**
+     * Samo korisnikove poruke zadnjih 30 min i ova (bez odgovora bota i dugmadi). Projekat iz njih važi
+     * za novi nalog tek uz proizvod tog projekta rečen sada (projectFromTalk).
+     */
+    talkUser?: string;
     /** Nalozi napravljeni ovom porukom (naziv → id) — isti new_order u dva reda je jedan nalog. */
     newOrders?: Record<string, string>;
     /** Dan za koji je ova poruka upisivala prisustvo/rad i radnici koje je dotakla — za „ko nije spomenut". */
@@ -1980,7 +1985,9 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         const notSaid = groundWorkers(env, ids as string[], chosen);
         if (notSaid) return { ok: false, error: notSaid };
         // „Isto kao jučer": radnikov zadnji potvrđeni dan, sa sljedećim korakom gdje je proces završen.
-        if (l.like_last === true) {
+        // Red koji kaže nalog (postojeći ili nov) ide na taj nalog — „isto kao jučer" ga ne gazi
+        // (P-074, 11.11.: new_order + like_last → rad upisan na jučerašnja Uzglavlja).
+        if (l.like_last === true && !namesOrder(l)) {
             proposal = proposal || await loadDayProposal(env.orgId, date);
             for (const id of ids as string[]) {
                 const mine = proposal.lines.filter(p => p.workerIds.includes(id));
@@ -2019,8 +2026,11 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
         // istog projekta: ERP ponudi nalog za te proizvode (11.11.: upisano na Uzglavlja). Prije provjere
         // rečenog naloga — i kad model izabere nalog koji nije rečen, odgovor je ponuda novog naloga.
         // Bez naloga u redu ERP ionako ponudi nalog (newOrderQuestion) — ovo je samo za izabran tuđi nalog.
-        if (!fresh && orders.length && l.__product_ok !== true && l.like_last !== true) {
-            const orphan = await orphanProducts(env, ids as string[], orders as string[], text(l.work, 120));
+        // Isto kad model kaže postojeći nalog samo tekstom posla („Hotel na brdu - Uzglavlja"), bez
+        // naloga (P-074). Posao koji ne pogađa nijedan nalog ide u newOrderQuestion kao i prije.
+        const workOrders = !fresh && !orders.length && l.__product_ok !== true ? ordersNamedIn(env, text(l.work, 120)) : [];
+        if (!fresh && (orders.length || workOrders.length) && l.__product_ok !== true) {
+            const orphan = await orphanProducts(env, ids as string[], orders.length ? orders as string[] : workOrders, text(l.work, 120));
             if (orphan) { productAsks.push({ line: l, ...orphan }); continue; }
         }
         // „Ipak na …" (dugme) je izbor tog naloga — rečeno, ne pogađanje.
@@ -2123,9 +2133,13 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     let othersNote = '';
     if (others) {
         proposal = proposal || await loadDayProposal(env.orgId, date);
+        // Imenovani u poruci nisu „ostali", i kad ih ovaj poziv ne upisuje (P-074: poziv bez ijednog
+        // reda je upisao „kao jučer" i radnike kojima je poruka rekla nov posao).
+        const refs = workerRefs(env);
+        const named = saidText !== undefined ? refs.filter(r => !ungroundedWorkers(saidText, refs, [r.id]).length).map(r => r.id) : [];
         const taken = new Set<string>([
             ...lines.flatMap(l => l.workerIds), ...absences.map(x => x.workerId), ...(clearIds as string[]),
-            ...deferred.flatMap(d => d.ids), ...productAsks.flatMap(p => p.workerIds),
+            ...deferred.flatMap(d => d.ids), ...productAsks.flatMap(p => p.workerIds), ...named,
         ]);
         let added = 0;
         for (const p of proposal.lines) {
@@ -2353,14 +2367,17 @@ async function orphanProducts(env: ToolEnv, workerIds: string[], orderIds: strin
     const orders = (env.ctx.orders || []).map(o => ({ id: o.value.id, name: o.value.name, aliases: aliasesOf(vocab, 'order', o.value.id) }));
     // Dio rečenice radnika i njegove grupe („Nedim je sa Aldinom radio …": posao je u Aldinovom dijelu).
     const group = new Set(workerIds.flatMap(id => { const w = refs.find(r => r.id === id); return w ? [id, ...workerGroup(said, w, refs)] : [id]; }));
-    const seg = [...Array.from(group).map(id => { const w = refs.find(r => r.id === id); return w ? workerSegment(said, w, refs, orders) || '' : ''; }), work].join(' ').trim();
+    const own = Array.from(group).map(id => { const w = refs.find(r => r.id === id); return w ? workerSegment(said, w, refs, orders) || '' : ''; }).join(' ').trim();
+    const seg = [own, work].join(' ').trim();
     if (!seg) return null;
     const projectRefs = env.ctx.projects.map(p => ({ id: p.value.id, alias: p.alias, name: projectLabel(p.value), aliases: aliasesOf(vocab, 'project', p.value.id) }));
     const project = projectRefs.filter(r => orderMentioned(seg, r, projectRefs));
     if (project.length !== 1) return null;
     const projectWords = new Set(tokens(foldText(`${project[0].name} ${(project[0].aliases || []).join(' ')}`)).map(stem));
     const workerWords = new Set(refs.flatMap(r => tokens(foldText(r.name))).map(stem));
-    const words = Array.from(new Set(tokens(foldText(seg))
+    // Proizvod je ono što je korisnik rekao uz radnika; modelov opis posla samo kad toga nema
+    // („Kovač - Kuhinja" kao opis ne smije reći da je izabrani nalog dobar — P-074).
+    const words = Array.from(new Set(tokens(foldText(own || work))
         .filter(x => x.length >= 4 && !NOT_PRODUCT.test(x) && !projectWords.has(stem(x)) && !workerWords.has(stem(x)))));
     if (!words.length) return null;
     const products = await projectProducts(env, project[0].id, words);
@@ -2406,10 +2423,14 @@ function productOrderQuestion(env: ToolEnv, asks: ({ line: Args } & OrphanProduc
         label: `➕ Nalog: ${family} (${first.products.length} ${first.products.length === 1 ? 'proizvod' : 'proizvoda'})`.slice(0, 60),
         args: call([...same.map(x => ({ ...strip(x.line), new_order: { name: orderName, project: first.project.alias, products: [family], __button: true } })), ...rest]),
     }];
+    const works = Array.from(new Set(same.map(x => text(x.line.work, 60)).filter(Boolean)));
     if (hadOrders) {
         const names = Array.from(new Set(same.flatMap(x => [x.line.order, ...(Array.isArray(x.line.orders) ? x.line.orders : [])])
             .map(a => (env.ctx.orders || []).find(o => o.alias === a)?.value.name).filter(Boolean)));
         options.push({ label: `Ipak na ${names.join(', ') || 'izabrani nalog'}`.slice(0, 60), args: call([...same.map(x => ({ ...x.line, __product_ok: true })), ...rest]) });
+    } else if (works.length) {
+        // Posao rečen tekstom (bez naloga): „Ipak: <posao>" ga upiše kako je rečen.
+        options.push({ label: `Ipak: ${works.join(', ')}`.slice(0, 60), args: call([...same.map(x => ({ ...x.line, __product_ok: true })), ...rest]) });
     }
     options.push({ label: 'Preskoči', args: call(rest) });
     return {
@@ -2417,6 +2438,40 @@ function productOrderQuestion(env: ToolEnv, asks: ({ line: Args } & OrphanProduc
         question: `${who ? `${who}: ` : ''}${family} (${projectName.trim()}) nemaju nalog. Da ga napravim i upišem rad na njega?`,
         options,
     };
+}
+
+/** Postojeći nalozi koje tekst posla imenuje („Hotel na brdu - Uzglavlja"). */
+function ordersNamedIn(env: ToolEnv, work: string): string[] {
+    if (!work) return [];
+    const vocab = env.ctx.vocab || [];
+    const refs = (env.ctx.orders || []).map(o => ({ id: o.value.id, name: o.value.name, aliases: aliasesOf(vocab, 'order', o.value.id) }));
+    return refs.filter(r => orderMentioned(work, r, refs)).map(r => r.id);
+}
+
+/** Red upisa rada kaže nalog: postojeći (order/orders) ili nov (new_order). */
+function namesOrder(l: Args): boolean {
+    return (!!l.new_order && typeof l.new_order === 'object') || !!text(l.order, 8) || (Array.isArray(l.orders) && l.orders.length > 0);
+}
+
+/**
+ * Projekat rečen maloprije u razgovoru (zadnjih 30 min), a sada se govori o njegovom proizvodu iz
+ * naziva naloga: „noćni ormarići za hotel Kladanj", pa dvije poruke kasnije „stavio si ih na
+ * uzglavlja, a ne na noćne ormariće — napravi taj nalog" (P-074, 11.11.). Proizvod sam ne
+ * određuje projekat (isti naziv ima mnogo projekata), a projekat sam iz ranije poruke ne važi
+ * („pitati Edina za kant traku" ne preuzima Brdo) — tek oboje zajedno.
+ */
+async function projectFromTalk(env: ToolEnv, project: ProjectRef, name: string, given: string[]): Promise<boolean> {
+    if (!env.talkUser || env.groundText === undefined) return false;
+    const vocab = env.ctx.vocab || [];
+    const refs = env.ctx.projects.map(p => ({ id: p.value.id, name: projectLabel(p.value), aliases: aliasesOf(vocab, 'project', p.value.id) }));
+    const me = refs.find(r => r.id === project.id);
+    if (!me || !orderMentioned(env.talkUser, me, refs)) return false;
+    const projectWords = new Set(tokens(foldText(`${me.name} ${me.aliases.join(' ')}`)).map(stem));
+    // Rečeno sada: isti početak riječi („noćnik ormarićima" = „noćni ormarići").
+    const now = new Set(tokens(foldText(env.groundText)).filter(w => w.length >= 4).map(w => w.slice(0, 5)));
+    const words = tokens(foldText([name, ...given].join(' ')))
+        .filter(w => w.length >= 4 && !NOT_PRODUCT.test(w) && !projectWords.has(stem(w)) && now.has(w.slice(0, 5)));
+    return words.length > 0 && (await projectProducts(env, project.id, words)).length > 0;
 }
 
 /** Napravi nalog iz `new_order` (rečeno ili izabrano dugmetom); isti naziv u istoj poruci = isti nalog. */
@@ -2440,8 +2495,10 @@ async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | {
     const project = spec.project ? resolveAlias(env.ctx.projects, spec.project)
         : fromName.length === 1 ? env.ctx.projects.find(p => p.value.id === fromName[0].id)?.value || null : null;
     if (spec.project && !project) return { error: `Projekat ${String(spec.project)} ne postoji u listi.` };
-    if (project && !projectSaid(env, project)) return { error: `Projekat ${projectLabel(project)} nije rečen — pitaj za koji je projekat.` };
     const given = Array.isArray(spec.products) ? spec.products.map(p => text(p, 60)).filter(Boolean) : [];
+    if (project && !projectSaid(env, project) && !(await projectFromTalk(env, project, name, given))) {
+        return { error: `Projekat ${projectLabel(project)} nije rečen — pitaj za koji je projekat.` };
+    }
     // Bez rečenih proizvoda: riječi naziva bez imena projekta — ako pogađaju proizvode projekta, nalog
     // je pravi nalog s tim proizvodima, ne „razni poslovi" (11.11.: noćni ormarići za hotel).
     const projectWords = new Set(project ? tokens(foldText(`${projectLabel(project)} ${aliasesOf(vocab, 'project', project.id).join(' ')}`)).map(stem) : []);

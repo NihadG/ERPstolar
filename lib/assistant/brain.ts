@@ -571,6 +571,10 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
             ...(input.session.pending?.options || []),
             message, pre.text,
         ].join('\n'),
+        talkUser: [
+            ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-4).map(t => t.text),
+            message,
+        ].join('\n'),
         // Zadatak/podsjetnik nosi stanje u sebi; bilježnica samo kad je rečena (intent.ts).
         ...((intent.kinds.includes('task') || intent.kinds.includes('reminder')) && !intent.kinds.includes('notebook') ? { notebookBlocked: true } : {}),
         // „U tom stanu" / poruka bez lokacije odmah poslije upisa → lokacija iz razgovora.
