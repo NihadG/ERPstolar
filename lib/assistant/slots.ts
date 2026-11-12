@@ -49,15 +49,24 @@ export interface OrdersData {
 }
 
 export interface RoundOption { label: string; process: string; state: 'started' | 'done' }
-export interface RoundOrder { id: string; name: string; last: string; options: RoundOption[] }
+export interface RoundOrder {
+    id: string; name: string; last: string; options: RoundOption[];
+    /** Kasniji koraci toka (iza onih na redu) — „Dalje od ovoga…". Stari termini ga nemaju. */
+    later?: string[];
+}
 export interface RoundData { orders: RoundOrder[] }
 
 export interface DayData {
     date: string;
     /** „danas" ili „jučer" — kako se dan zove u pitanju. */
     label: string;
+    /** Radnici koje prijedlog još nosi (nisu upisani ni odsutni). */
     workers: number;
     orders: number;
+    /** Već upisani za taj dan (jutarnji diktat, aplikacija) — pita se samo za ostale. */
+    booked?: number;
+    /** Imena onih za koje se pita (do 4), da se vidi na koga se „Ostali isto" odnosi. */
+    rest?: string[];
 }
 
 interface ItemBase { done: string[]; closed?: boolean }
@@ -99,7 +108,8 @@ export type OrderTarget =
 export type SlotEffect =
     | { type: 'order'; supplier: Pick; target: OrderTarget }
     | { type: 'arrived'; orderId: string; label: string }
-    | { type: 'progress'; orderId: string; orderName: string; process: string; state: 'started' | 'done' }
+    /** Bez procesa = „Sve gotovo": svi proizvodi naloga završeni i nalog zatvoren. */
+    | { type: 'progress'; orderId: string; orderName: string; process?: string; state: 'started' | 'done' }
     | { type: 'day_same'; date: string; label: string }
     | { type: 'day_list'; date: string };
 
@@ -113,8 +123,21 @@ const ITEM_ICON: Record<ItemId, string> = { orders: '🧾', round: '🔧', day: 
 function itemLabel(it: SlotItem): string {
     if (it.id === 'orders') return it.closed ? '➕ Još jedna narudžba' : `${ITEM_ICON.orders} Narudžbe${it.data.waiting.length ? ` · ${it.data.waiting.length} za provjeru` : ''}`;
     if (it.id === 'round') return `${ITEM_ICON.round} Obilazak · ${it.data.orders.length} ${plural(it.data.orders.length, 'nalog', 'naloga', 'naloga')}`;
-    return `${ITEM_ICON.day} Upis dana${it.data.label === 'danas' ? '' : ` (${it.data.label})`} · ${it.data.workers} ${plural(it.data.workers, 'radnik', 'radnika', 'radnika')}`;
+    const d = it.data;
+    return `${ITEM_ICON.day} Upis dana${d.label === 'danas' ? '' : ` (${d.label})`} · ${d.booked ? 'još ' : ''}${d.workers} ${plural(d.workers, 'radnik', 'radnika', 'radnika')}`;
 }
+
+/** Red na spisku kad je dan već sav upisan prije termina (stavka stiže zatvorena). */
+export function dayBookedLine(d: DayData): string {
+    const n = d.booked || 0;
+    return `Dan već upisan${d.label === 'danas' ? '' : ` (${d.label})`}: ${n} ${plural(n, 'radnik', 'radnika', 'radnika')}`;
+}
+
+const ROUND_LATER = 'Dalje od ovoga…';
+const ROUND_ALL = 'Sve gotovo';
+const ROUND_ALL_YES = 'Da, sve gotovo';
+/** Koraci obilaska ispod pitanja za nalog („Nazad" vraća na nalog, ne na spisak). */
+const ROUND_SUB = new Set(['later', 'all']);
 
 export function plural(n: number, one: string, few: string, many: string): string {
     const d = n % 10, h = n % 100;
@@ -164,14 +187,36 @@ function stepOf(state: SlotState): Step | null {
     if (it.id === 'round') {
         const o = it.data.orders[f.index];
         const n = it.data.orders.length;
-        return { q: `${o.name} — dokle su stigli?`, sub: `Nalog ${f.index + 1} od ${n}${o.last ? ` · zadnje: ${o.last}` : ''}`, options: [...o.options.map(x => x.label), 'Isto'] };
+        const later = o.later || [];
+        if (f.step === 'later') {
+            return { q: `${o.name} — šta je sad u toku?`, sub: 'Koraci prije toga se upišu kao gotovi.', options: [...later, ROUND_ALL] };
+        }
+        if (f.step === 'all') {
+            return { q: `${o.name} — sve gotovo?`, sub: 'Svi proizvodi idu u završeno (dan zadnjeg rada) i nalog se zatvara.', options: [ROUND_ALL_YES, 'Ne'] };
+        }
+        return {
+            q: `${o.name} — dokle su stigli?`,
+            sub: `Nalog ${f.index + 1} od ${n}${o.last ? ` · zadnje: ${o.last}` : ''}`,
+            options: [...o.options.map(x => x.label), 'Isto', ...(later.length ? [ROUND_LATER] : []), ROUND_ALL],
+        };
     }
     if (it.id === 'day') {
         const d = it.data;
+        const workers = `${d.workers} ${plural(d.workers, 'radnik', 'radnika', 'radnika')}`;
+        if (f.step === 'ask' && d.booked) {
+            // Dio dana je već rečen (jutarnji diktat): pita se samo za ostale, po imenu.
+            const rest = d.rest || [];
+            const names = rest.length ? `${rest.join(', ')}${d.workers > rest.length ? ` i još ${d.workers - rest.length}` : ''}` : workers;
+            return {
+                q: `Upisano ${d.label}: ${d.booked} ${plural(d.booked, 'radnik', 'radnika', 'radnika')}. Ostali kao prethodni radni dan?`,
+                sub: `Ostali: ${names}`,
+                options: ['Ostali isto', 'Ima izmjena'],
+            };
+        }
         if (f.step === 'ask') {
             return {
                 q: `Je li ${d.label} sve kao prethodni radni dan?`,
-                sub: `${d.workers} ${plural(d.workers, 'radnik', 'radnika', 'radnika')} na ${d.orders} ${plural(d.orders, 'nalogu', 'naloga', 'naloga')}`,
+                sub: `${workers} na ${d.orders} ${plural(d.orders, 'nalogu', 'naloga', 'naloga')}`,
                 options: ['Sve isto', 'Ima izmjena'],
             };
         }
@@ -185,8 +230,9 @@ export function slotView(state: SlotState): SlotViewOut {
     const step = stepOf(state);
     if (step) {
         const buttons = rows(step.options.map((text, i) => ({ text, action: `p${i}` })));
-        // Jedina stavka termina nema spisak na koji bi se vraćalo.
-        if (state.items.length > 1) buttons.push([{ text: '‹ Nazad', action: 'b' }]);
+        // Jedina stavka termina nema spisak na koji bi se vraćalo; korak obilaska se vraća na nalog.
+        const sub = state.flow!.item === 'round' && ROUND_SUB.has(state.flow!.step);
+        if (state.items.length > 1 || sub) buttons.push([{ text: '‹ Nazad', action: 'b' }]);
         return { text: [`🕥 ${head}`, '', step.q, ...(step.sub ? [step.sub] : [])].join('\n'), buttons };
     }
     const open = state.items.filter(i => !i.closed);
@@ -256,6 +302,10 @@ export function slotTap(prev: SlotState, action: string): TapOut {
 
     if (action === 'b') {
         if (!state.flow) return stale;
+        if (state.flow.item === 'round' && ROUND_SUB.has(state.flow.step)) {
+            state.flow = { ...state.flow, step: 'order' };
+            return { state };
+        }
         state.flow = null;
         state.awaiting = false;
         return { state };
@@ -325,12 +375,17 @@ export function slotTap(prev: SlotState, action: string): TapOut {
 
     if (it.id === 'round') {
         const o = it.data.orders[f.index];
-        const opt = o.options[k];
-        const effect: SlotEffect | undefined = opt
-            ? { type: 'progress', orderId: o.id, orderName: o.name, process: opt.process, state: opt.state }
-            : undefined;
-        if (opt) f.changed++; else f.same++;
-        if (f.index + 1 < it.data.orders.length) state.flow = { ...f, index: f.index + 1 };
+        const base = { type: 'progress' as const, orderId: o.id, orderName: o.name };
+        // Podkoraci (lista kasnijih koraka, potvrda „Sve gotovo") ne pomjeraju obilazak dok se ne izabere.
+        if (choice === ROUND_LATER) { state.flow = { ...f, step: 'later' }; return { state }; }
+        if (choice === ROUND_ALL) { state.flow = { ...f, step: 'all' }; return { state }; }
+        if (f.step === 'all' && choice === 'Ne') { state.flow = { ...f, step: 'order' }; return { state }; }
+        let effect: SlotEffect | undefined;
+        if (f.step === 'all') effect = { ...base, state: 'done' };
+        else if (f.step === 'later') effect = { ...base, process: choice, state: 'started' };
+        else if (o.options[k]) effect = { ...base, process: o.options[k].process, state: o.options[k].state };
+        if (effect) f.changed++; else f.same++;
+        if (f.index + 1 < it.data.orders.length) state.flow = { ...f, step: 'order', index: f.index + 1 };
         else finishRound(state);
         return { state, ...(effect ? { effect } : {}) };
     }
@@ -339,7 +394,7 @@ export function slotTap(prev: SlotState, action: string): TapOut {
     const d = it.data;
     if (f.step === 'ask' && choice === 'Ima izmjena') { state.flow = { ...f, step: 'diff' }; return { state }; }
     if (choice === 'Spisak') { closeItem(state, 'day', 'Spisak za upis dana je ispod'); return { state, effect: { type: 'day_list', date: d.date } }; }
-    // „Sve isto" i „Ostalo isto": stavku zatvara slotRun kad ERP upiše (red s brojem radnika).
+    // „Sve isto", „Ostali isto" i „Ostalo isto": stavku zatvara slotRun kad ERP upiše (red s brojem radnika).
     state.flow = null;
     return { state, effect: { type: 'day_same', date: d.date, label: d.label } };
 }
@@ -406,10 +461,18 @@ export function slotUndo(prev: SlotState): { state: SlotState; turnId: string; l
 export interface FlowRowLite { name: string; state: 'done' | 'active' | 'blocked'; inProgress: number; done: number; total: number }
 
 /**
+ * Koliko kasnijih koraka stane u „Dalje od ovoga…" (uz „Sve gotovo" i „Nazad").
+ * Duži tok zadrži prve i zadnja dva — završni koraci (montaža) moraju biti tu.
+ */
+const MAX_LATER = 8;
+const KEEP_TAIL = 2;
+
+/**
  * Sljedeći koraci naloga kao dugmad: procesi koji su na redu (najviše dva).
  * Proces koji je već u toku nudi samo „gotovo"; ostali „u toku" i „gotovo".
+ * `later`: nezavršeni koraci iza njih, redom toka — kad je pogon dalje nego što ERP zna.
  */
-export function roundOptions(rows: FlowRowLite[]): { last: string; options: RoundOption[] } {
+export function roundOptions(rows: FlowRowLite[]): { last: string; options: RoundOption[]; later: string[] } {
     const real = rows.filter(r => r.name.trim().toLowerCase() !== 'rad');
     const lastDone = [...real].reverse().find(r => r.state === 'done');
     const active = real.filter(r => r.state === 'active' && r.done < r.total).slice(0, 2);
@@ -418,6 +481,11 @@ export function roundOptions(rows: FlowRowLite[]): { last: string; options: Roun
         if (!r.inProgress) options.push({ label: `${r.name} u toku`, process: r.name, state: 'started' });
         options.push({ label: `${r.name} gotovo`, process: r.name, state: 'done' });
     }
+    const all = real
+        .filter(r => r.state !== 'done' && r.done < r.total && !active.includes(r))
+        .map(r => r.name)
+        .filter((n, i, list) => list.indexOf(n) === i);
+    const later = all.length > MAX_LATER ? [...all.slice(0, MAX_LATER - KEEP_TAIL), ...all.slice(-KEEP_TAIL)] : all;
     const running = real.find(r => r.inProgress > 0);
-    return { last: running ? `${running.name} u toku` : lastDone ? `${lastDone.name} ✓` : '', options: options.slice(0, 4) };
+    return { last: running ? `${running.name} u toku` : lastDone ? `${lastDone.name} ✓` : '', options: options.slice(0, 4), later };
 }
