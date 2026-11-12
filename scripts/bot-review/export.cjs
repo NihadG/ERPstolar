@@ -5,8 +5,9 @@
 //   node scripts/bot-review/export.cjs [--days N] [--since ISO] [--no-snapshot]
 //
 // Poruke botu od zadnje revizije (ili zadnjih 14 dana) sa signalima,
-// napomenama, alatima i potrošnjom, plus snimak firme za ponavljanje kroz
-// bota. Sve ide u .bot-review/<datum>/ (gitignore — stvarne poruke i imena
+// napomenama, alatima i potrošnjom, termini 10:30 / 14:30 (slots.json) i
+// Telegram veza (links.json), plus snimak firme za ponavljanje kroz bota.
+// Sve ide u .bot-review/<datum>/ (gitignore — stvarne poruke i imena
 // nikad u repo); .bot-review/latest.txt pokazuje na zadnji izvoz.
 //
 // Ništa se ne upisuje u bazu. Gmail tokeni (email_accounts) se ne izvoze.
@@ -73,9 +74,19 @@ function stamp(d) {
             usage: x.Usage, attempts: x.Attempts, signals: x.Signals || [], feedback: x.Feedback || [],
         }));
 
+    // Termini 10:30 / 14:30 (lib/assistant/slots.ts): šta je poslano, koliko dodira, šta je upisano.
+    const slotSnap = await db.collection('assistant_slots').where('Owner_UID', '==', uid).get();
+    const slots = slotSnap.docs.map(d => d.data())
+        .filter(s => s.Organization_ID === orgId && s.Created_At > since)
+        .sort((a, b) => String(a.Created_At).localeCompare(String(b.Created_At)))
+        .map(s => ({ id: s.Slot_ID, created: s.Created_At, updated: s.Updated_At, state: s.State }));
+
     const dir = path.join(OUT_ROOT, stamp(new Date()));
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'entries.json'), JSON.stringify(entries, null, 1));
+    fs.writeFileSync(path.join(dir, 'slots.json'), JSON.stringify(slots, null, 1));
+    // Veza s Telegramom: zadnji termini, niz bez odgovora, jutarnji pregled (bez tajni — samo ID-evi i datumi).
+    fs.writeFileSync(path.join(dir, 'links.json'), JSON.stringify(links.filter(l => l.uid === uid), null, 1));
 
     if (!args.includes('--no-snapshot')) {
         const snapshot = {};
@@ -96,5 +107,6 @@ function stamp(d) {
     if (entries.length) fs.writeFileSync(cursorFile, JSON.stringify({ lastAt: entries[entries.length - 1].at, exportedAt: new Date().toISOString() }, null, 1));
     const withSignal = entries.filter(x => x.signals.length || x.feedback.length).length;
     console.log(`poruka: ${entries.length} (od ${since.slice(0, 16)}), sa signalom ili napomenom: ${withSignal}`);
+    console.log(`termina: ${slots.length}, bez ijednog dodira: ${slots.filter(s => !s.state?.taps).length}`);
     console.log(`folder: ${dir}`);
 })().catch(err => { console.error('GREŠKA', err.message); process.exit(1); });

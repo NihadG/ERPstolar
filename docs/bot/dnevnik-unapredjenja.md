@@ -7,6 +7,7 @@ Odakle dolaze dokazi:
 - **Signali** uz svaku poruku u dnevniku poruka: ERP je morao tjerati čitanje ili poštu, „nemam“, nije upisano, Poništi, ispravka u sljedećoj poruci.
 - **Tvoje napomene**: odgovor (reply) na poruku bota sa „loše: …“, „dobro: …“, „napomena …“, ili `/lose …`.
 - **Ponavljanje stvarnih poruka** kroz novog bota: prije i poslije popravke.
+- **Stalni skup**: poruke koje su jednom pošle po zlu, s provjerom šta bot sad mora uraditi; svaka izmjena mora proći kroz njih.
 
 U ovom fajlu su samo izmišljena imena i opisi. Stvarne poruke ostaju u lokalnom izvozu (`.bot-review/`), nikad u repou.
 
@@ -128,6 +129,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 30.10.2026 | Pretraga pošte na zahtjev (`search_mail`) | #41 |
 | 30.10.2026 | Manji skup alata po vrsti poruke; ERP prepoznaje projekat i nalog | #42 |
 | 01.11.2026 | Jeftiniji bot: „jači" krug je zadano isti Haiku, ne Sonnet. Ponavljanje 45 poruka: $0,55 → $0,07 (~87% manje); 13 težih poruka u dva prolaza jednako ili bolje (npr. „kad smo počeli Čorluku" tačno, „provjeriti kod Anesa…" tačno). Sonnet se vraća s `ASSISTANT_MODEL_STRONG` bez izmjene koda | ovaj PR |
+| 12.11.2026 | Stalni skup za ponavljanje: poruke koje su otkrile grešku čuvaju se s provjerom šta bot sad mora uraditi (alat, bez upisa, radnik ne na krivom nalogu…); `npm run bot:replay:skup` pada kad provjera ne prođe. Prva grupa: 10 poruka od 10.–11.11. (P-066–P-071). Izvoz za reviziju nosi i termine 10:30 / 14:30, trijaža ih prikazuje | `feature/bot-revizija-izvoz` |
 
 ## Odbijeno
 
