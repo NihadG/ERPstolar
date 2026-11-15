@@ -22,6 +22,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 - Pošta: samo čitanje. Bot ništa ne šalje bez tvog dugmeta.
 - Bot treba biti kao čovjek kojem ne treba sve objašnjavati: prvo pogleda ERP i poštu, pa tek onda kaže „nemam“.
 - Što manje tokena: popravka koja dodaje krug modela mora to opravdati.
+- Bot ostaje na najjeftinijem modelu (Haiku). Skuplji model nije rješenje (15.11.2026).
 - Probleme rješavati u principu, ne konkretan slučaj: svaka popravka odgovara „koje pravilo ovo krši" i pokriva cijelu vrstu poruka.
 
 ## Metrike po reviziji
@@ -150,5 +151,6 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 
 | Datum | Prijedlog | Zašto ne |
 | 15.11.2026 | Pet dodataka za delegiranje (pitanje o listi u 14:30, „reci X" kao kartica za Viber, lista po brojevima, jutarnji pregled s dugmadima, imena iz glasa) | Korisnik: „ne vidim da su to ikakva značajna poboljšanja, sve su dodaci koji se još moraju finetunirati". Potrebe P-084–P-086 ostaju kao nalaz, ali se ne rješavaju novim dodacima oko istog jezgra. Pregled istih 199 poruka: 26 od 37 palih poziva alata su ERP-ova pravila „nije rečeno", u 33 poruke je ERP morao tjerati model — uzrok je jezgro (najmanji model + sloj pravila), ne manjak funkcija |
+| 15.11.2026 | Jači (skuplji) model za razumijevanje poruka | Korisnik: „neću da koristim skuplje modele, nije to rješenje". Bot ostaje na Haiku. Mjerenje istog dana pokazuje da model i nije usko grlo svuda: `search_mail` 0 palih od 55, `create_task` 2 od 30, `update_task` 0 od 20, `remember` 0 od 13 — a `log_work` 22 pala od 34 (od toga 16 odbijanja „radnik nije spomenut"). Problem je jedan alat (upis rada), ne model |
 |---|---|---|
 | 30.10.2026 | Vektorski RAG (embeddings) | Podaci su mali i strukturirani, a Anthropic nema embedding model. Kartica projekta i Gmail pretraga rješavaju stvarne promašaje jeftinije. |
