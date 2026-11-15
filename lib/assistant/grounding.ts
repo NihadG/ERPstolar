@@ -46,10 +46,31 @@ export function othersLikeLast(text: string): boolean {
     const others = /\b(ostali|ostale|ostalima|ostatak|ostalih|svi drugi|ostala ekipa)\b/;
     const same = /\b(kao (i )?(jucer|juce|prije|prethodn\w*|zadnj\w*|do sad\w*|obicno)|isto|isti|isto kao|na istom|nepromijenjen\w*|nastavljaju|nastavili|nastavio)\b/;
     const m = others.exec(t);
-    return !!m && same.test(t.slice(m.index, m.index + 80));
+    if (m && same.test(t.slice(m.index, m.index + 80))) return true;
+    // „…ta grupa ne radi jer je vikend, ostali rade" (14.11.): rečenica koja se završava s „ostali rade"
+    // — bez posla iza (to bi bio rečen posao: „ostali rade na kuhinji").
+    return (text || '').split(/[.,;!?\n]+/).some(s =>
+        /^(a |i |dok )?(svi )?(ostali|ostatak ekipe|ostala ekipa)( su)? (normalno )?(rade|radi|radili|rade normalno|su na poslu|dolaze)( normalno)?$/.test(foldText(s)));
 }
 
 /** „Svi nalozi", „sve naloge", „na svemu". */
+/**
+ * Prigovor na upis: „(pa) stavio si da rade na Uzglavljima, a ne na noćnim ormarićima", „upisao si ih
+ * na kuhinju, nego su bili na vratima". Nalozi rečeni između „stavio si" i „a ne / nego / umjesto" su
+ * ono što je POGREŠNO upisano — ne smiju biti novi upis (stalni skup 15.11.: model ih je vratio na Uzglavlja).
+ * Nalog rečen i poslije „a ne / nego" nije ni pogrešan ni tačan (ne zna se).
+ */
+export function wronglyPlaced(text: string, orders: GroundRef[]): string[] {
+    const t = foldText(text || '');
+    const m = /\b(stavio|stavila|stavili|upisao|upisala|upisali|metnuo|stavljen\w*|upisan\w*) si\b|\bsi (ih |ga |je )?(stavio|stavila|upisao|upisala|metnuo)\b/.exec(t);
+    if (!m) return [];
+    const rest = t.slice(m.index + m[0].length);
+    const cut = /\b(a ne|ne na|nego|umjesto|vec)\b/.exec(rest);
+    if (!cut) return [];
+    const wrong = rest.slice(0, cut.index), right = rest.slice(cut.index);
+    return orders.filter(o => orderMentioned(wrong, o, orders) && !orderMentioned(right, o, orders)).map(o => o.id);
+}
+
 export function mentionsAllOrders(text: string): boolean {
     return /\b(svi nalozi|sve naloge|svim nalozima|svi poslovi|na svemu)\b/.test(foldText(text));
 }

@@ -58,7 +58,7 @@ export interface DiaryLineInput {
     newProcess?: boolean;
 }
 
-export interface DiaryAbsenceInput { workerId: string; status: 'Bolovanje' | 'Odmor' | 'Odsutan' }
+export interface DiaryAbsenceInput { workerId: string; status: 'Bolovanje' | 'Odmor' | 'Odsutan' | 'Vikend' }
 
 export type DiaryIssue =
     | { kind: 'target'; line: number; text: string; candidates: { workOrderId: string; workOrderName: string; projectName: string }[] }

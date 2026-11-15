@@ -171,6 +171,8 @@ describe('ispravka tekstom: rečen nalog ide ispred „isto kao jučer"', () => 
     it.each([
         ['nov nalog', 'Haso je jučer i danas radio na novom proizvodu, noćni ormarići za Hamzu', { new_order: { name: 'Noćni ormarići Hamza' } }, 'new'],
         ['postojeći nalog', 'Haso danas radi kuhinju za Hamzu, isto kao jučer', { orders: ['R1'] }, 'rk'],
+        ['opis posla (work)', 'Haso danas radi kuhinju za Hamzu', { work: 'kuhinja Hamza' }, 'rk'],
+        ['opis posla koji i sam kaže isto', 'Haso isto kao jučer', { work: 'isto kao jučer' }, 'rl'],
         ['bez naloga — zadnji dan', 'Haso isto kao jučer', {}, 'rl'],
     ])('%s + like_last („%s") → upis na rečeni nalog', async (_, said, extra, where) => {
         const e = env(said);
@@ -238,6 +240,35 @@ describe('„ostali kao jučer" ne dira imenovane; posao tekstom ne zaobilazi pr
         expect(await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1'], work: 'kuhinja Hamza' }] })).toMatchObject({ ok: true });
         expect(e.erpQuestion).toBeUndefined();
         expect(logsOf('amer').map(l => l.Work_Order_ID)).toEqual(['rk']);
+        await undoTurn(e.turnId, 'u1');
+    });
+});
+
+// Stalni skup 15.11.: „Pa stavio si da rade na uzglavljima, a ne na noćnim ormarićima" — model ih je
+// vratio na Uzglavlja. Ono iza „stavio si" je pogrešan upis, ono iza „a ne / nego" tačan.
+describe('prigovor „stavio si X, a ne Y"', () => {
+    const refs = [{ id: 'rk', name: 'Kovač - Kuhinja', aliases: [] }, { id: 'rl', name: 'Lejla - Ormar', aliases: [] }];
+    it.each([
+        ['Pa stavio si da Amer i Edin rade na kuhinji, a ne na ormaru za Lejlu', ['rk']],
+        ['upisao si ih na kuhinju za Hamzu, nego su bili na Lejlinom ormaru', ['rk']],
+        ['Amera si stavio na kuhinju umjesto na ormar', ['rk']],
+        ['stavio si Amera na kuhinju, a ne na kuhinju nego na ormar', []],
+        ['Amer i Edin rade na kuhinji, a ne na ormaru za Lejlu', []],
+        ['stavio si dobro, hvala', []],
+    ])('„%s" → pogrešno: %j', (text, ids) => {
+        const { wronglyPlaced } = require('@/lib/assistant/grounding');
+        expect(wronglyPlaced(text, refs)).toEqual(ids);
+    });
+
+    it('upis na pogrešno rečeni nalog se odbija s uputom; na tačan prolazi', async () => {
+        const said = 'Pa stavio si da Amer i Edin rade na kuhinji, a ne na ormaru za Lejlu';
+        const bad = await runTool(env(said), 'log_work', { date: DAY, lines: [{ workers: ['W1', 'W2'], orders: ['R1'], replace: true }] });
+        expect(bad).toMatchObject({ ok: false });
+        expect(String((bad as { error?: string }).error)).toContain('POGREŠNO upisano');
+        expect(logsOf('amer')).toHaveLength(0);
+        const e = env(said);
+        expect(await runTool(e, 'log_work', { date: DAY, lines: [{ workers: ['W1', 'W2'], orders: ['R2'], replace: true }] })).toMatchObject({ ok: true });
+        expect(logsOf('amer').map(l => l.Work_Order_ID)).toEqual(['rl']);
         await undoTurn(e.turnId, 'u1');
     });
 });

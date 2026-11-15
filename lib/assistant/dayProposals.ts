@@ -36,7 +36,7 @@ interface StoredProposal {
 
 export interface ProposalReply { text: string; buttons?: ButtonRows; toast?: string }
 
-export async function loadDayProposal(orgId: string, date: string): Promise<DayProposal> {
+export async function loadDayProposal(orgId: string, date: string, opts: { weekendWork?: boolean } = {}): Promise<DayProposal> {
     const [workers, logs, attendance, orders] = await Promise.all([
         getActiveWorkers(orgId),
         getWorkLogsInRange(orgId, addDays(date, -LOOKBACK_DAYS), date),
@@ -44,7 +44,7 @@ export async function loadDayProposal(orgId: string, date: string): Promise<DayP
         getBookableWorkOrders(orgId),
     ]);
     attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
-    return buildDayProposal({ date, workers, logs, attendance, orders });
+    return buildDayProposal({ date, workers, logs, attendance, orders, ...opts });
 }
 
 /** Nov prijedlog za dan → poruka s dugmadima; null kad nema ničega za predložiti. */
@@ -160,16 +160,39 @@ const REST_NAMES = 4;
  * Koliko radnika i naloga prijedlog za dan još nosi i koliko ih je već upisano
  * (jutarnji diktat, aplikacija). null kad nema ni prijedloga ni upisa.
  */
-export async function dayProposalSize(orgId: string, date: string): Promise<{ workers: number; orders: number; booked: number; rest: string[] } | null> {
+export async function dayProposalSize(orgId: string, date: string): Promise<{
+    workers: number; orders: number; booked: number; rest: string[]; idle: IdleCrew[]; finished: string[];
+} | null> {
     const p = await loadDayProposal(orgId, date);
-    if (!p.lines.length && !p.booked.length) return null;
+    const idle = idleCrews(p.idle || []);
+    if (!p.lines.length && !p.booked.length && !idle.length) return null;
     const names = Array.from(new Set(p.lines.flatMap(l => l.workerNames)));
     return {
         workers: new Set(p.lines.flatMap(l => l.workerIds)).size,
         orders: new Set(p.lines.map(l => l.workOrderId)).size,
         booked: p.booked.length,
         rest: names.slice(0, REST_NAMES),
+        idle,
+        finished: Array.from(new Set((p.idle || []).flatMap(x => x.lastOrders))),
     };
+}
+
+/** Ekipa čiji je zadnji posao završen: isti zadnji nalozi = jedno pitanje „na čemu su sad?". */
+export interface IdleCrew { workerIds: string[]; names: string[]; last: string }
+
+const MAX_CREWS = 4;
+
+export function idleCrews(idle: NonNullable<DayProposal['idle']>): IdleCrew[] {
+    const by = new Map<string, IdleCrew>();
+    for (const w of idle) {
+        const key = w.lastOrders.slice().sort().join('|');
+        const c = by.get(key) || { workerIds: [], names: [], last: w.lastOrders.join(', ') || 'zadnji posao' };
+        c.workerIds.push(w.workerId);
+        c.names.push(w.name);
+        by.set(key, c);
+    }
+    // Veća ekipa prva; više od četiri pitanja se ne nudi (ostali idu kroz „Spisak" ili porukom).
+    return Array.from(by.values()).sort((a, b) => b.workerIds.length - a.workerIds.length).slice(0, MAX_CREWS);
 }
 
 /** Rupe za jutarnji pregled; null kad ih nema. */

@@ -45,6 +45,12 @@ export interface DayProposal {
     absent: string[];
     /** Prisutni po šihtarici, ali bez ranijeg potvrđenog rada — treba ih izdiktirati. */
     unknown: string[];
+    /**
+     * Radili su zadnji dan, ali je taj posao u međuvremenu završen (nalog ili svi njihovi proizvodi):
+     * prijedlog ih ne može ponoviti, a ne smiju tiho ispasti (P-075, 13.11.: 7 od 16 radnika).
+     * `lastOrders` = nalozi njihovog zadnjeg dana, za pitanje „na čemu su sad?".
+     */
+    idle?: { workerId: string; name: string; lastOrders: string[] }[];
 }
 
 type WorkerLite = { Worker_ID: string; Name: string };
@@ -82,15 +88,20 @@ export function buildDayProposal(input: {
     logs: LogLite[];
     attendance: AttendanceLite[];
     orders: OrderLite[];
+    /**
+     * Rečeno je da rade („ostali rade", „isto kao jučer") — „Vikend" iz kalendara (ERP ga stavi svima)
+     * tad nije odsustvo (P-082, 14.11.: subotom niko od „ostalih" nije upisan).
+     */
+    weekendWork?: boolean;
 }): DayProposal {
     const { date, workers, logs, attendance } = input;
     const orders = new Map(input.orders.map(o => [o.Work_Order_ID, o]));
-    const out: DayProposal = { date, lines: [], booked: [], absent: [], unknown: [] };
+    const out: DayProposal = { date, lines: [], booked: [], absent: [], unknown: [], idle: [] };
     const perWorker: { worker: WorkerLite; lines: Omit<ProposalLine, 'workerIds' | 'workerNames'>[] }[] = [];
 
     for (const w of workers) {
         const status = statusOf(attendance, w.Worker_ID, date);
-        if (status && ABSENT.has(status)) { out.absent.push(w.Name); continue; }
+        if (status && ABSENT.has(status) && !(input.weekendWork && status === 'Vikend')) { out.absent.push(w.Name); continue; }
         const mine = logs.filter(l => l.Worker_ID === w.Worker_ID && confirmed(l));
         if (mine.some(l => day(l.Date) === date)) { out.booked.push(w.Name); continue; }
         const last = mine.map(l => day(l.Date)).filter(d => d < date).sort().at(-1);
@@ -130,7 +141,13 @@ export function buildDayProposal(input: {
                 ...(g.weighted ? { weight: g.weight } : {}),
             });
         }
-        if (!lines.length) { if (status && PRESENT.has(status)) out.unknown.push(w.Name); continue; }
+        if (!lines.length) {
+            if (status && PRESENT.has(status)) out.unknown.push(w.Name);
+            const last = Array.from(new Set(Array.from(groups.values()).map(g => orders.get(g.woId)).filter(Boolean)
+                .map(o => o!.Name || o!.Work_Order_Number || 'Nalog')));
+            out.idle!.push({ workerId: w.Worker_ID, name: w.Name, lastOrders: last });
+            continue;
+        }
 
         // Udio dana samo kad ostanu bar dva posla s udjelom — inače ravnomjerno (pun dan).
         const weighted = lines.filter(l => l.weight !== undefined);
