@@ -313,7 +313,57 @@ export function nameOwners(text: string, name: string, workers: GroundRef[]): st
     let last = -1;
     for (let i = start - 1; i >= 0; i--) if (at(i).length) { last = i; break; }
     if (last < 0) return null;
-    return Array.from(sameGroup(t, last, at));
+    const owners = sameGroup(t, last, at);
+    // „…napravi nalog X i u tom nalogu on i Amer rade…": zamjenica iza naziva je vlasnik naziva,
+    // pa je i ko je uz nju („on i Amer", „Amer s njim") u istoj grupi (06.11.: odbijen Amer).
+    const end = long[k0 + want.length - 1];
+    const withPronoun = (i: number) => (PRONOUN_WORKER.test(t[i]) ? Array.from(owners) : at(i));
+    for (let i = end + 1; i < t.length && !/^[.!?\n]$/.test(t[i]); i++) {
+        if (PRONOUN_WORKER.test(t[i])) sameGroup(t, i, withPronoun).forEach(id => owners.add(id));
+    }
+    return Array.from(owners);
+}
+
+/** Zamjenica koja stoji umjesto maloprije imenovanog radnika. */
+const PRONOUN_WORKER = /^(on|ona|oni|one|njega|njemu|njim|njom|njih|njima)$/;
+
+/**
+ * „On i Edin…": ko je „on". Zadnji radnik imenovan u razgovoru PRIJE ove poruke (jedno ime koje
+ * pristaje jednom radniku), osim onih koji su već u nabrajanju. null kad zamjenice nema ili se ne zna.
+ */
+export function pronounWorker(who: string, earlier: string, all: GroundRef[], exclude: string[] = []): string | null {
+    if (!clauseTokens(who).some(x => /^(on|ona|njega|njemu|njim|njom)$/.test(x))) return null;
+    const t = words(earlier);
+    for (let i = t.length - 1; i >= 0; i--) {
+        const ids = all.filter(w => words(w.name).some(n => hit(n, [t[i]]))).map(w => w.id).filter(id => !exclude.includes(id));
+        if (ids.length === 1) return ids[0];
+    }
+    return null;
+}
+
+/** Riječi u nabrajanju imena koje nisu ime („Amer i Edin sa Hasom, kao i Tarik"). */
+const WHO_GLUE = new Set(['kao', 'ostali', 'ostale', 'svi', 'sve', 'oni', 'one', 'njih', 'radnici', 'radnika', 'ekipa', 'ekipu', 'majstori', 'momci',
+    'koji', 'koje', 'zajedno', 'skupa', 'jos', 'takodje', 'isto', 'onda', 'ovi', 'ova', 'dvojica', 'trojica', 'oba', 'obojica', 'njegov', 'kolega', 'kolege']);
+
+/**
+ * Imena kako ih je model prepisao iz poruke („kemo, bego, braco i turbic", „Samir Mehić") → radnici.
+ * Model više ne bira oznake radnika iz liste (04. i 14.11.: zamijenjeni brojevi → „nije spomenut");
+ * prepiše imena, a ERP ih nađe istim čitanjem kojim je do sada samo provjeravao.
+ *   • ime, prezime ili nadimak koji pristaje jednom radniku → taj radnik;
+ *   • prezime koje dijeli više radnika, a drugi je rečen punim imenom → nije on („Amer Hodžić" nije i Tarik Hodžić);
+ *   • ime koje dijele dvojica bez prezimena → oba (ERP pita dugmadima: sharedFirstNames);
+ *   • `unknown`: riječi koje nisu ničije ime (možda naziv naloga ili klijent).
+ */
+export function whoWorkers(who: string, all: GroundRef[]): { ids: string[]; unknown: string[] } {
+    const t = words(who);
+    const nick = workerNicknames(who, all);
+    const hitIds = all.filter(w => words(w.name).some(x => hit(x, t)) || (w.aliases || []).some(a => phraseIn(a, t))
+        || nick.some(n => n.ids.includes(w.id))).map(w => w.id);
+    const shadow = new Set(shadowedNames(who, hitIds, all));
+    const known = (tok: string) => all.some(w => words(w.name).some(x => hit(x, [tok])) || (w.aliases || []).some(a => words(a).some(x => hit(x, [tok]))))
+        || nick.some(n => n.token === tok);
+    const unknown = Array.from(new Set(t.filter(tok => !known(tok) && !WHO_GLUE.has(tok) && !GROUP_GLUE.has(tok) && !PRONOUN_WORKER.test(tok))));
+    return { ids: hitIds.filter(id => !shadow.has(id)), unknown };
 }
 
 /**

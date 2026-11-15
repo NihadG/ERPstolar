@@ -478,7 +478,9 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         now,
     });
     // Nedovršen zahtjev („podsjeti me sutra u 8…" na koji je bot samo odgovorio) traži upis i u dopuni.
-    const intent = inherited
+    // Čisto pitanje („na kojim nalozima rade Amer i Edin danas") nije dopuna nedovršenog upisa — ostaje
+    // pitanje i kad prethodna poruka nije završila upis (mjerenje 15.11.: pitanje je upisalo prisustvo).
+    const intent = inherited && !(ownIntent.pureQuestion && !input.session.pending)
         ? { ...ownIntent, kinds: Array.from(new Set([...inherited.kinds, ...ownIntent.kinds.filter(k => k !== 'question')])), expectsWrite: true, pureQuestion: false }
         : ownIntent;
     // Čisto pitanje ne upisuje ništa, ni kad model pokuša (11.11.: „na kojim nalozima rade Amer i Edin

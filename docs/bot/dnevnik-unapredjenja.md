@@ -43,6 +43,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 11.11.2026 (10 poruka 10.–11.11.; računi dobavljača iz pošte, upis dana, prvi dan termina 10:30 i 14:30) | 10 | 2 | 6 | 0 | 2 | 0 | 8 | 0 | nije mjereno |
 | 14.11.2026 (11 poruka, sve 14.11. u dva rafala od 6 i 3 minute; ispravka jučerašnjeg dana, novi nalog, vikend; 8 termina, 3 bez dodira) | 11 | 5 | 5 | 1 | 0 | 0 | 6 | 0 | 42.401 |
 | 15.11.2026 stalni skup (21 poruka, 17 provjera) poslije paketa A i B, 4 prolaza: 16/17, 14/17, 16/17, 16/17 — pada samo P-078 (paket C) | 21 | — | — | — | — | — | — | — | — |
+| 15.11.2026 mjerenje upisa rada: 33 stvarne poruke o radu (04., 06., 11. i 14.11.), 26 provjera. Stari upis: 21 i 22 od 26, 63–65 krugova modela, 14 odbijenih upisa. Novi upis (model prepisuje, ERP nalazi): 25 i 26 od 26, 52–53 kruga, 1–2 odbijena upisa. Jedina provjera koja pada je P-078 (nije upis rada) | 33 | — | — | — | — | — | — | — | — |
 
 ## Otvorene potrebe
 
@@ -134,6 +135,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | P-084 | „Reci Amru da…" postane podsjetnik vlasniku, ne poruka radniku | Pregled 199 poruka (27.10.–14.11.): desetak poruka tipa „reci Amru danas u 14 da napravi oblogu", „napomeni Edina i Hasu sutra u 10 da ponesu umivaonik", „napomenuti Tarika da napravi ladicu" → `create_task` s podsjetnikom vlasniku; radnik od bota ne dobije ništa. Kartice za Viber/WhatsApp (`chat_message`) korištene 31.10.–01.11., poslije više ne. 12 od 17 radnika ima broj telefona; radnici nemaju nalog u ERP-u | graf (put delegiranja) | otvoreno | — |
 | P-085 | Delegirano se nikad ne zatvara | Snimak 14.11.: podsjetnici vlasniku se zatvaraju (34 od 34, medijan manje od sata), ali zadaci za radnike ne: lista za montažu 0/11 stavki od 03.11., lista za dvojicu radnika 0/15 od 06.11.; bilježnica 34 otvorene stavke, 2 riješene; 5 zadataka „Materijal za …" iz kapija bez ijedne kvačice; 8 od 13 otvorenih zadataka je prošlo rok i svako jutro stoji pod „Kasni". ERP ne zna šta je montirano | petlja (nema povratne informacije) | otvoreno | — |
 | P-086 | Jedna lista zadataka = pet do osam poruka | 03.11. (9 poruka) i 04.11. (7 glasovnih za jednu listu): „dodaj još…", „izbaci ovo…", „ovo što piše zamijeni sa…", „stavi to u zadatak, ne u napomenu", pa tri pokušaja da se dobije dokument za print. Poslije izmjene korisnik ne vidi cijelu listu, a u ERP-u je ne može urediti (P-048) | odgovor + ERP | otvoreno | — |
+| P-087 | Upis rada pada, ostali alati ne | Pregled 199 poruka: `log_work` 22 pala poziva od 34 (`search_mail` 0/55, `create_task` 2/30, `update_task` 0/20, `remember` 0/13). Od 16 odbijanja „radnik nije spomenut" u 12 je model bio u pravu (radnik rečen ranije u razgovoru, „on i Amer", ime iz izvještaja), a ostala su bile zamijenjene oznake W#/R# kad model bira iz liste (13 radnika u poruci → pola na pogrešnom nalogu). Nijedan stvarno izmišljen radnik | alat (sučelje) | urađeno 15.11.: model više ne bira oznake — prepiše imena (`who`) i posao (`work`) riječima, a ERP nađe radnike (`whoWorkers`, zamjenica = zadnji imenovani) i naloge (`matchTargets`: jedan, više njih — „sve naloge od X osim vrata", „A i B" — ili pitanje dugmadima). Provjera „je li rečeno" za imena je uklonjena; jedan pogrešan dio (nepoznato ime, `clear` koji nije rečen, „Teren" kao odsustvo, „novi" nalog koji postoji ili nije rečen) više ne obara upis nego se ispravi ili ispadne uz napomenu. Isto za `set_presence`. Oznake W#/R# ostaju za ERP-ova dugmad | `feature/bot-upis-rada-iznova` |
 
 ## Urađeno
 
@@ -146,6 +148,7 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 | 30.10.2026 | Manji skup alata po vrsti poruke; ERP prepoznaje projekat i nalog | #42 |
 | 01.11.2026 | Jeftiniji bot: „jači" krug je zadano isti Haiku, ne Sonnet. Ponavljanje 45 poruka: $0,55 → $0,07 (~87% manje); 13 težih poruka u dva prolaza jednako ili bolje (npr. „kad smo počeli Čorluku" tačno, „provjeriti kod Anesa…" tačno). Sonnet se vraća s `ASSISTANT_MODEL_STRONG` bez izmjene koda | ovaj PR |
 | 12.11.2026 | Stalni skup za ponavljanje: poruke koje su otkrile grešku čuvaju se s provjerom šta bot sad mora uraditi (alat, bez upisa, radnik ne na krivom nalogu…); `npm run bot:replay:skup` pada kad provjera ne prođe. Prva grupa: 10 poruka od 10.–11.11. (P-066–P-071). Izvoz za reviziju nosi i termine 10:30 / 14:30, trijaža ih prikazuje | `feature/bot-revizija-izvoz` |
+| 15.11.2026 | Upis rada iznova: „model prepisuje, ERP nalazi". Na 33 stvarne poruke o radu prolaz iz prve sa 21–22 na 25–26 od 26 provjera, četvrtina manje krugova modela, odbijeni upisi sa 14 na 1–2. Isti model (Haiku) | `feature/bot-upis-rada-iznova` |
 
 ## Odbijeno
 

@@ -74,9 +74,22 @@ const CLOSE = 0.15;
  */
 /** Vrste proizvoda (korijen): „vrata", „kuhinja", „ormar"… — rečena vrsta mora postojati u nalogu. */
 const PRODUCT_KINDS = ['vrat', 'kuhinj', 'ormar', 'garderob', 'gardarob', 'komod', 'krevet', 'stol', 'polic', 'plakar', 'regal', 'klup', 'oblog', 'ostrv', 'ladic', 'uzglav', 'ogledal', 'umivaon', 'vitrin'];
-const kindsOf = (s: string) => Array.from(new Set(tokens(foldText(s)).flatMap(w => PRODUCT_KINDS.filter(k => w.startsWith(k) || (k === 'stol' && w === 'sto')))));
+export const kindsOf = (s: string) => Array.from(new Set(tokens(foldText(s)).flatMap(w => PRODUCT_KINDS.filter(k => w.startsWith(k) || (k === 'stol' && w === 'sto')))));
 
-export function matchTarget(query: string, targets: DiaryTarget[]): TargetMatch {
+/**
+ * Riječi koje ne govore koji je posao: prijedlozi, „nalog", „radili"… Posao se sada prepisuje kako
+ * je rečen („nalozi za Lejlu", „stolovi za Hamzu"), pa bi te riječi obarale poklapanje: „stolovi za
+ * Hamzu" je pogodio stari završeni „Stolovi za Hamzu" umjesto otvorenog „Hamza stolovi" (15.11.).
+ */
+const FILLER = new Set(['nalog', 'naloge', 'nalozi', 'nalozima', 'nalogu', 'naloga', 'posao', 'poslu', 'poslovi', 'radili', 'radio', 'radila',
+    'rade', 'radi', 'bili', 'bio', 'bila', 'kod', 'ono', 'onaj', 'ove', 'ova', 'ovaj', 'taj', 'tom', 'tim', 'jedan', 'neki', 'nekakve', 'nekakav']);
+function contentWords(query: string): string {
+    const kept = tokens(foldText(query)).filter(w => w.length >= 3 && !FILLER.has(w));
+    return kept.length ? kept.join(' ') : query;
+}
+
+export function matchTarget(rawQuery: string, targets: DiaryTarget[]): TargetMatch {
+    const query = contentWords(rawQuery);
     // „Vrata Hamza" nije Hamzina kuhinja: rečena vrsta proizvoda koje nema ni u nalogu ni u
     // proizvodu znači da taj nalog ne postoji — ERP ponudi da ga napravi (04.11.), ne pogađa.
     const said = kindsOf(query);
@@ -114,6 +127,60 @@ export function matchTarget(query: string, targets: DiaryTarget[]): TargetMatch 
     const single = inOrder.length === 1 || (inOrder[0].item - (inOrder[1]?.item ?? 0) >= CLOSE && inOrder[0].item > inOrder[0].wo);
     const items = single ? [inOrder[0].t] : targets.filter(t => t.workOrderId === woId);
     return { kind: 'ok', workOrderId: woId, workOrderName: items[0].workOrderName, items };
+}
+
+type OkTarget = Extract<TargetMatch, { kind: 'ok' }>;
+export type TargetsMatch = { kind: 'ok'; orders: OkTarget[] } | Exclude<TargetMatch, { kind: 'ok' }>;
+
+/** „sve naloge od …", „na svim nalozima za …", „sve od …": posao je SVAKI otvoren nalog tog klijenta. */
+const ALL_CUE = /\b(sve naloge|svi nalozi|svim nalozima|sve njegove naloge|sve njene naloge|sve poslove|svim poslovima|sve od|sve za|na svemu)\b/;
+const EXCEPT_CUE = /\b(osim|bez|izuzev)\b/;
+const CUE_WORDS = new Set(['sve', 'svi', 'svim', 'svemu', 'naloge', 'nalozi', 'nalozima', 'nalog', 'poslove', 'poslovima', 'njegove', 'njene', 'stavi', 'upisi', 'ih', 'dakle', 'onda']);
+
+/**
+ * Posao kako je rečen → jedan ili VIŠE naloga (dan se dijeli na njih):
+ *   • „sve naloge od Hamze, osim za vrata" → svi otvoreni Hamzini nalozi bez vrata;
+ *   • „Lejla i vrata za Hamzu" → dva posla spojena veznikom, svaki svoj nalog;
+ *   • sve ostalo kao `matchTarget` (jedan nalog, kandidati ili ništa).
+ * Model više ne bira nalog iz liste (04.11.: 13 radnika, pola naloga pogrešno) — ERP čita rečeno.
+ */
+export function matchTargets(query: string, targets: DiaryTarget[]): TargetsMatch {
+    const q = foldText(query);
+    const byOrder = (list: DiaryTarget[]): OkTarget[] => {
+        const ids = Array.from(new Set(list.map(t => t.workOrderId)));
+        return ids.map(id => {
+            const items = targets.filter(t => t.workOrderId === id);
+            return { kind: 'ok' as const, workOrderId: id, workOrderName: items[0].workOrderName, items };
+        });
+    };
+    if (ALL_CUE.test(q)) {
+        const cut = EXCEPT_CUE.exec(q);
+        const head = cut ? q.slice(0, cut.index) : q;
+        const except = cut ? kindsOf(q.slice(cut.index)) : [];
+        // Čiji nalozi: riječi IZA „sve naloge od …" („utovar kamiona za Hamzu, sve naloge od Hamze" →
+        // Hamza, ne utovar); bez njih, riječi ispred.
+        const cue = ALL_CUE.exec(head);
+        const words = (s: string) => tokens(s).filter(w => w.length >= 3 && !CUE_WORDS.has(w) && !FILLER.has(w));
+        const after = cue ? words(head.slice(cue.index + cue[0].length)) : [];
+        const who = (after.length ? after : words(cue ? head.slice(0, cue.index) : head)).join(' ');
+        if (who) {
+            const hit = targets.filter(t => !t.finished
+                && coverage(who, `${t.workOrderName} ${t.projectName}`) >= 0.5
+                && !except.some(k => kindsOf(t.workOrderName).includes(k)));
+            if (hit.length) return { kind: 'ok', orders: byOrder(hit) };
+        }
+    }
+    const one = matchTarget(query, targets);
+    if (one.kind === 'ok') return { kind: 'ok', orders: [one] };
+    const parts = query.split(/\s+(?:i|te|pa|kao i)\s+|[,;+]/i).map(s => s.trim()).filter(s => s.length >= 3);
+    if (parts.length > 1) {
+        const each = parts.map(p => matchTarget(p, targets));
+        if (each.every(m => m.kind === 'ok')) {
+            const seen = new Set<string>();
+            return { kind: 'ok', orders: (each as OkTarget[]).filter(m => !seen.has(m.workOrderId) && seen.add(m.workOrderId)) };
+        }
+    }
+    return one;
 }
 
 // ─── Proces ───────────────────────────────────────────────────────────

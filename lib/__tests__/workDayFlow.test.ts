@@ -253,7 +253,7 @@ describe('skidanje s dana samo kad je rečeno', () => {
         expect(removalSaid(said, { id: 'amer', name: 'Amer Hodžić' })).toBe(true);
         expect(removalSaid(said, haso)).toBe(false);
         const res = await runTool(env(said), 'log_work', { date: DAY, clear: ['W3'] });
-        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Nije rečeno da Haso Mujić ne treba/) });
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/nije rečeno da Haso ne treba/) });
     });
 });
 
