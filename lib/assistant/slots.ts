@@ -67,6 +67,22 @@ export interface DayData {
     booked?: number;
     /** Imena onih za koje se pita (do 4), da se vidi na koga se „Ostali isto" odnosi. */
     rest?: string[];
+    /**
+     * Ekipe čiji je zadnji posao završen (P-075): prijedlog ih ne nosi, pa termin pita
+     * „na čemu su sad?" dugmadima otvorenih naloga — poslije „Sve isto" ili odmah.
+     */
+    idle?: { workerIds: string[]; names: string[]; last: string }[];
+    /** Otvoreni nalozi na kojima se zadnjih dana radi (do 4) — dugmad za ekipe bez posla. */
+    open?: Pick[];
+}
+
+const idleCount = (d: DayData) => (d.idle || []).reduce((s, c) => s + c.workerIds.length, 0);
+const IDLE_NONE = 'Nisu radili';
+const IDLE_SKIP = 'Preskoči';
+/** Imena ekipe na dugmetu i u pitanju: imena bez prezimena, do četiri. */
+function crewNames(names: string[]): string {
+    const first = names.map(n => n.split(' ')[0]);
+    return first.length > 4 ? `${first.slice(0, 4).join(', ')} i još ${first.length - 4}` : first.join(', ').replace(/, ([^,]*)$/, ' i $1');
 }
 
 interface ItemBase { done: string[]; closed?: boolean }
@@ -111,7 +127,9 @@ export type SlotEffect =
     /** Bez procesa = „Sve gotovo": svi proizvodi naloga završeni i nalog zatvoren. */
     | { type: 'progress'; orderId: string; orderName: string; process?: string; state: 'started' | 'done' }
     | { type: 'day_same'; date: string; label: string }
-    | { type: 'day_list'; date: string };
+    | { type: 'day_list'; date: string }
+    /** Ekipa bez posla: cijeli dan na izabrani nalog, ili „nisu radili" (bez orderId). */
+    | { type: 'day_crew'; date: string; workerIds: string[]; names: string[]; orderId?: string; orderName?: string };
 
 export interface ViewButton { text: string; action: string }
 export interface SlotViewOut { text: string; buttons: ViewButton[][] }
@@ -124,7 +142,8 @@ function itemLabel(it: SlotItem): string {
     if (it.id === 'orders') return it.closed ? '➕ Još jedna narudžba' : `${ITEM_ICON.orders} Narudžbe${it.data.waiting.length ? ` · ${it.data.waiting.length} za provjeru` : ''}`;
     if (it.id === 'round') return `${ITEM_ICON.round} Obilazak · ${it.data.orders.length} ${plural(it.data.orders.length, 'nalog', 'naloga', 'naloga')}`;
     const d = it.data;
-    return `${ITEM_ICON.day} Upis dana${d.label === 'danas' ? '' : ` (${d.label})`} · ${d.booked ? 'još ' : ''}${d.workers} ${plural(d.workers, 'radnik', 'radnika', 'radnika')}`;
+    const n = d.workers + idleCount(d);
+    return `${ITEM_ICON.day} Upis dana${d.label === 'danas' ? '' : ` (${d.label})`} · ${d.booked ? 'još ' : ''}${n} ${plural(n, 'radnik', 'radnika', 'radnika')}`;
 }
 
 /** Red na spisku kad je dan već sav upisan prije termina (stavka stiže zatvorena). */
@@ -203,20 +222,31 @@ function stepOf(state: SlotState): Step | null {
     if (it.id === 'day') {
         const d = it.data;
         const workers = `${d.workers} ${plural(d.workers, 'radnik', 'radnika', 'radnika')}`;
+        const idleN = idleCount(d);
+        const later = idleN ? ` · za još ${idleN} pitam poslije` : '';
+        if (f.step === 'idle') {
+            const crews = d.idle || [];
+            const c = crews[f.index];
+            return {
+                q: `${crewNames(c.names)} — ${c.last} je završen. Na čemu su ${d.label}?`,
+                ...(crews.length > 1 ? { sub: `Ekipa ${f.index + 1} od ${crews.length}` } : {}),
+                options: [...(d.open || []).map(o => o.name), IDLE_NONE, IDLE_SKIP],
+            };
+        }
         if (f.step === 'ask' && d.booked) {
             // Dio dana je već rečen (jutarnji diktat): pita se samo za ostale, po imenu.
             const rest = d.rest || [];
             const names = rest.length ? `${rest.join(', ')}${d.workers > rest.length ? ` i još ${d.workers - rest.length}` : ''}` : workers;
             return {
                 q: `Upisano ${d.label}: ${d.booked} ${plural(d.booked, 'radnik', 'radnika', 'radnika')}. Ostali kao prethodni radni dan?`,
-                sub: `Ostali: ${names}`,
+                sub: `Ostali: ${names}${later}`,
                 options: ['Ostali isto', 'Ima izmjena'],
             };
         }
         if (f.step === 'ask') {
             return {
                 q: `Je li ${d.label} sve kao prethodni radni dan?`,
-                sub: `${workers} na ${d.orders} ${plural(d.orders, 'nalogu', 'naloga', 'naloga')}`,
+                sub: `${workers} na ${d.orders} ${plural(d.orders, 'nalogu', 'naloga', 'naloga')}${later}`,
                 options: ['Sve isto', 'Ima izmjena'],
             };
         }
@@ -276,7 +306,8 @@ function openItem(state: SlotState, index: number): void {
     } else if (it.id === 'round') {
         state.flow = flowAt('round', 'order');
     } else {
-        state.flow = flowAt('day', 'ask');
+        // Svi iz prijedloga su upisani (ili ih nema), ostale su samo ekipe bez posla → odmah one.
+        state.flow = flowAt('day', !it.data.workers && (it.data.idle || []).length ? 'idle' : 'ask');
     }
 }
 
@@ -392,10 +423,22 @@ export function slotTap(prev: SlotState, action: string): TapOut {
 
     // Upis dana
     const d = it.data;
+    const crews = d.idle || [];
+    if (f.step === 'idle') {
+        const c = crews[f.index];
+        const open = d.open || [];
+        const effect: SlotEffect | undefined = k < open.length
+            ? { type: 'day_crew', date: d.date, workerIds: c.workerIds, names: c.names, orderId: open[k].id, orderName: open[k].name }
+            : choice === IDLE_NONE ? { type: 'day_crew', date: d.date, workerIds: c.workerIds, names: c.names } : undefined;
+        if (f.index + 1 < crews.length) state.flow = { ...f, index: f.index + 1 };
+        else closeItem(state, 'day');
+        return { state, ...(effect ? { effect } : {}) };
+    }
     if (f.step === 'ask' && choice === 'Ima izmjena') { state.flow = { ...f, step: 'diff' }; return { state }; }
     if (choice === 'Spisak') { closeItem(state, 'day', 'Spisak za upis dana je ispod'); return { state, effect: { type: 'day_list', date: d.date } }; }
-    // „Sve isto", „Ostali isto" i „Ostalo isto": stavku zatvara slotRun kad ERP upiše (red s brojem radnika).
-    state.flow = null;
+    // „Sve isto", „Ostali isto" i „Ostalo isto": stavku zatvara slotRun kad ERP upiše (red s brojem radnika);
+    // ekipe bez posla dolaze odmah poslije, na istoj poruci.
+    state.flow = crews.length ? flowAt('day', 'idle') : null;
     return { state, effect: { type: 'day_same', date: d.date, label: d.label } };
 }
 

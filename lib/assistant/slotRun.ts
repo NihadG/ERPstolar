@@ -12,7 +12,7 @@ import { adminDb } from '@/lib/server/firebaseAdmin';
 import { attachItems, getBookableWorkOrders, getItemsForWorkOrders, getWorkLogsInRange, getWorkOrderRef } from '@/lib/server/fieldRepo';
 import { createBotWorkOrder } from '@/lib/server/fieldWorkOrders';
 import { createQuickOrder, listOrders } from '@/lib/server/orderWrites';
-import { setProgress } from '@/lib/server/workDiary';
+import { bookWorkDiary, setProgress } from '@/lib/server/workDiary';
 import { buildOrderFlowRows } from '@/lib/orderProcessRows';
 import { addDays } from '@/lib/voice/dates';
 import { sendMessage, type ButtonRows } from '@/lib/telegram/api';
@@ -126,9 +126,28 @@ function roundData(orders: WorkOrder[], logs: { Work_Order_ID?: string; Date?: s
     return { orders: out };
 }
 
-async function dayData(orgId: string, date: string, label: string): Promise<DayData | null> {
+async function dayData(orgId: string, date: string, label: string, open: Pick[] = []): Promise<DayData | null> {
     const size = await dayProposalSize(orgId, date);
-    return size ? { date, label, ...size } : null;
+    if (!size) return null;
+    const { finished, idle, ...rest } = size;
+    // Dugmad za ekipe bez posla: otvoreni nalozi na kojima se radi, bez onih koji su upravo završeni.
+    const choices = open.filter(o => !finished.includes(o.name)).slice(0, MAX_OPEN);
+    return { date, label, ...rest, ...(idle.length && choices.length ? { idle, open: choices } : {}) };
+}
+
+/** Koliko otvorenih naloga ide na dugmad za ekipu bez posla. */
+const MAX_OPEN = 4;
+
+/** Otvoreni nalozi po radu zadnjih 10 dana (pa po datumu) — prijedlog „na čemu su sad?". */
+function openOrders(orders: WorkOrder[], logs: { Work_Order_ID?: string }[]): Pick[] {
+    const count = new Map<string, number>();
+    logs.forEach(l => { if (l.Work_Order_ID) count.set(l.Work_Order_ID, (count.get(l.Work_Order_ID) || 0) + 1); });
+    return orders
+        .filter(o => o.Status === 'U toku' || o.Status === 'Na čekanju')
+        .filter(o => (o.items || []).some(i => i.Status !== 'Završeno'))
+        .sort((a, b) => (count.get(b.Work_Order_ID) || 0) - (count.get(a.Work_Order_ID) || 0) || String(b.Created_Date).localeCompare(String(a.Created_Date)))
+        .slice(0, MAX_OPEN + 4)
+        .map(o => ({ id: o.Work_Order_ID, name: short(o.Name || o.Work_Order_Number || 'Nalog', 30) }));
 }
 
 /**
@@ -137,7 +156,7 @@ async function dayData(orgId: string, date: string, label: string): Promise<DayD
  */
 function dayItemOf(day: DayData | null, showBooked: boolean): SlotItem | null {
     if (!day) return null;
-    if (!day.workers) return day.booked && showBooked ? { id: 'day', data: day, done: [dayBookedLine(day)], closed: true } : null;
+    if (!day.workers && !(day.idle || []).length) return day.booked && showBooked ? { id: 'day', data: day, done: [dayBookedLine(day)], closed: true } : null;
     return { id: 'day', data: day, done: [] };
 }
 
@@ -146,9 +165,10 @@ export async function buildSlotItems(orgId: string, kind: SlotKind, date: string
     const orders = await getBookableWorkOrders(orgId);
     attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
     const logs = await getWorkLogsInRange(orgId, addDays(date, -10), date);
+    const open = openOrders(orders, logs);
     const [od, day] = await Promise.all([
         ordersData(orgId, now, orders, logs),
-        kind === 'b' ? dayData(orgId, date, 'danas') : carryDay ? dayData(orgId, carryDay, 'jučer') : Promise.resolve(null),
+        kind === 'b' ? dayData(orgId, date, 'danas', open) : carryDay ? dayData(orgId, carryDay, 'jučer', open) : Promise.resolve(null),
     ]);
     const round = roundData(orders, logs, addDays(date, -1));
     const items: SlotItem[] = [];
@@ -275,11 +295,27 @@ async function runEffect(link: AssistantLink, slotId: string, state: SlotState, 
         if (!res.ok) return { ok: false, error: res.error };
         const n = (k: number) => `${k} ${plural(k, 'radnik', 'radnika', 'radnika')}`;
         // Svi su u međuvremenu upisani porukom: ništa novo, stavka se samo zatvara.
-        if (!res.workers) return { ok: true, line: `Dan već upisan (${effect.label}): ${n(res.booked)}`, close: true };
+        // Ekipe bez posla dolaze poslije, na istoj stavci — zatvara je zadnja ekipa (slots.slotTap).
+        const close = !(state.flow?.item === 'day' && state.flow.step === 'idle');
+        if (!res.workers) return { ok: true, line: `Dan već upisan (${effect.label}): ${n(res.booked)}`, close };
         const line = res.booked
             ? `Dan upisan (${effect.label}): ${n(res.booked)} ranije + ${n(res.workers)} kao prethodni dan`
             : `Dan upisan (${effect.label}): ${n(res.workers)}`;
-        return { ok: true, line, turnId: res.turnId, close: true };
+        return { ok: true, line, turnId: res.turnId, close };
+    }
+
+    if (effect.type === 'day_crew') {
+        // Ekipa čiji je posao završen: cijeli dan na izabrani nalog, ili „nisu radili" (odsutni).
+        const befores = new Map<string, Record<string, unknown> | null>();
+        const res = await bookWorkDiary(link.orgId, effect.date,
+            effect.orderId ? [{ workerIds: effect.workerIds, target: effect.orderName || 'Nalog', workOrderId: effect.orderId }] : [],
+            effect.orderId ? [] : effect.workerIds.map(workerId => ({ workerId, status: 'Odsutan' as const })),
+            (path, data) => { if (!befores.has(path)) befores.set(path, data); });
+        if (!res.ok) return { ok: false, error: 'Upis ekipe nije prošao — nalog se u međuvremenu promijenio, reci porukom.' };
+        const who = effect.names.map(nm => nm.split(' ')[0]).join(', ');
+        const line = `${who}: ${effect.orderId ? effect.orderName : 'nisu radili'}`;
+        await Promise.all(Array.from(befores.entries()).map(([path, before]) => op(path, before, line)));
+        return { ok: true, line, turnId, close: !(state.flow?.item === 'day' && state.flow.step === 'idle') };
     }
 
     // day_list: stari prijedlog s kvačicama, kao posebna poruka.
@@ -327,10 +363,11 @@ async function freshDay(orgId: string, state: SlotState, action: string): Promis
     const i = Number(action.slice(1));
     const it = state.items[i];
     if (!it || it.id !== 'day' || it.closed) return state;
-    const day = await dayData(orgId, it.data.date, it.data.label);
-    if (!day || (day.workers === it.data.workers && (day.booked || 0) === (it.data.booked || 0))) return state;
+    const day = await dayData(orgId, it.data.date, it.data.label, it.data.open || []);
+    const crews = (d: DayData) => (d.idle || []).map(c => c.workerIds.join()).join('|');
+    if (!day || (day.workers === it.data.workers && (day.booked || 0) === (it.data.booked || 0) && crews(day) === crews(it.data))) return state;
     const items = state.items.slice();
-    items[i] = day.workers
+    items[i] = day.workers || (day.idle || []).length
         ? { ...it, data: day }
         : { ...it, data: day, done: [...it.done, dayBookedLine(day)], closed: true };
     return { ...state, items };

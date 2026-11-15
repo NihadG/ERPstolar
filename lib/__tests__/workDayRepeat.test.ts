@@ -174,3 +174,37 @@ describe('dio rečenice radnika iz ove poruke', () => {
         await undoTurn(e.turnId, 'u1');
     });
 });
+
+describe('naziv novog naloga kako je napisan (stalni skup 15.11.)', () => {
+    it.each([
+        ['Amre - Vrata', 'to je razni poslovi, Amera - Vrata.', 'Amera - Vrata'],
+        ['Stolovi Drago', 'radili stolove za Dragu', 'Stolovi Drago'],
+        ['Utovar kamiona', 'rade na novom nalogu, utovar kamiona', 'Utovar kamiona'],
+        ['Sto za Lejlu', 'Haso radi sto za Lejlu', 'Sto za Lejlu'],
+    ])('„%s" uz „%s" → „%s"', (name, said, out) => {
+        const { namedAsSaid } = require('@/lib/assistant/tools');
+        expect(namedAsSaid(name, said)).toBe(out);
+    });
+
+    it('nalog se pravi s nazivom iz poruke', async () => {
+        const e = env('Haso i Tarik rade na novom nalogu, to je razni poslovi, Amera - Vrata');
+        expect(await runTool(e, 'log_work', { lines: [{ workers: ['W3', 'W4'], new_order: { name: 'Amre - Vrata' } }] })).toMatchObject({ ok: true });
+        expect(docs('work_orders').some(w => w.Name === 'Amera - Vrata')).toBe(true);
+        expect(docs('work_orders').some(w => w.Name === 'Amre - Vrata')).toBe(false);
+        await undoTurn(e.turnId, 'u1');
+    });
+});
+
+describe('„i u petak isto stavi" kad je petak već zadnji upis', () => {
+    it('ništa se ne upisuje i ERP kaže da je taj dan već upisan; model ne pogađa drugi petak', async () => {
+        const first = env('Amer i Edin su u petak radili stolove za Dragu');
+        expect(await runTool(first, 'log_work', { lines: [{ workers: ['W1', 'W2'], order: 'R3' }] })).toMatchObject({ ok: true });
+        const before = docs('work_logs').length;
+        const e = env('I u petak isto stavi', { lastWork: { date: FRI, workerIds: ['amer', 'edin'] } }, ['Amer i Edin su u petak radili stolove za Dragu']);
+        const res = await runTool(e, 'log_work', { date: '2026-11-20', lines: [{ workers: ['W1', 'W2'], order: 'R3' }] });
+        expect(res).toMatchObject({ ok: true, ponovljeno: 0 });
+        expect(docs('work_logs')).toHaveLength(before);
+        expect(e.summaries.join(' ')).toContain('Za pet 13.11. je već upisano: Amer, Edin');
+        await undoTurn(first.turnId, 'u1');
+    });
+});
