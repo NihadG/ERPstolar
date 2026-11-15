@@ -945,3 +945,21 @@ describe('upis rada: pitanje tekstom i odbijen upis', () => {
         expect(docs('work_orders').some(w => w.Name === 'Razni poslovi')).toBe(false);
     });
 });
+
+// Mjerenje 15.11.: pitanje poslije upisa koji nije uspio naslijedilo je taj upis i upisalo prisustvo.
+describe('čisto pitanje poslije nedovršenog upisa ostaje pitanje', () => {
+    it('model pokuša upis prisustva → ERP ga ne izvrši; odgovor je odgovor', async () => {
+        session = { history: [], pending: null };
+        mockSent.length = 0;
+        const first = await say('Amer i Edin rade utovar kamiona', [{ text: 'Ne znam na koji nalog.' }, { text: 'Ne znam na koji nalog.' }]);
+        expect(first.outcome).toBe('failed');
+        const before = docs('worker_attendance').length;
+        const out = await say('Na kojim nalozima rade Amer i Edin danas', [
+            { calls: [{ name: 'set_presence', args: { who: 'Amer i Edin', status: 'Prisutan' } }] },
+            { text: 'Za danas nemaju upisa.' },
+        ]);
+        expect(docs('worker_attendance')).toHaveLength(before);
+        expect(out.outcome).toBe('answer');
+        expect(out.changes || []).toEqual([]);
+    });
+});

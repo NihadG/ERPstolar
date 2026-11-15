@@ -25,7 +25,7 @@ import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
     applyPlanToItem, completeUpstream, diaryTargets, emptyWorkDays, ensureGraphNode, finishAllProcesses, graphFromStages, itemHasPlan, itemNodes,
-    lastWorkDays, markItemProcess, matchProcess, matchTarget, nameHasWord, planProcessNames, planWorkerDay, processCandidates, processFullySaid,
+    lastWorkDays, markItemProcess, matchProcess, matchTarget, matchTargets, nameHasWord, planProcessNames, planWorkerDay, processCandidates, processFullySaid,
     unstartedUpstream, unsaidTrack, type DiaryTarget, type TargetMatch,
 } from '@/lib/workDiary';
 import { nodeMatchesProcess, planGraphForProduct, planToStages } from '@/lib/productProcesses';
@@ -156,7 +156,10 @@ export type DiaryResult =
     | { ok: false; issues: DiaryIssue[] };
 
 interface ResolvedLine {
+    /** Ulazni red (kod posla na više naloga: kopija s podijeljenim udjelom dana). */
     input: DiaryLineInput;
+    /** Redni broj ulaznog reda — pitanja i greške se vežu za njega. */
+    index: number;
     workOrderId: string;
     workOrderName: string;
     items: DiaryTarget[];
@@ -216,6 +219,19 @@ export async function bookWorkDiary(
         const exact = line.itemIds?.length ? targets.filter(t => line.itemIds!.includes(t.itemId)) : [];
         const pool = exact.length ? exact : line.workOrderId ? targets.filter(t => t.workOrderId === line.workOrderId) : targets;
         const said = line.target?.trim() || '';
+        // Posao na više naloga („sve naloge od Hamze osim vrata", „Lejla i vrata za Hamzu"): red po nalogu,
+        // dan se dijeli na njih. ERP čita rečeno; model ne nabraja naloge.
+        if (said && !line.workOrderId && !exact.length) {
+            const many = matchTargets(said, pool);
+            if (many.kind === 'ok' && many.orders.length > 1) {
+                const n = many.orders.length;
+                many.orders.forEach(o => targeted.push({
+                    input: { ...line, ...(line.fraction ? { fraction: line.fraction / n } : {}) }, index: i,
+                    workOrderId: o.workOrderId, workOrderName: o.workOrderName, items: o.items,
+                }));
+                return;
+            }
+        }
         let match: TargetMatch = exact.length && new Set(exact.map(t => t.workOrderId)).size === 1
             ? { kind: 'ok' as const, workOrderId: exact[0].workOrderId, workOrderName: exact[0].workOrderName, items: exact }
             : !pool.length ? { kind: 'none' as const }
@@ -242,7 +258,7 @@ export async function bookWorkDiary(
             issues.push({ kind: 'target', line: i, text: line.target, candidates: fallback.kind === 'ambiguous' ? fallback.candidates : [] });
             return;
         }
-        targeted.push({ input: line, workOrderId: fallback.workOrderId, workOrderName: fallback.workOrderName, items: fallback.items });
+        targeted.push({ input: line, index: i, workOrderId: fallback.workOrderId, workOrderName: fallback.workOrderName, items: fallback.items });
     });
 
     // ── 1b. Plan za proizvode bez plana (u memoriji; upis kasnije) ──
@@ -277,7 +293,7 @@ export async function bookWorkDiary(
                 ? vocabulary.find(v => foldText(v) === foldText(line.process!)) || capitalize(line.process)
                 : matchProcess(line.process, vocabulary, preferred, aliases) || undefined;
             if (!process) {
-                issues.push({ kind: 'process', line: lines.indexOf(line), name: line.process.trim() });
+                issues.push({ kind: 'process', line: t.index, name: line.process.trim() });
             } else if (!line.newProcess && !processFullySaid(line.process, process, aliases)) {
                 // „montaža" → Montaža Kerrocka, a Kerrock nije ni krojen: upis bi pretpostavio pola plana.
                 // Kad bi se preskočila bar dva nezapočeta koraka, ERP pita dugmadima umjesto da pogađa.
@@ -285,7 +301,7 @@ export async function bookWorkDiary(
                 const skipped = unsaidTrack(line.process, p, Array.from(new Set(t.items.flatMap(x => unstartedUpstream(graphOf(t.workOrderId), x.itemId, p, processesOf(x.itemId))))));
                 if (skipped.length >= 2) {
                     issues.push({
-                        kind: 'process_choice', line: lines.indexOf(line), said: line.process.trim(), workOrderName: t.workOrderName, skipped,
+                        kind: 'process_choice', line: t.index, said: line.process.trim(), workOrderName: t.workOrderName, skipped,
                         options: processCandidates(line.process, vocabulary, preferred),
                     });
                 }
@@ -540,7 +556,7 @@ export async function bookWorkDiary(
         processRows, bookedBefore,
         finished: notes(finishedNotes), presenceSet, assumedDates,
         itemIds: Array.from(new Set(resolved.flatMap(r => r.items.map(t => t.itemId)))),
-        lineItemIds: resolved.map(r => r.items.map(t => t.itemId)),
+        lineItemIds: lines.map((_, i) => resolved.filter(r => r.index === i).flatMap(r => r.items.map(t => t.itemId))),
         planned: notes(plannedByItem), assumedDone: notes(assumedNotes),
     };
 }
