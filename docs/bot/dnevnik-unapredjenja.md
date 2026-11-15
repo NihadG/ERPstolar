@@ -149,5 +149,6 @@ Stalna pravila revizije. Skill ih primjenjuje prije svojih; dopiši ili izmijeni
 ## Odbijeno
 
 | Datum | Prijedlog | Zašto ne |
+| 15.11.2026 | Pet dodataka za delegiranje (pitanje o listi u 14:30, „reci X" kao kartica za Viber, lista po brojevima, jutarnji pregled s dugmadima, imena iz glasa) | Korisnik: „ne vidim da su to ikakva značajna poboljšanja, sve su dodaci koji se još moraju finetunirati". Potrebe P-084–P-086 ostaju kao nalaz, ali se ne rješavaju novim dodacima oko istog jezgra. Pregled istih 199 poruka: 26 od 37 palih poziva alata su ERP-ova pravila „nije rečeno", u 33 poruke je ERP morao tjerati model — uzrok je jezgro (najmanji model + sloj pravila), ne manjak funkcija |
 |---|---|---|
 | 30.10.2026 | Vektorski RAG (embeddings) | Podaci su mali i strukturirani, a Anthropic nema embedding model. Kartica projekta i Gmail pretraga rješavaju stvarne promašaje jeftinije. |
