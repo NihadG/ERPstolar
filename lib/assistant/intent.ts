@@ -13,6 +13,7 @@
 
 import { foldText } from '@/lib/voice/text';
 import { workerMentioned, workerNicknames, mentionsEveryone, othersLikeLast, sharedFirstNames, type GroundRef } from './grounding';
+import { repeatDay } from './workDay';
 
 export type MessageKind = 'reminder' | 'task' | 'notebook' | 'work' | 'progress' | 'presence' | 'order' | 'arrival' | 'email' | 'chat' | 'table' | 'question';
 
@@ -117,6 +118,8 @@ export function messageIntent(text: string, workers: GroundRef[], facts: { dims:
         && /\b(radio|radili|radila|radi|rade|kroj|kant|brus|lakir|farb|sklap|okiv|pakov|pakuj|zapakov|montir|montaz|furnir|presov|izrad|zavrs|poce|pocel|lijep)\w*/.test(t)) kinds.add('work');
     // „Ostali rade kao jučer" je upis dana i bez ijednog imena (ERP upiše nespomenute po zadnjem danu).
     if (!asks && othersLikeLast(text)) kinds.add('work');
+    // „I jučer su isto" / „i u petak isto stavi": ponavljanje zadnjeg upisa rada je upis i bez imena.
+    if (!asks && repeatDay(text, '2000-01-03', workers)) kinds.add('work');
     // Stanje proizvodnje bez radnika: „sve podkonstrukcije su napravljene, u toku je montaža iverala".
     // „Ne može biti decimalni broj, ako je radni dan gotov" je o izvještaju, ne o proizvodnji.
     if (!anyWorker && !question && !kinds.has('reminder') && !kinds.has('task') && !kinds.has('arrival')

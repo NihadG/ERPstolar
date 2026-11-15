@@ -44,6 +44,16 @@ export function claimsWrite(text: string): boolean {
     return (text || '').split('\n').some(line => sentences(line).some(sentenceClaims));
 }
 
+/**
+ * Interni nazivi koje korisnik ne smije vidjeti: oznake iz lista (W3, R14, „W# oznake"), „alat je odbio",
+ * „pogrešna polja" (14.11.). Broj naloga „2026-11/R2" nije oznaka.
+ */
+const INTERNAL = /(?<![\/\w])[WRP]#|(?<![\/\w-])[WR]\d{1,2}\b|\balat\w*\s+(?:je\s+)?odbi|\bpogre[sš]n\w*\s+polj|\bpolja?\s+(?:koja|koje)\s+alat/i;
+
+export function leaksInternals(s: string): boolean {
+    return INTERNAL.test(s);
+}
+
 export function isOffer(s: string): boolean {
     return OFFER.test(foldText(s));
 }
@@ -55,7 +65,7 @@ export function isOffer(s: string): boolean {
 export function sanitizeModelText(text: string, opts: { dropClaims: boolean }): string {
     const lines = (text || '').split('\n').map(line => {
         if (!line.trim()) return '';
-        const kept = sentences(line).filter(s => !isOffer(s) && !(opts.dropClaims && sentenceClaims(s)));
+        const kept = sentences(line).filter(s => !isOffer(s) && !leaksInternals(s) && !(opts.dropClaims && sentenceClaims(s)));
         return kept.join(' ');
     });
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\s*\n|\n\s*$/g, '').trim();

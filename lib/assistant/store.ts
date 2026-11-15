@@ -189,7 +189,7 @@ export interface SessionFocus {
     /** Narudžba o kojoj se pričalo („pošalji ovu narudžbu Zaimu"). */
     order?: { id: string; number: string; supplier: string; at: string };
     /** Dan koji se upisuje (rad, prisustvo) — dopuna bez dana ide na njega, ne na danas. */
-    workDay?: { date: string; at: string };
+    workDay?: { date: string; at: string; workerIds?: string[] };
     at: string;
 }
 
