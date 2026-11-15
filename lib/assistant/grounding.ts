@@ -55,8 +55,18 @@ export function mentionsAllOrders(text: string): boolean {
 }
 
 // „Što" bez kvačica postane „sto" (stol): „predračun što je Lejla poslala" je vezao Sto za Tarika
-// (02.11.). Veznik se izbaci prije presavijanja; „sto" bez kvačica ostaje (može biti stol).
-const words = (s: string) => tokens(foldText((s || '').replace(/(^|[^\p{L}])što(?![\p{L}])/giu, '$1 '))).filter(w => w.length >= 3);
+// (02.11.). Veznik se izbaci prije presavijanja. Korisnik piše bez kvačica, pa „sto" ostaje stol
+// samo kad nije upitna ili vezna riječ: „pa sto mi nisu bili ponuđeni", „zato sto je…", „ono sto
+// su radili" (14.11.: „Pa sto mi nisu…" je vezalo Sto za Hamzu). „Sto za Hamzu", „radili sto" ostaju.
+const STO_BEFORE = new Set(['pa', 'zato', 'zasto', 'ono', 'sve', 'nego', 'zbog', 'ma', 'eto', 'osim', 'to']);
+const STO_AFTER = new Set(['mi', 'ti', 'mu', 'joj', 'nam', 'vam', 'im', 'se', 'si', 'su', 'je', 'sam', 'smo', 'ste', 'nije', 'nisu', 'nisi', 'nisam',
+    'ne', 'ce', 'cu', 'ces', 'bi', 'ga', 'ih', 'li', 'god', 'prije', 'vise', 'manje', 'brze']);
+const STO_NOUN_AFTER = new Set(['za', 'kod', 'od', 'u', 'na']);
+const words = (s: string) => {
+    const t = tokens(foldText((s || '').replace(/(^|[^\p{L}])što(?![\p{L}])/giu, '$1 ')));
+    return t.filter((w, i) => !(w === 'sto' && (STO_AFTER.has(t[i + 1] || '') || (STO_BEFORE.has(t[i - 1] || '') && !STO_NOUN_AFTER.has(t[i + 1] || '')))))
+        .filter(w => w.length >= 3);
+};
 
 /** Riječ naziva se nalazi u tekstu (s padežima i sitnim greškama). */
 function hit(nameWord: string, textWords: string[]): boolean {

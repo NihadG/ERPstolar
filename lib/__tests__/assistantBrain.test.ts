@@ -917,3 +917,31 @@ describe('lista za montere: izbaci, zamijeni, dodaj, print (04.11.)', () => {
         expect(mockSent).toHaveLength(1);   // bez pretrage pošte i bez drugog kruga
     });
 });
+
+// Revizija 14.11.2026 (P-079, P-083): pitanje ide dugmadima, neuspjeh javlja ERP.
+describe('upis rada: pitanje tekstom i odbijen upis', () => {
+    beforeEach(() => { session = { history: [], pending: null }; mockSent.length = 0; });
+
+    it('model pita tekstom bez alata → ERP jednom traži alat; pitanje onda postavlja ERP dugmadima', async () => {
+        const out = await say('Amer i Edin rade utovar kamiona za selidbu', [
+            { text: 'Kako da se zove nalog i za koji je projekat?' },
+            { calls: [{ name: 'log_work', args: { lines: [{ workers: ['W1', 'W2'], work: 'utovar kamiona za selidbu' }] } }] },
+        ]);
+        expect(mockSent).toHaveLength(2);
+        expect(JSON.stringify(mockSent[1].messages.at(-1))).toContain('pitanje korisniku ide dugmadima');
+        expect(out.outcome).toBe('question');
+        expect(out.buttons.flat().length).toBeGreaterThan(1);
+        expect(out.reply).not.toContain('Kako da se zove nalog');
+    });
+
+    it('upis pokušan i odbijen → poruku piše ERP, s dugmetom, bez internih naziva', async () => {
+        const out = await say('Amer i Edin rade na novom nalogu, to je razni poslovi', [
+            { calls: [{ name: 'log_work', args: { lines: [{ workers: ['W1', 'W2'], new_order: { name: 'Razni poslovi' } }] } }] },
+            { text: 'Upis nije prošao: alat je odbio poziv jer sam koristio pogrešna polja. Potvrdi mi W# oznake radnika.' },
+        ], { entryId: 'e-fail' });
+        expect(out.outcome).toBe('failed');
+        expect(out.reply).toBe('⚠️ Ništa nije upisano — nisam uspio složiti upis iz ove poruke.\nPritisni „Pokušaj ponovo" ili je reci kraće, jednu stvar po poruci.');
+        expect(out.buttons.flat().map(b => b.text)).toEqual(['🔁 Pokušaj ponovo']);
+        expect(docs('work_orders').some(w => w.Name === 'Razni poslovi')).toBe(false);
+    });
+});

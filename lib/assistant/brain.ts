@@ -564,6 +564,7 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         ...(intent.kinds.includes('work') ? { workInMessage: true } : {}),
         // Radnici: rečen maloprije = rečen, i kad poruka nije „nastavak" (projekti ostaju strogi).
         ...(talkWorkDay ? { talkWorkDay } : {}),
+        ...(focusDay?.workerIds?.length ? { lastWork: { date: focusDay.date, workerIds: focusDay.workerIds } } : {}),
         workerGround: [
             ...history.filter(t => t.role === 'user' && now.getTime() - Date.parse(t.at) <= GROUND_MINUTES * 60_000).slice(-3).map(t => t.text),
             // „On i Haso…": zamjenica govori o radniku iz botovog zadnjeg odgovora.
@@ -732,6 +733,18 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
                     messages.push({ role: 'user', content: expectsWriteNote(intent.kinds) });
                     continue;
                 }
+                // Upis rada, prisustva ili procesa, a model pita tekstom bez ijednog alata: pitanje ide
+                // dugmadima. ERP alati sami pitaju za ono što fali (nalog, proces, koji radnik), pa je
+                // dovoljno pozvati alat s rečenim (P-079: „rade na novom nalogu…" → pitanje tekstom).
+                if (!env.changes.length && !guarded && !toolCalls.length && intent.expectsWrite && asksBack(text)
+                    && intent.kinds.some(k => k === 'work' || k === 'presence' || k === 'progress')) {
+                    guarded = true;
+                    sig.writeGuard = true;
+                    forceTool = true;
+                    messages.push({ role: 'assistant', content: res.content });
+                    messages.push({ role: 'user', content: ASK_WITH_TOOL_NOTE });
+                    continue;
+                }
                 const m = missing();
                 if (hasMissing(m) && !coverageAsked) {
                     coverageAsked = true;
@@ -831,7 +844,8 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
     // Narudžba koju je ova poruka dotakla postaje narudžba iz razgovora.
     if (env.touchedOrder) nextFocus = { ...(nextFocus || { at }), order: { ...env.touchedOrder, at } };
     // Upisan dan postaje dan razgovora (dopuna bez dana ide na njega).
-    if (env.presenceDay && env.changes.length) nextFocus = { ...(nextFocus || { at }), workDay: { date: env.presenceDay.date, at } };
+    // Radnici tog upisa idu uz dan: „i jučer su isto" u sljedećoj poruci ponavlja baš njih (tools.repeatLastWork).
+    if (env.presenceDay && env.changes.length) nextFocus = { ...(nextFocus || { at }), workDay: { date: env.presenceDay.date, at, workerIds: env.presenceDay.workerIds.slice(0, 40) } };
     // Pritužba na prethodni upis: jedan dodir ga poništi — ispravka premješta, ne ostavlja duplikat
     // (03.11. „U plastika" je ostala u bilježnici i poslije „pogrešno, to treba u zadatak").
     const undoRow: ButtonRows = env.changes.length
@@ -875,6 +889,15 @@ export async function runAssistant(original: AssistantTurnInput): Promise<Assist
         || (guarded && !writeAttempted && intent.expectsWrite && !asksBack(modelText)))) {
         const msg = '⚠️ Ništa nije upisano — poruka nije razvrstana kako treba.\nPritisni „Pokušaj ponovo" ili je reci drugačije.';
         return finish(msg, retryButtons(input.entryId), null, '[ništa nije upisano]', { created: env.created, outcome: 'failed' });
+    }
+    // Upis je pokušan i odbijen, a ništa nije upisano: neuspjeh javlja ERP, ne model. Modelov opis
+    // („alat je odbio poziv jer sam koristio pogrešna polja", „potvrdi W# oznake" — 14.11.) korisniku
+    // ne znači ništa. Pitanje nazad ostaje (bez rečenica s internim nazivima).
+    const writeFailed = toolCalls.some(t => WRITE_TOOLS.has(t.name) && !t.ok) && !toolCalls.some(t => WRITE_TOOLS.has(t.name) && t.ok);
+    if (!env.changes.length && !env.summaries.length && writeFailed && intent.expectsWrite
+        && !(asksBack(modelText) && sanitizeModelText(modelText, { dropClaims: false }) === modelText.trim())) {
+        const msg = '⚠️ Ništa nije upisano — nisam uspio složiti upis iz ove poruke.\nPritisni „Pokušaj ponovo" ili je reci kraće, jednu stvar po poruci.';
+        return finish(msg, retryButtons(input.entryId), null, '[ništa nije upisano: ERP je odbio upis]', { created: env.created, outcome: 'failed' });
     }
 
     // Potvrde upisa piše ERP; od modelovog teksta ostaje ono što nije potvrda ni ponuda.
@@ -981,6 +1004,8 @@ function expectsWriteNote(kinds: MessageKind[]): string {
 function coverageNote(what: string): string {
     return `ERP: iz poruke nije upisano: ${what}. Svaka mjera i svaka lokacija iz poruke je posebna stvar — upiši i to (remember / update_memory) ili pitaj korisnika šta je s tim. Ne ponavljaj ono što je već upisano.`;
 }
+
+const ASK_WITH_TOOL_NOTE = 'ERP: pitanje korisniku ide dugmadima, ne tekstom. Pozovi alat za upis s onim što je rečeno (radnici, posao, novi nalog ako je rečen) — ERP sam pita dugmadima za ono što fali. Ako stvarno fali podatak koji alat ne može pitati, pozovi ask_user s opcijama.';
 
 function retryButtons(entryId?: string): ButtonRows {
     return entryId ? [[{ text: '🔁 Pokušaj ponovo', data: `retry:${entryId}` }]] : [];
