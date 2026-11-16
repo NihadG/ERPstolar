@@ -14,6 +14,8 @@
     "eval:assistant": "jest lib/__tests__/assistantEval.real.test.ts --testTimeout=120000",
     "bot:export": "node scripts/bot-review/export.cjs",
     "bot:triage": "cross-env BOT_REVIEW=latest jest lib/__tests__/botReview.real.test.ts",
+    "bot:nalozi": "cross-env BOT_REVIEW=latest jest lib/__tests__/botNalozi.real.test.ts",
+    "bot:nalozi:proba": "cross-env BOT_REVIEW=latest BOT_NALOZI_PROBA=1 jest lib/__tests__/botNalozi.real.test.ts",
     "bot:replay": "cross-env ASSISTANT_REPLAY=latest jest lib/__tests__/assistantReplay.real.test.ts",
     "bot:replay:skup": "cross-env ASSISTANT_REPLAY=skup jest lib/__tests__/assistantReplay.real.test.ts"
   },

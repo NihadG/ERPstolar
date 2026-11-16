@@ -69,6 +69,14 @@ function dbView(): ReplayDbView {
             order: orders.get(String(l.Work_Order_ID)) || '',
             date: String(l.Date || ''),
         })),
+        orders: fakeDocs('work_orders').map(o => {
+            const items = fakeDocs('work_order_items').filter(i => i.Work_Order_ID === o.Work_Order_ID);
+            const crew = items.flatMap(i => [
+                ...((i.Assigned_Workers || []) as { Worker_Name?: string }[]).map(w => w.Worker_Name),
+                ...((i.Processes || []) as { Worker_Name?: string; Helpers?: { Worker_Name?: string }[] }[]).flatMap(p => [p.Worker_Name, ...(p.Helpers || []).map(h => h.Worker_Name)]),
+            ]).filter(Boolean) as string[];
+            return { name: String(o.Name || o.Work_Order_Number || ''), type: String(o.Work_Order_Type || ''), status: String(o.Status || ''), scheduled: o.Is_Scheduled === true, crew };
+        }),
     };
 }
 

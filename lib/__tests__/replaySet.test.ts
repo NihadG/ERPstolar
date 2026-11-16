@@ -69,6 +69,31 @@ describe('provjera jedne poruke', () => {
             expect(checkReplay(next(), { why: 'P-069', logsMin: { date: '2026-11-11', workers: 4 } }, logs, WRITE))
                 .toEqual(['upisano 3 radnika za 2026-11-11, treba bar 4']);
         });
+
+        describe('stanje naloga poslije poruke', () => {
+            const db = { logs: [], orders: [
+                { name: 'Brdo preostala vrata', type: 'Zadaci', status: 'U toku', scheduled: true, crew: ['Amer Hodžić', 'Edin Kovač'] },
+                { name: 'Hamza - Kuhinja', type: 'Proizvodnja', status: 'Završeno', scheduled: true, crew: [] },
+                { name: 'Hamza - Vrata', type: 'Proizvodnja', status: 'Na čekanju', scheduled: false, crew: [] },
+            ] };
+            const check = (orders: NonNullable<Parameters<typeof checkReplay>[1]['orders']>) => checkReplay(next(), { why: 'P-088', orders }, db, WRITE);
+
+            it('vrsta, status, Planer i ekipa se slažu → prolazi', () => {
+                expect(check([{ name: 'preostala vrata', type: 'Zadaci', status: 'U toku', scheduled: true, crew: ['amer', 'edin'] }, { name: 'kuhinja', status: 'Završeno' }])).toEqual([]);
+            });
+
+            it('šta se ne slaže, kaže se po nalogu', () => {
+                expect(check([{ name: 'hamza - vrata', status: 'U toku', scheduled: true, crew: ['amer'] }]))
+                    .toEqual(['nalog „Hamza - Vrata": status Na čekanju, treba U toku, nije u Planeru, amer nije u ekipi']);
+                expect(check([{ name: 'preostala vrata', type: 'Proizvodnja' }])).toEqual(['nalog „Brdo preostala vrata": vrsta Zadaci, treba Proizvodnja']);
+            });
+
+            it('nalog koji mora postojati, i nalog koji ne smije', () => {
+                expect(check([{ name: 'ormari' }])).toEqual(['nema naloga „ormari"']);
+                expect(check([{ name: 'ormari', missing: true }])).toEqual([]);
+                expect(check([{ name: 'kuhinja', missing: true }])).toEqual(['nalog „Hamza - Kuhinja" postoji, a ne treba']);
+            });
+        });
     });
 });
 

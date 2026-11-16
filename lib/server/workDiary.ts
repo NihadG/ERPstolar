@@ -25,13 +25,15 @@ import { effectiveDailyRate } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import {
     applyPlanToItem, completeUpstream, diaryTargets, emptyWorkDays, ensureGraphNode, finishAllProcesses, graphFromStages, itemHasPlan, itemNodes,
-    lastWorkDays, markItemProcess, matchProcess, matchTarget, matchTargets, nameHasWord, planProcessNames, planWorkerDay, processCandidates, processFullySaid,
-    unstartedUpstream, unsaidTrack, type DiaryTarget, type TargetMatch,
+    lastWorkDays, markItemProcess, matchOrderList, matchProcess, matchTarget, matchTargets, nameHasWord, planProcessNames, planWorkerDay, processCandidates, processFullySaid,
+    unstartedUpstream, unsaidTrack, withoutProcessWords, type DiaryTarget, type TargetMatch,
 } from '@/lib/workDiary';
 import { nodeMatchesProcess, planGraphForProduct, planToStages } from '@/lib/productProcesses';
 import { catalogAliases, graphAliases, mergeAliases, standardAliases, type ProcessAlias } from '@/lib/processVocabulary';
 import { addDays } from '@/lib/voice/dates';
 import { foldText } from '@/lib/voice/text';
+import { closeFields, crewAfterWork, crewWithout, productStatusChange, startFields } from '@/lib/orderLife';
+import { logSource } from '@/lib/workHistory';
 
 /** Odakle je plan stavke: kartica proizvoda, šablon vrste proizvoda ili pravila materijala. */
 type PlanSource = 'product' | 'template' | 'rules';
@@ -237,6 +239,12 @@ export async function bookWorkDiary(
             : !pool.length ? { kind: 'none' as const }
                 // Bez posla i bez naloga se NE uzima prvi nalog s liste — nalog se traži iz podataka.
                 : said || line.workOrderId ? matchTarget(said || pool[0].workOrderName, pool) : { kind: 'none' as const };
+        // Posao rečen zajedno s procesom („lijepljenje Kerrocka za hotel"): riječi procesa nisu naziv naloga.
+        if (match.kind === 'none' && said && !line.workOrderId && !exact.length) {
+            const bare = withoutProcessWords(said, line.process, vocabulary);
+            const again = bare && bare !== foldText(said) ? matchTarget(bare, pool) : null;
+            if (again && again.kind !== 'none') match = again;
+        }
         if (match.kind !== 'ok' && !line.workOrderId && !exact.length && line.process?.trim() && (match.kind === 'ambiguous' || !said)) {
             const named = match.kind === 'ambiguous' ? match.candidates.map(c => c.workOrderId) : null;
             const found = byProcess(line.process, named ? pool.filter(t => named.includes(t.workOrderId)) : pool);
@@ -269,7 +277,9 @@ export async function bookWorkDiary(
     const itemProcesses = new Map<string, WorkOrderItem['Processes']>();
     const graphOf = (woId: string) => (graphs.has(woId) ? graphs.get(woId) : orderById.get(woId)?.Process_Graph);
     const processesOf = (itemId: string) => (itemProcesses.has(itemId) ? itemProcesses.get(itemId) : itemById.get(itemId)?.Processes);
-    const worked = Array.from(new Map(targeted.filter(r => r.input.process?.trim() || (r.input.alsoProcesses || []).length).flatMap(r => r.items).map(t => [t.itemId, t])).values());
+    // I bez rečenog procesa: nalog na kojem se radi dobije plan od prvog upisa, kao nalog iz ERP-ovog čarobnjaka.
+    const worked = Array.from(new Map(targeted.filter(r => r.input.process?.trim() || (r.input.alsoProcesses || []).length || orderById.get(r.workOrderId)?.Status !== 'Završeno')
+        .flatMap(r => r.items).map(t => [t.itemId, t])).values());
     const bare = worked.map(t => itemById.get(t.itemId)).filter((i): i is WorkOrderItem => !!i && !itemHasPlan(orderById.get(i.Work_Order_ID)?.Process_Graph, i));
     const plans = await loadItemPlans(orgId, bare, rules, catalog);
     const plannedByItem = new Map<string, { processes: string[]; source: PlanSource }>();
@@ -469,27 +479,35 @@ export async function bookWorkDiary(
         }));
     }
 
-    // ── 5. Graf naloga, procesi stavki, nalog „u toku" ──
+    // ── 5. Graf naloga i procesi stavki ──
     for (const [woId, graph] of Array.from(graphs.entries())) {
         const snap = await db.collection('work_orders').where('Organization_ID', '==', orgId).where('Work_Order_ID', '==', woId).limit(1).get();
         if (snap.empty || !graph) continue;
         track(snap.docs[0].ref.path, snap.docs[0].data());
-        const wo = snap.docs[0].data() as WorkOrder;
-        await snap.docs[0].ref.update({
-            Process_Graph: JSON.parse(JSON.stringify(graph)),
-            ...(wo.Status === 'Na čekanju' ? { Status: 'U toku', Started_At: wo.Started_At || atIso } : {}),
-        });
+        await snap.docs[0].ref.update({ Process_Graph: JSON.parse(JSON.stringify(graph)) });
     }
     for (const [itemId, processes] of Array.from(itemProcesses.entries())) {
         const snap = await db.collection('work_order_items').where('Organization_ID', '==', orgId).where('ID', '==', itemId).limit(1).get();
         if (snap.empty) continue;
         track(snap.docs[0].ref.path, snap.docs[0].data());
-        const item = snap.docs[0].data() as WorkOrderItem;
-        await snap.docs[0].ref.update({
-            Processes: JSON.parse(JSON.stringify(processes)),
-            ...(item.Status === 'Na čekanju' ? { Status: 'U toku' } : {}),
-        });
+        await snap.docs[0].ref.update({ Processes: JSON.parse(JSON.stringify(processes)) });
     }
+
+    // ── 5b. Nalog živi u ERP-u: ekipa i pokretanje (lib/orderLife.ts) ──
+    // I kad proces nije rečen: nalog s radom u Knjizi rada ne smije ostati „Na čekanju" bez ekipe.
+    const crew = new Map<string, Set<string>>();
+    for (const r of resolved) for (const t of r.items) {
+        const set = crew.get(t.itemId) || new Set<string>();
+        r.input.workerIds.forEach(id => set.add(id));
+        crew.set(t.itemId, set);
+    }
+    await keepOrdersLive(orgId, {
+        date, crew, track,
+        workers: workerById, orders,
+        // Radnik koji tog dana radi drugo, a kasnijeg upisa nema: botova dodjela na ostalim nalozima se skida.
+        moved: workerIds.filter(id => !bookedBefore.includes(workerById.get(id)!.Name)),
+    });
+    await syncProductStatuses(orgId, Array.from(new Set([...Array.from(crew.keys()), ...Array.from(itemProcesses.keys())])), track);
 
     // ── 6. Odsutni ──
     const absenceRows: { worker: string; status: string }[] = [];
@@ -559,6 +577,143 @@ export async function bookWorkDiary(
         lineItemIds: lines.map((_, i) => resolved.filter(r => r.index === i).flatMap(r => r.items.map(t => t.itemId))),
         planned: notes(plannedByItem), assumedDone: notes(assumedNotes),
     };
+}
+
+/**
+ * Status proizvoda na projektu prati stavku naloga (lib/orderLife.ts productStatusChange) — isto
+ * što ERP uradi pri preračunu naloga; bez toga projekat pokazuje stari korak iako je bot upisao novi.
+ */
+export async function syncProductStatuses(orgId: string, itemIds: string[], track: TrackHook = () => undefined): Promise<void> {
+    const items = (await getItemsByIds(orgId, Array.from(new Set(itemIds)))).filter(i => i.Product_ID && i.Project_ID && i.Item_Type !== 'custom');
+    for (const item of items) {
+        const snap = await adminDb().collection('products').where('Organization_ID', '==', orgId).where('Product_ID', '==', item.Product_ID).limit(1).get();
+        if (snap.empty) continue;
+        const product = snap.docs[0].data() as Product;
+        const next = productStatusChange(product.Status, item);
+        if (!next) continue;
+        track(snap.docs[0].ref.path, product as unknown as Record<string, unknown>);
+        await snap.docs[0].ref.update({ Status: next });
+    }
+}
+
+/**
+ * Nalog na kojem je upisan rad živi u ERP-u kao da je tamo pokrenut (lib/orderLife.ts):
+ * ko je radio ulazi u ekipu stavke, stavka i nalog su „U toku" od tog dana, nalog je u Planeru.
+ * `moved`: radnici čiji je ovo zadnji upisan dan — botova dodjela na nalozima na kojima
+ * taj dan nisu radili se skida (ekipa prati Knjigu rada; dodjela iz ERP-a ostaje).
+ */
+export async function keepOrdersLive(orgId: string, input: {
+    date: string;
+    /** Stavka → radnici koji su na njoj radili. */
+    crew: Map<string, Set<string>>;
+    workers: Map<string, { Worker_ID: string; Name: string; Daily_Rate?: number }>;
+    /** Nalozi sa stavkama (stanje prije upisa). */
+    orders: WorkOrder[];
+    moved?: string[];
+    track: TrackHook;
+}): Promise<void> {
+    const { date, crew, track, orders } = input;
+    const open = (wo?: WorkOrder) => !!wo && wo.Status !== 'Završeno' && wo.Status !== 'Otkazano';
+    const orderIds = new Set<string>();
+    for (const [itemId, ids] of Array.from(crew.entries())) {
+        const ref = await getItemRef(orgId, itemId);
+        const item = ref ? (await ref.get()).data() as WorkOrderItem | undefined : undefined;
+        if (!ref || !item || !open(orders.find(o => o.Work_Order_ID === item.Work_Order_ID))) continue;
+        orderIds.add(item.Work_Order_ID);
+        const members = Array.from(ids).map(id => input.workers.get(id)).filter((w): w is NonNullable<typeof w> => !!w)
+            .map(w => ({ Worker_ID: w.Worker_ID, Worker_Name: w.Name, Daily_Rate: effectiveDailyRate(w, date) || w.Daily_Rate || 0 }));
+        const next = crewAfterWork(item, members);
+        const patch = { ...(next ? { Assigned_Workers: next } : {}), ...(item.Status === 'Na čekanju' ? { Status: 'U toku' } : {}) };
+        if (!Object.keys(patch).length) continue;
+        track(ref.path, item as unknown as Record<string, unknown>);
+        await ref.update(JSON.parse(JSON.stringify(patch)));
+    }
+    for (const woId of Array.from(orderIds)) {
+        const ref = await getWorkOrderRef(orgId, woId);
+        const wo = ref ? (await ref.get()).data() as WorkOrder | undefined : undefined;
+        if (!ref || !wo) continue;
+        const patch = startFields(wo, orders.find(o => o.Work_Order_ID === woId)?.items || [], date, new Date().toISOString());
+        if (!patch) continue;
+        track(ref.path, wo as unknown as Record<string, unknown>);
+        await ref.update(patch);
+    }
+    if (!input.moved?.length) return;
+    const later = (await getWorkLogsInRange(orgId, addDays(date, 1), addDays(date, 60))).filter(l => !l.Work_Order_Deleted && logSource(l) !== 'auto');
+    for (const workerId of input.moved) {
+        if (later.some(l => l.Worker_ID === workerId)) continue;
+        for (const item of orders.filter(open).flatMap(o => o.items || [])) {
+            if (crew.get(item.ID)?.has(workerId) || !crewWithout(item, workerId)) continue;
+            const ref = await getItemRef(orgId, item.ID);
+            const fresh = ref ? (await ref.get()).data() as WorkOrderItem | undefined : undefined;
+            const kept = fresh ? crewWithout(fresh, workerId) : null;
+            if (!ref || !fresh || !kept) continue;
+            track(ref.path, fresh as unknown as Record<string, unknown>);
+            await ref.update({ Assigned_Workers: kept });
+        }
+    }
+}
+
+/**
+ * Dovedi otvorene naloge u stanje koje ERP traži, iz onoga što je već u Knjizi rada — ista pravila
+ * kao pri svakom upisu (lib/orderLife.ts), primijenjena unazad na naloge nastale prije njih:
+ * pokrenut od prvog dana rada i u Planeru, u ekipi ko je radio zadnjih `recentDays` dana, proizvod
+ * bez plana dobije plan, status proizvoda na projektu prati stavku, nalog sa svim završenim
+ * proizvodima je završen. Ništa se ne briše; svaka izmjena ide kroz `track`.
+ */
+export async function healOrders(orgId: string, today: string, track: TrackHook = () => undefined, recentDays = 7): Promise<{ orders: number }> {
+    const db = adminDb();
+    const [all, workers, catalogSnap, rulesSnap] = await Promise.all([
+        getBookableWorkOrders(orgId), getWorkers(orgId),
+        db.collection('process_catalog').where('Organization_ID', '==', orgId).get(),
+        db.collection('process_material_rules').where('Organization_ID', '==', orgId).get(),
+    ]);
+    const orders = all.filter(o => o.Status !== 'Završeno' && o.Status !== 'Otkazano');
+    attachItems(orders, await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID)));
+    const workerById = new Map(workers.map(w => [w.Worker_ID, w]));
+    const rules = rulesSnap.docs.map(d => d.data() as ProcessMaterialRule);
+    const catalog = catalogSnap.docs.map(d => d.data() as ProcessCatalogItem);
+    const since = addDays(today, -recentDays);
+    let touched = 0;
+    for (const wo of orders) {
+        const items = wo.items || [];
+        const logs = (await getWorkLogsForWorkOrder(orgId, wo.Work_Order_ID)).filter(l => !l.Work_Order_Deleted);
+        if (logs.length) {
+            touched++;
+            const first = logs.map(l => String(l.Date).slice(0, 10)).sort()[0];
+            const crew = new Map<string, Set<string>>();
+            for (const l of logs.filter(x => String(x.Date).slice(0, 10) >= since && workerById.has(x.Worker_ID))) {
+                const itemId = items.some(i => i.ID === l.Work_Order_Item_ID) ? l.Work_Order_Item_ID : items[0]?.ID;
+                if (itemId) crew.set(itemId, (crew.get(itemId) || new Set<string>()).add(l.Worker_ID));
+            }
+            // Stavke bez skorašnjeg rada ulaze praznog skupa: nalog se ipak pokreće danom prvog rada.
+            items.filter(i => logs.some(l => l.Work_Order_Item_ID === i.ID) && !crew.has(i.ID)).forEach(i => crew.set(i.ID, new Set<string>()));
+            await keepOrdersLive(orgId, { date: first, crew, workers: workerById, orders, track });
+            // Proizvod bez plana → plan, kao pri prvom upisu rada.
+            const bare = wo.Work_Order_Type === 'Proizvodnja' ? items.filter(i => i.Item_Type !== 'custom' && !itemHasPlan(wo.Process_Graph, i)) : [];
+            const plans = bare.length ? await loadItemPlans(orgId, bare, rules, catalog) : new Map();
+            let graph = wo.Process_Graph;
+            for (const item of bare) {
+                const plan = plans.get(item.ID);
+                const ref = plan ? await getItemRef(orgId, item.ID) : null;
+                if (!plan || !ref) continue;
+                const res = applyPlanToItem(graph, item.Processes, item.ID, plan.graph, uuidv4);
+                graph = res.graph;
+                track(ref.path, (await ref.get()).data() as Record<string, unknown>);
+                await ref.update({ Processes: JSON.parse(JSON.stringify(res.processes)) });
+            }
+            const woRef = graph !== wo.Process_Graph ? await getWorkOrderRef(orgId, wo.Work_Order_ID) : null;
+            if (woRef && graph) {
+                track(woRef.path, (await woRef.get()).data() as Record<string, unknown>);
+                await woRef.update({ Process_Graph: JSON.parse(JSON.stringify(graph)) });
+            }
+        }
+        await syncProductStatuses(orgId, items.map(i => i.ID), track);
+        const ref = await getWorkOrderRef(orgId, wo.Work_Order_ID);
+        const fresh = ref ? (await ref.get()).data() as WorkOrder | undefined : undefined;
+        const close = ref && fresh ? closeFields(fresh, await getItemsForWorkOrders(orgId, [wo.Work_Order_ID])) : null;
+        if (ref && fresh && close) { track(ref.path, fresh as unknown as Record<string, unknown>); await ref.update(close); }
+    }
+    return { orders: touched };
 }
 
 /**
@@ -646,18 +801,20 @@ export async function upsertAttendance(orgId: string, workerId: string, workerNa
 /**
  * Proizvodi gotovi: svi procesi iz plana „Završeno", stavka „Završeno" sa
  * zamrznutim troškom rada (isto kao zatvaranje proizvoda u pogonu), trošak naloga osvježen.
- * Nalog se ne zatvara ovdje — zatvaranje u ERP-u pravi završni obračun.
+ * Kad su time završeni SVI proizvodi naloga, i nalog je „Završeno" (dan zadnjeg završenog proizvoda) —
+ * 16.11.: „završi sve naloge za …" je završio proizvode, a nalozi su ostali otvoreni.
  */
 export async function finishItems(
     orgId: string,
     itemIds: string[],
     atIso: string,
     track: TrackHook = () => undefined,
-): Promise<{ items: number; processes: number; workOrderIds: string[] }> {
+): Promise<{ items: number; processes: number; workOrderIds: string[]; closedOrderIds: string[] }> {
     const items = await getItemsByIds(orgId, Array.from(new Set(itemIds)));
     const orderIds = Array.from(new Set(items.map(i => i.Work_Order_ID)));
     const graphs = await getProcessGraphs(orgId, orderIds);
     let processes = 0;
+    const closed: string[] = [];
     for (const woId of orderIds) {
         const logs = await getWorkLogsForWorkOrder(orgId, woId);
         const labor = aggregateLaborFromLogs(logs);
@@ -677,15 +834,25 @@ export async function finishItems(
             });
         }
         const woRef = await getWorkOrderRef(orgId, woId);
-        if (woRef) track(woRef.path, (await woRef.get()).data() as Record<string, unknown>);
+        const wo = woRef ? (await woRef.get()).data() as WorkOrder | undefined : undefined;
+        if (woRef) track(woRef.path, wo as unknown as Record<string, unknown>);
         await recalcOrderLabor(orgId, woId);
+        // Svi proizvodi naloga završeni → nalog završen (isto pravilo kao ERP-ov preračun naloga).
+        const close = woRef && wo ? closeFields(wo, await getItemsForWorkOrders(orgId, [woId])) : null;
+        if (woRef && close) { await woRef.update(close); closed.push(woId); }
     }
-    return { items: items.filter(i => i.Status !== 'Završeno').length, processes, workOrderIds: orderIds };
+    await syncProductStatuses(orgId, items.map(i => i.ID), track);
+    return { items: items.filter(i => i.Status !== 'Završeno').length, processes, workOrderIds: orderIds, closedOrderIds: closed };
 }
 
 export interface ProgressInput {
     /** Prazno + proces = ERP nađe nalog sam (gdje proces čeka, gdje je radnik radio). */
     workOrderIds: string[];
+    /**
+     * Nalozi kako su rečeni („sve naloge za Hamzu", „vrata za Hamzu, garderoberi") — ERP ih nađe među
+     * otvorenim; ide ispred `workOrderIds` (model je 16.11. od pet naloga klijenta izabrao dva).
+     */
+    said?: string;
     /** Riječi naziva proizvoda ili naloga: samo ovi / svi osim ovih („vrata"). */
     only?: string[];
     except?: string[];
@@ -724,7 +891,7 @@ export interface ProgressOrder {
 }
 
 export type ProgressResult =
-    | { ok: true; process?: string; state: 'done' | 'started'; orders: ProgressOrder[]; finished: number; workers?: string[] }
+    | { ok: true; process?: string; state: 'done' | 'started'; orders: ProgressOrder[]; finished: number; workers?: string[]; /** Nalozi zatvoreni ovim upisom (nazivi). */ closed?: string[] }
     | { ok: false; error: string; choice?: ProgressChoice };
 
 /**
@@ -742,8 +909,27 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
         input.workerIds?.length ? getWorkers(orgId) : Promise.resolve([]),
     ]);
     let chosenOrders = orders.filter(o => input.workOrderIds.includes(o.Work_Order_ID));
+    // Nalozi rečeni riječima: ERP ih nađe među otvorenim (jedan, lista ili „sve naloge za …").
+    let saidFound = false;
+    if (input.said?.trim()) {
+        const live = orders.filter(o => o.Status !== 'Završeno');
+        attachItems(live, await getItemsForWorkOrders(orgId, live.map(o => o.Work_Order_ID)));
+        const projectsSnap = await db.collection('projects').where('Organization_ID', '==', orgId).get();
+        const projectName = new Map(projectsSnap.docs.map(d => { const p = d.data() as Project; return [p.Project_ID, p.Name || p.Client_Name || ''] as const; }));
+        const found = matchOrderList(input.said, diaryTargets(live, id => projectName.get(id) || ''));
+        if (found.kind === 'ok') {
+            const ids = new Set(found.orders.map(o => o.workOrderId));
+            chosenOrders = orders.filter(o => ids.has(o.Work_Order_ID));
+            saidFound = true;
+        } else if (found.kind === 'ambiguous' && !chosenOrders.length) {
+            return {
+                ok: false, error: `„${input.said.trim()}" odgovara više naloga — korisnik bira.`,
+                choice: { kind: 'order', said: input.said.trim(), options: found.candidates.slice(0, 4).map(c => ({ label: c.workOrderName, value: c.workOrderId })) },
+            };
+        }
+    }
     // Nalog nije rečen, a proces jeste: nalog iz podataka (gdje proces čeka, gdje je radnik radio).
-    if (!input.workOrderIds.length && input.process?.trim()) {
+    if (!saidFound && !input.workOrderIds.length && input.process?.trim()) {
         attachItems(orders, await getItemsForWorkOrders(orgId, orders.filter(o => o.Status !== 'Završeno').map(o => o.Work_Order_ID)));
         const projectsSnap = await db.collection('projects').where('Organization_ID', '==', orgId).get();
         const projectName = new Map(projectsSnap.docs.map(d => { const p = d.data() as Project; return [p.Project_ID, p.Name || p.Client_Name || ''] as const; }));
@@ -763,8 +949,9 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
             return { ok: false, error: `Nijedan otvoren nalog nema proces „${input.process.trim()}" na čekanju — pitaj na kojem nalogu.` };
         }
     }
-    if (!chosenOrders.length) return { ok: false, error: 'Nijedan od tih naloga nije otvoren.' };
-    const items = (await getItemsForWorkOrders(orgId, chosenOrders.map(o => o.Work_Order_ID))).filter(i => i.Item_Type !== 'custom');
+    if (!chosenOrders.length) return { ok: false, error: input.said?.trim() ? `Nijedan otvoren nalog ne odgovara „${input.said.trim()}".` : 'Nijedan od tih naloga nije otvoren.' };
+    // Posao bez proizvoda („razni poslovi") nema procese, ali se završava kao cjelina („nalog je gotov").
+    const items = (await getItemsForWorkOrders(orgId, chosenOrders.map(o => o.Work_Order_ID))).filter(i => i.Item_Type !== 'custom' || !input.process?.trim());
     const catalog = catalogSnap.docs.map(d => d.data() as ProcessCatalogItem);
     const catalogRank = new Map(catalog.map(c => [foldText(c.Name).trim(), c.Order]));
     const catalogOrder = (name: string) => catalogRank.get(foldText(name).trim());
@@ -878,16 +1065,23 @@ export async function setProgress(orgId: string, input: ProgressInput, track: Tr
         if (woRef && graph) {
             await woRef.update({
                 Process_Graph: JSON.parse(JSON.stringify(graph)),
-                ...(wo.Status === 'Na čekanju' ? { Status: 'U toku', Started_At: wo.Started_At || new Date().toISOString() } : {}),
+                // Pokretanje kao u ERP-u (plan u Planeru), ne samo status.
+                ...(startFields(wo, mine, input.date || input.today, new Date().toISOString()) || {}),
             });
         }
     }
 
+    // Proces upisan bez završetka proizvoda: status proizvoda na projektu ide za njim.
+    if (process) await syncProductStatuses(orgId, items.map(i => i.ID), track);
     let finished = 0;
+    const closedIds = new Set<string>();
     for (const [day, ids] of Array.from(finishByDate.entries())) {
-        finished += (await finishItems(orgId, ids, `${day}T15:00:00.000Z`, track)).items;
+        const res = await finishItems(orgId, ids, `${day}T15:00:00.000Z`, track);
+        finished += res.items;
+        res.closedOrderIds.forEach(id => closedIds.add(id));
     }
-    return { ok: true, ...(process ? { process } : {}), state: input.state, orders: out, finished, ...(worker ? { workers: [worker.Name] } : {}) };
+    const closed = out.filter(o => closedIds.has(o.workOrderId)).map(o => o.name);
+    return { ok: true, ...(process ? { process } : {}), state: input.state, orders: out, finished, ...(worker ? { workers: [worker.Name] } : {}), ...(closed.length ? { closed } : {}) };
 }
 
 export interface EmptyDaysResult {

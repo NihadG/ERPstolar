@@ -354,11 +354,12 @@ export const TOOLS: Anthropic.Tool[] = [
     },
     {
         name: 'set_progress',
-        description: 'SLOJ PROCESI, bez Knjige rada: stanje proizvodnje kad NIJE rečeno ko je radio. Korisnik javlja DOKLE je posao stigao, često u više grana odjednom: „za Budnju su napravljene sve podkonstrukcije od jele i od OSB-a, skrojen sav iveral, u toku je montaža iverala na podkonstrukcije" = JEDAN poziv sa steps (svaki proces svoj korak). Procese biraj iz TOK NALOGA (tačan naziv iz karte) — „montaža iverala" je Sklapanje kutija, „podkonstrukcije od jele" je Izrada podkonstrukcije od jele/smreke. ERP sam završi sve što je prije toga u toku naloga (npr. u toku Sklapanje kutija → krojenje i kantiranje iverala završeni) i upiše samo na proizvode koji taj proces imaju. „Sve za Čorluku osim vrata je gotovo" = bez steps/process (proizvodi završeni na dan zadnjeg rada). Bez naloga a s procesom: ERP nađe nalog gdje proces čeka. Datum ne računaj.',
+        description: 'SLOJ PROCESI, bez Knjige rada: stanje proizvodnje kad NIJE rečeno ko je radio. Korisnik javlja DOKLE je posao stigao, često u više grana odjednom: „za Budnju su napravljene sve podkonstrukcije od jele i od OSB-a, skrojen sav iveral, u toku je montaža iverala na podkonstrukcije" = JEDAN poziv sa steps (svaki proces svoj korak). Procese biraj iz TOK NALOGA (tačan naziv iz karte) — „montaža iverala" je Sklapanje kutija, „podkonstrukcije od jele" je Izrada podkonstrukcije od jele/smreke. ERP sam završi sve što je prije toga u toku naloga (npr. u toku Sklapanje kutija → krojenje i kantiranje iverala završeni) i upiše samo na proizvode koji taj proces imaju. „Sve za Čorluku osim vrata je gotovo", „završi sve naloge za Hamzu", „vrata za Hamzu su gotova, garderoberi" = bez steps/process (proizvodi završeni na dan zadnjeg rada; kad su svi proizvodi naloga gotovi, ERP sam završi i nalog). Naloge PREPIŠI riječima korisnika u what — ERP ih nađe sam (jedan, listu ili sve naloge klijenta); ne biraj R# iz liste. Bez naloga a s procesom: ERP nađe nalog gdje proces čeka. Datum ne računaj.',
         input_schema: {
             type: 'object',
             properties: {
-                orders: { ...strList, description: 'Nalozi R# iz liste NALOZI koje je korisnik naveo. Izostavi kad nalog nije rečen (uz process).' },
+                what: { ...str, description: 'Posao/nalozi TAČNO kako su rečeni, riječima korisnika: „sve naloge za Hamzu", „vrata za Hamzu, garderoberi, dječiji garderoberi", „kuhinja za Hamzu", „Amera - vrata". ERP sam nađe naloge. Izostavi kad nalog nije rečen (uz process).' },
+                orders: { ...strList, description: 'Samo za dugmad koja ERP sam ponudi. Ti koristi what.' },
                 steps: {
                     type: 'array',
                     description: 'Stanje po procesima iz jedne poruke, redom kako su rečeni.',
@@ -2169,7 +2170,7 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
         // posao tekstom — ERP ga nađe ili sam ponudi „➕ Nalog …" (mjerenje 15.11.: dva odbijanja i ćorsokak).
         const wanted = l.new_order && typeof l.new_order === 'object' ? l.new_order as Args : null;
         const existing = wanted && wanted.__button !== true ? orderByName(env, text(wanted.name, 90)) : null;
-        let fresh = wanted && !existing ? await newOrderFor(env, wanted) : null;
+        let fresh = wanted && !existing ? await newOrderFor(env, { ...wanted, work: l.work }) : null;
         if (fresh && 'error' in fresh && 'soft' in fresh && viaWho) {
             if (!text(l.work, 120)) l.work = text(wanted!.name, 90);
             fresh = null;
@@ -2715,6 +2716,19 @@ export function namedAsSaid(name: string, said: string): string {
 /** „Razni poslovi", „razno", „novi nalog" su vrsta naloga, ne naziv (P-079). */
 const ORDER_KIND_NAME = /^(razni poslovi|razni posao|razno|razne stvari|novi nalog|nov nalog|nalog)$/;
 
+const JOB_KIND = /\brazn\w* pos(ao|l\w+)\b|\brazno\b|\brazne stvari\b/;
+
+/**
+ * Korisnik je uz novi nalog rekao vrstu „razni poslovi": u opisu posla tog reda, ili u poruci tik uz
+ * naziv naloga (do 60 znakova ispred, 40 iza) — druga rečenica o nekom drugom nalogu se ne računa.
+ */
+export function saidAsJob(message: string, name: string, work = ''): boolean {
+    if (JOB_KIND.test(foldText(work))) return true;
+    const m = foldText(message), n = foldText(name);
+    const at = n ? m.indexOf(n) : -1;
+    return at >= 0 && JOB_KIND.test(m.slice(Math.max(0, at - 60), at + n.length + 40));
+}
+
 /** Napravi nalog iz `new_order` (rečeno ili izabrano dugmetom); isti naziv u istoj poruci = isti nalog. */
 async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | { error: string; soft?: true }> {
     // Naziv kako ga je korisnik napisao: model ga zna „ispraviti" (14.11.: „Amera - Vrata" → „Amre - Vrata").
@@ -2748,9 +2762,11 @@ async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | {
     // je pravi nalog s tim proizvodima, ne „razni poslovi" (11.11.: noćni ormarići za hotel).
     const projectWords = new Set(project ? tokens(foldText(`${projectLabel(project)} ${aliasesOf(vocab, 'project', project.id).join(' ')}`)).map(stem) : []);
     const nameWords = tokens(foldText(name)).filter(w => w.length >= 4 && !projectWords.has(stem(w)) && !NOT_PRODUCT.test(w));
-    const derived = project && !given.length && nameWords.length ? await projectProducts(env, project.id, nameWords) : [];
-    const words = given.length ? given : derived.length ? nameWords : [];
-    const products = project && given.length ? await projectProducts(env, project.id, given) : derived;
+    // „Razni poslovi" rečeno uz nalog = posao BEZ proizvoda (broj …/Z), i kad naziv liči na proizvod projekta
+    // (16.11.: „novi razni poslovi nalog: … preostala vrata" → napravljen proizvodni nalog s vratima iz ponude).
+    const job = spec.__button !== true && saidAsJob(env.messageText || env.groundText || '', name, text(spec.work, 160));
+    const derived = project && !job && !given.length && nameWords.length ? await projectProducts(env, project.id, nameWords) : [];
+    const products = job ? [] : project && given.length ? await projectProducts(env, project.id, given) : derived;
     // Rečeni proizvodi kojih projekat nema (ili projekta nema): nalog se pravi kao posao bez proizvoda —
     // naziv je rečen, pa nema šta pitati (mjerenje 15.11.: „napravi nalog Ormari …" → pitanje umjesto naloga).
     const created = await createBotWorkOrder(env.orgId, { name, ...(project ? { project: { id: project.id, name: projectLabel(project) } } : {}), products });
@@ -2859,7 +2875,10 @@ async function fillWorkDaysTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     const workerIds = (Array.isArray(a.workers) ? a.workers : []).map(x => resolveAlias(env.ctx.workers, x)?.id);
     if (!workerIds.length || workerIds.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(a.workers)} ne postoji u listi.` };
-    const aliases = Array.isArray(a.orders) ? a.orders : [];
+    // „Napravi nalog X i popuni mu prazne dane": nalog nije naveden, a ovom porukom je napravljen
+    // tačno jedan → to je taj (mjerenje 16.11.: model pošalje prazne orders i upis propadne).
+    const made = Object.keys(env.newOrders || {});
+    const aliases = Array.isArray(a.orders) && a.orders.length ? a.orders : made.length === 1 ? [made[0]] : [];
     const orderIds = aliases.map(x => orderOf(env, x));
     if (!orderIds.length) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI).' };
     const bad = aliases.find((_, i) => !orderIds[i]);
@@ -3792,13 +3811,18 @@ async function setProgressTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const orderIds = aliases.map(x => orderOf(env, x));
     const words = (v: unknown) => (Array.isArray(v) ? v.map(x => text(x, 40)).filter(Boolean) : []);
     const steps = progressSteps(a, words);
+    // Nalozi riječima (what): ERP ih nađe sam. Dugme („@id") je već izbor — tad se riječi ne čitaju ponovo.
+    const fromButton = aliases.some(x => typeof x === 'string' && x.startsWith('@'));
+    const what = fromButton ? '' : text(a.what, 200);
     // Bez naloga može samo uz proces — tad ERP nađe nalog gdje taj proces čeka.
-    if (!orderIds.length && !steps.some(s => s.process)) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI) ili proces.' };
+    if (!orderIds.length && !what && !steps.some(s => s.process)) return { ok: false, error: 'Navedi posao riječima korisnika (what) ili proces.' };
     const bad = aliases.find((_, i) => !orderIds[i]);
-    if (bad !== undefined) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
-    const ids = Array.from(new Set(orderIds as string[]));
-    const err = groundOrders(env, ids);
-    if (err) return { ok: false, error: err };
+    if (bad !== undefined && !what) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
+    const picked = Array.from(new Set(orderIds.filter((id): id is string => !!id)));
+    const err = groundOrders(env, picked);
+    if (err && !what) return { ok: false, error: err };
+    // Uz rečen posao, oznake koje model doda važe samo ako ih poruka potvrđuje (ERP-ovo čitanje ide ispred).
+    const ids = err || (bad !== undefined) ? [] : picked;
     const workerIds = (Array.isArray(a.workers) ? a.workers : []).map(w => resolveAlias(env.ctx.workers, w)?.id);
     if (workerIds.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(a.workers)} ne postoji u listi.` };
     const workersErr = groundWorkers(env, workerIds as string[]);
@@ -3816,7 +3840,7 @@ async function setProgressTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     for (let k = 0; k < steps.length; k++) {
         const st = steps[k];
         const res = await setProgress(env.orgId, {
-            workOrderIds: ids, only: st.only || words(a.only), except: words(a.except),
+            workOrderIds: ids, ...(what ? { said: what } : {}), only: st.only || words(a.only), except: words(a.except),
             process: st.process, exactProcess: st.exact === true, workerIds: workerIds as string[],
             state: st.state, date, today, aliases: learned,
         }, track);
@@ -3866,7 +3890,7 @@ function progressQuestion(a: Args, steps: ProgressStep[], k: number, choice: Pro
             tool: 'set_progress',
             question: `„${choice.said}" — na kojem nalogu?`,
             options: [
-                ...choice.options.map(o => ({ label: o.label.slice(0, 60), args: withSteps({}, { orders: [`@${o.value}`] }) })),
+                ...choice.options.map(o => ({ label: o.label.slice(0, 60), args: withSteps({}, { orders: [`@${o.value}`], what: undefined }) })),
                 { label: 'Preskoči', args: { ...SKIP_ARGS } },
             ],
         };
