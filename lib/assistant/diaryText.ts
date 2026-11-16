@@ -86,6 +86,7 @@ export function progressSummary(res: Extract<ProgressResult, { ok: true }>, fmt:
     const skipped = res.orders.flatMap(o => o.skipped.map(p => `${p} (${o.name})`));
     const already = res.orders.flatMap(o => o.already);
     if (res.process && res.finished) lines.push(`✔ Proizvoda završeno: ${res.finished}`);
+    if (res.closed?.length) lines.push(`✅ ${res.closed.length === 1 ? 'Nalog završen' : 'Nalozi završeni'}: ${res.closed.join(', ')}`);
     if (skipped.length) lines.push(`Nije dirano: ${skipped.join(', ')}`);
     if (already.length) lines.push(`Već završeno od ranije: ${already.join(', ')}`);
     lines.push('📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani.');
@@ -118,6 +119,8 @@ export function progressStepsSummary(results: Extract<ProgressResult, { ok: true
     }
     if (assumed.size) lines.push(`☑️ pretpostavljeno završeno ranije: ${Array.from(assumed).join(', ')}`);
     if (finished) lines.push(`✔ Proizvoda završeno: ${finished}`);
+    const closed = Array.from(new Set(results.flatMap(r => r.closed || [])));
+    if (closed.length) lines.push(`✅ ${closed.length === 1 ? 'Nalog završen' : 'Nalozi završeni'}: ${closed.join(', ')}`);
     if (notTouched.size) lines.push(`Nije dirano: ${Array.from(notTouched).join(', ')}`);
     lines.push('📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani.');
     return lines.join('\n');

@@ -183,6 +183,58 @@ export function matchTargets(query: string, targets: DiaryTarget[]): TargetsMatc
     return one;
 }
 
+/**
+ * Posao rečen zajedno s procesom („lijepljenje Kerrocka za Brdo", „lijepe kerrock za Brdo"): riječi
+ * procesa nisu naziv naloga, pa bi obarale poklapanje (16.11.: „nema naloga" za nalog koji postoji).
+ * Vraća posao bez riječi rečenog procesa i procesa iz rječnika; vrsta proizvoda („vrata") ostaje.
+ */
+export function withoutProcessWords(query: string, processSaid: string | undefined, vocabulary: string[]): string {
+    const proc = Array.from(new Set(tokens(foldText([processSaid || '', ...vocabulary].join(' '))).filter(w => w.length >= 4)));
+    const sameRoot = (a: string, b: string) => {
+        let n = 0;
+        while (n < a.length && n < b.length && a[n] === b[n]) n++;
+        return n >= Math.max(4, Math.ceil(Math.min(a.length, b.length) / 2));
+    };
+    return tokens(foldText(query))
+        .filter(w => w.length < 4 || kindsOf(w).length > 0 || !proc.some(p => p === w || stem(p) === stem(w) || sameRoot(p, w)))
+        .join(' ');
+}
+
+/**
+ * Nalozi kako su rečeni za STANJE („gotovo je"): jedan nalog, „sve naloge za Hamzu", ili LISTA
+ * („vrata za Hamzu, garderoberi, dječiji garderoberi"). U listi klijent rečen jednom važi za sve
+ * dijelove, a dio koji je samo vrsta proizvoda („garderoberi") znači sve takve naloge tog klijenta.
+ * Samo otvoreni nalozi. Dio koji ne pogađa ništa ili pogađa više naloga bez klijenta → pitanje.
+ */
+export function matchOrderList(query: string, all: DiaryTarget[]): TargetsMatch {
+    const targets = all.filter(t => !t.finished);
+    const whole = matchTargets(query, targets);
+    const parts = query.split(/\s+(?:i|te|pa|kao i)\s+|[,;+]/i).map(s => s.trim()).filter(s => s.length >= 3);
+    if (parts.length < 2 || (whole.kind === 'ok' && whole.orders.length > 1)) return whole;
+    // Klijent/projekat rečen bilo gdje u poruci sužava sve dijelove.
+    const words = tokens(foldText(query)).filter(w => w.length >= 4 && !FILLER.has(w) && !kindsOf(w).length);
+    const client = words.filter(w => targets.some(t => t.projectName && coverage(w, t.projectName) === 1));
+    const scope = client.length ? targets.filter(t => client.some(w => coverage(w, `${t.projectName} ${t.workOrderName}`) === 1)) : targets;
+    const found: OkTarget[] = [];
+    for (const part of parts) {
+        const m = matchTarget(part, scope);
+        if (m.kind === 'ok') { found.push(m); continue; }
+        const onlyKind = tokens(foldText(contentWords(part))).every(w => kindsOf(w).length > 0 || client.includes(w));
+        if (m.kind === 'ambiguous' && client.length && onlyKind) {
+            for (const c of m.candidates) {
+                const items = targets.filter(t => t.workOrderId === c.workOrderId);
+                found.push({ kind: 'ok', workOrderId: c.workOrderId, workOrderName: c.workOrderName, items });
+            }
+            continue;
+        }
+        // Dio koji ne pogađa ništa može biti proizvod naloga („kuhinja za Hamzu, gornji elementi") → cijela
+        // fraza; dio koji pogađa više naloga je pitanje — stanje se ne upisuje napola.
+        return m.kind === 'none' && whole.kind === 'ok' ? whole : m;
+    }
+    const seen = new Set<string>();
+    return { kind: 'ok', orders: found.filter(m => !seen.has(m.workOrderId) && seen.add(m.workOrderId)) };
+}
+
 // ─── Proces ───────────────────────────────────────────────────────────
 
 /**

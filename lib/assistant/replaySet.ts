@@ -36,6 +36,11 @@ export interface ReplayExpect {
     logs?: { worker: string; date: string; order?: string; orderNot?: string }[];
     /** Najmanje toliko različitih radnika upisano za dan (npr. „ostali kao jučer"). */
     logsMin?: { date: string; workers: number };
+    /**
+     * Nalog poslije poruke (uzorak naziva): vrsta, status, u Planeru, ekipa (svaki uzorak imena je
+     * dodijeljen na nekoj stavci — ekipa ili proces). `missing`: takav nalog ne smije postojati.
+     */
+    orders?: { name: string; type?: string; status?: string; scheduled?: boolean; crew?: string[]; missing?: boolean }[];
 }
 
 export interface ReplayGroupExpect {
@@ -48,6 +53,7 @@ export interface ReplayGroupExpect {
 /** Ono što provjera vidi iz baze poslije poruke. */
 export interface ReplayDbView {
     logs: { worker: string; order: string; date: string }[];
+    orders?: { name: string; type: string; status: string; scheduled: boolean; crew: string[] }[];
 }
 
 export type ReplayNext = ReplaySide & { buttons?: string[] };
@@ -85,6 +91,19 @@ export function checkReplay(next: ReplayNext, exp: ReplayExpect, db: ReplayDbVie
     if (exp.logsMin) {
         const n = new Set(db.logs.filter(x => x.date.slice(0, 10) === exp.logsMin!.date).map(x => x.worker)).size;
         if (n < exp.logsMin.workers) out.push(`upisano ${n} radnika za ${exp.logsMin.date}, treba bar ${exp.logsMin.workers}`);
+    }
+    for (const o of exp.orders || []) {
+        const hit = (db.orders || []).filter(x => has(x.name, o.name));
+        if (o.missing) { if (hit.length) out.push(`nalog „${hit[0].name}" postoji, a ne treba`); continue; }
+        if (!hit.length) { out.push(`nema naloga „${o.name}"`); continue; }
+        // Više naloga istog uzorka (stari završen + nov): dovoljno je da jedan ispunjava sve.
+        const fails = hit.map(x => [
+            o.type && x.type !== o.type ? `vrsta ${x.type}, treba ${o.type}` : '',
+            o.status && x.status !== o.status ? `status ${x.status}, treba ${o.status}` : '',
+            o.scheduled !== undefined && x.scheduled !== o.scheduled ? (o.scheduled ? 'nije u Planeru' : 'u Planeru je') : '',
+            ...(o.crew || []).map(w => (x.crew.some(c => has(c, w)) ? '' : `${w} nije u ekipi`)),
+        ].filter(Boolean));
+        if (!fails.some(f => !f.length)) out.push(`nalog „${hit[0].name}": ${fails[0].join(', ')}`);
     }
     return out;
 }

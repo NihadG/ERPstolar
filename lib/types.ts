@@ -1219,6 +1219,7 @@ export interface WorkOrderItem {
         Worker_ID: string;
         Worker_Name: string;
         Daily_Rate: number;   // Dnevnica radnika
+        Source?: 'telegram';  // dodijelio bot iz upisa rada (lib/orderLife.ts) — bot ga smije i skinuti
     }[];
 
     // TROŠKOVI RADA
