@@ -159,6 +159,15 @@ describe('novi nalog iz poruke', () => {
         expect(crewOf(wo.Work_Order_ID)).toEqual(['amer', 'edin']);
         await undoTurn(e.turnId, 'u1');
     });
+
+    it('„napravi nalog X i popuni mu prazne dane": prazni dani idu na nalog napravljen tom porukom, i kad ga model ne navede', async () => {
+        const e = env('za selmu kreni novi nalog koji se zove Prevoz robe, i popuni joj prazne dane', '2026-11-18');
+        expect(await runTool(e, 'log_work', { lines: [{ who: 'selma', work: 'Prevoz robe', new_order: { name: 'Prevoz robe' } }] })).toMatchObject({ ok: true });
+        const res = await runTool(e, 'fill_work_days', { workers: ['W3'], orders: [] });
+        expect(JSON.stringify(res)).not.toMatch(/Navedi naloge/);
+        expect(res).toMatchObject({ ok: true });
+        await undoTurn(e.turnId, 'u1');
+    });
 });
 
 describe('„gotovo je" riječima: ERP nađe naloge i završi ih', () => {

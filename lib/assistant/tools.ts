@@ -2875,7 +2875,10 @@ async function fillWorkDaysTool(env: ToolEnv, a: Args): Promise<ToolResult> {
 
     const workerIds = (Array.isArray(a.workers) ? a.workers : []).map(x => resolveAlias(env.ctx.workers, x)?.id);
     if (!workerIds.length || workerIds.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(a.workers)} ne postoji u listi.` };
-    const aliases = Array.isArray(a.orders) ? a.orders : [];
+    // „Napravi nalog X i popuni mu prazne dane": nalog nije naveden, a ovom porukom je napravljen
+    // tačno jedan → to je taj (mjerenje 16.11.: model pošalje prazne orders i upis propadne).
+    const made = Object.keys(env.newOrders || {});
+    const aliases = Array.isArray(a.orders) && a.orders.length ? a.orders : made.length === 1 ? [made[0]] : [];
     const orderIds = aliases.map(x => orderOf(env, x));
     if (!orderIds.length) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI).' };
     const bad = aliases.find((_, i) => !orderIds[i]);
