@@ -19,6 +19,7 @@ import { computeMissingAttendanceDays } from './attendanceHistory';
 import { bookedOrderId, isDeselectedAttendanceLog, lastUsableBookedDay, postedOrdersByWorker } from './attendanceBooking';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf, type ItemLabor } from './laborAggregate';
 import { orgConstraint } from './orgScope';
+import { shiftWorksSaturday } from './planning';
 
 // Helper: Get Firestore with null check
 function getDb() {
@@ -2606,6 +2607,8 @@ export async function autoPopulateWeekends(workers: Worker[], year: number, mont
         for (const dateStr of weekendDates) {
             for (const worker of workers) {
                 const key = `${worker.Worker_ID}_${dateStr}`;
+                // Subota koju radnik po smjeni RADI nije vikend (Worker.Saturday_Anchor).
+                if (shiftWorksSaturday(worker.Saturday_Anchor, dateStr) === true) continue;
                 if (!existingKeys.has(key)) {
                     const ref = doc(collection(firestore, COLLECTIONS.WORKER_ATTENDANCE));
                     operations.push({

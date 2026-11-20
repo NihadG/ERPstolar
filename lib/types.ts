@@ -651,6 +651,11 @@ export interface Worker {
     Daily_Rate?: number;      // Dnevnica u KM (trenutna/posljednja)
     Daily_Rate_History?: { Effective_From: string; Rate: number }[];  // efektivno-datirana istorija dnevnice
     Specializations?: string[];
+    /**
+     * Subotnja smjena: subota (YYYY-MM-DD) koju radnik RADI; od nje radi svaku drugu subotu.
+     * Prazno = rotacija se procjenjuje iz šihtarice (lib/planning.ts workerWorksSaturday).
+     */
+    Saturday_Anchor?: string;
 
     // NALOG ZA PRIJAVU (od 2026-07): radnik u pogonu ≠ korisnički nalog. Ova veza
     // spaja to dvoje — bez nje prijavljen korisnik nema pogonski identitet, pa se
