@@ -33,3 +33,14 @@ describe('subotnja smjena', () => {
         expect(workOrderDueDate('2026-11-30', 6, off)).toBe('2026-12-07');
     });
 });
+
+describe('grupisanje po smjeni', () => {
+    it('smjena s najbližom radnom subotom prva, bez smjene zadnji; redoslijed u grupi ostaje', () => {
+        const ws = [
+            { n: 'Amer', a: '2026-11-28' }, { n: 'Edin', a: '2026-11-21' }, { n: 'Haso', a: undefined }, { n: 'Tarik', a: '2026-11-21' },
+        ];
+        const g = (await_ => await_)(require('@/lib/planning').groupByShift(ws, (w: { a?: string }) => w.a, '2026-11-20'));
+        expect(g.map((x: { label: string }) => x.label)).toEqual(['Smjena · subote 21.11., 5.12.…', 'Smjena · subote 28.11., 12.12.…', 'Bez subotnje smjene']);
+        expect(g[0].items.map((w: { n: string }) => w.n)).toEqual(['Edin', 'Tarik']);
+    });
+});
