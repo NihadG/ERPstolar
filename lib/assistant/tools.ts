@@ -12,7 +12,8 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { ButtonRows } from '@/lib/telegram/api';
 import { createTask, taskRef } from '@/lib/server/fieldWrites';
 import { adminDb } from '@/lib/server/firebaseAdmin';
-import { isIsoDate } from '@/lib/voice/dates';
+import { addDays as addIsoDays, isIsoDate } from '@/lib/voice/dates';
+import { logSource } from '@/lib/workHistory';
 import { editDistance, foldText, tokens, stem } from '@/lib/voice/text';
 import { findItem, sameItem, sortByFlat } from './checklistOrder';
 import { matchScore, tokenSimilarity } from '@/lib/voice/match';
@@ -21,7 +22,7 @@ import { firstOccurrence, parseRepeat, repeatLabel } from './repeat';
 import { projectLabel, resolveAlias, type Aliased, type AssistantContext } from './context';
 import { memoryLine, taskLine } from './prompt';
 import { getAllTasks, getBookableWorkOrders, getItemsForWorkOrders, getWorkLogsInRange } from '@/lib/server/fieldRepo';
-import { repeatDay, saidWorkDay } from './workDay';
+import { repeatDay, saidWorkDay, workPeriod } from './workDay';
 import { listEntriesSince, listMemory, memoryRef, recordOp } from './store';
 import { formatQty, materialGroupKey, roundQty } from '@/lib/orderItemGroups';
 import { planMaterialGroupOrder } from '@/lib/orderMaterialAllocation';
@@ -34,7 +35,7 @@ import {
 import { loadDayProposal } from './dayProposals';
 import type { DayProposal } from '@/lib/dayProposal';
 import {
-    bookEmptyDays, bookWorkDiary, setProgress, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput, type ProgressChoice, type ProgressResult,
+    bookWorkDiary, setProgress, workLogReport, type DiaryAbsenceInput, type DiaryIssue, type DiaryLineInput, type ProgressChoice, type ProgressResult,
 } from '@/lib/server/workDiary';
 import { clearWorkerDay, markPresence } from '@/lib/server/presence';
 import { createBotWorkOrder } from '@/lib/server/fieldWorkOrders';
@@ -273,7 +274,7 @@ export const TOOLS: Anthropic.Tool[] = [
         input_schema: {
             type: 'object',
             properties: {
-                date: { ...str, description: 'Dan rada YYYY-MM-DD za CIJELI poziv (jedan dan po pozivu; dva dana = dva poziva). Dan rečen u poruci („jučer", „u petak", „12.11.") ERP čita sam.' },
+                date: { ...str, description: 'Dan rada YYYY-MM-DD za redove BEZ days. Dan rečen u poruci („jučer", „u petak", „12.11.") ERP čita sam. Više dana ili sedmica → days u redu, ne više poziva.' },
                 same_as_last: { ...bool, description: '„I jučer su isto" / „i u petak isto stavi" / „isto i za jučer": true — ERP ponovi zadnji upis rada iz razgovora (isti radnici, isti nalozi) za dan iz poruke. Bez lines za te radnike.' },
                 lines: {
                     type: 'array',
@@ -282,7 +283,8 @@ export const TOOLS: Anthropic.Tool[] = [
                         properties: {
                             who: { ...str, description: 'Imena radnika TAČNO kako su rečena, riječima, svi iz te grupe: „kemo, bego, braco i turbic", „Samir Plećan", „Imer i Ahmad". Zamjenicu prepiši kako je rečena („on i Ahmad") — ERP zna na koga se odnosi; ne pitaj ko je „on". Bez oznaka W#.' },
                             work: { ...str, description: 'Posao TAČNO kako je rečen, riječima korisnika: „umivaonici za švicarsku", „stolovi za Dragu", „sve naloge od Jerke osim vrata", „Meliha i vrata za Švicarsku". ERP sam nađe nalog (ili više njih, dan se dijeli) ili pita dugmadima. Ne prevodi u naziv iz liste i ne šalji R#.' },
-                            like_last: { ...bool, description: '„Isto kao jučer" / „nastavio isto": radnik radi što i zadnji potvrđeni dan (ERP zna posao i sljedeći korak). Bez work.' },
+                            like_last: { ...bool, description: '„Isto kao jučer" / „nastavio isto" / „na istom nalogu kao i ranije" / „na istim nalozima": radnik radi što i zadnji potvrđeni dan prije ovog (ili prije perioda iz days) — ERP zna posao. Bez work; ne pitaj na kojem nalogu.' },
+                            days: { ...str, description: 'PERIOD kako je rečen, kad red nije samo za jedan dan: „cijelu sedmicu", „ove sedmice (a i danas)", „od srijede", „srijedu, četvrtak i danas", „u ponedjeljak", „od ponedjeljka do srijede". ERP pročita dane (radni dani, do danas) i upiše svaki; rečeno za period ZAMIJENI ono što je bot ranije upisao tim radnicima tih dana. Grupe s različitim periodima su različiti redovi u ISTOM pozivu („cijelu sedmicu umivaonici, a danas Haso stolove" → dva reda; kraći period ima prednost).' },
                             process: { ...str, description: 'Proces kako je rečen, s riječju koja ga razlikuje ako je rečena: „krojenje iverala", „kantiranje", „kantiranje fronti", „brušenje Kerrocka". ERP bira proces iz plana proizvoda.' },
                             also: { ...strList, description: 'Dodatni procesi na istom poslu taj dan.' },
                             fraction: { ...num, description: 'Dio dana ako je rečen: pola dana = 0.5, dva sata = 0.25.' },
@@ -299,6 +301,7 @@ export const TOOLS: Anthropic.Tool[] = [
                         required: ['who'],
                     },
                 },
+                only_empty: { ...bool, description: '„Popuni prazne dane", „dane koji nisu popunjeni": true — redovi s days upisuju samo dane bez upisa, ostale ne diraju.' },
                 others_like_last: { ...bool, description: '„Ostali rade kao jučer" / „svi ostali isto": true — ERP sam upiše SVE radnike koje poruka ne imenuje po njihovom zadnjem danu. Ne nabrajaj ih u lines.' },
                 clear: { ...strList, description: 'Imena radnika (riječima, kako su rečena) koji tog dana NE treba da budu upisani („Senad ne treba nikako") — ERP briše njihov dan (prisustvo i rad). Ne za vikend ni odsustvo (to je absent).' },
                 absent: {
@@ -310,20 +313,6 @@ export const TOOLS: Anthropic.Tool[] = [
                     },
                 },
             },
-        },
-    },
-    {
-        name: 'fill_work_days',
-        description: 'Popuni radnicima dane BEZ potvrđenog upisa u periodu (bez perioda = ova sedmica do danas) radom na navedenim nalozima. ERP sam nađe prazne dane, zamijeni automatsku podjelu iz prisustva, preskoči odsutne i vikende, podijeli dan na naloge. Za „popuni im prazne dane", „i ranije dane koji nisu popunjeni".',
-        input_schema: {
-            type: 'object',
-            properties: {
-                workers: { ...strList, description: 'Oznake radnika W#.' },
-                orders: { ...strList, description: 'Nalozi R# iz liste NALOZI.' },
-                from: { ...str, description: 'Od YYYY-MM-DD (bez toga = ponedjeljak ove sedmice).' },
-                to: { ...str, description: 'Do YYYY-MM-DD (bez toga = danas).' },
-            },
-            required: ['workers', 'orders'],
         },
     },
     {
@@ -790,7 +779,7 @@ export interface OrderGroup {
  * samo njih i svi su uspjeli, odgovor se složi iz `summaries` — drugi
  * poziv modela bi samo prepričao isto, uz trošak i sekundu-dvije čekanja.
  */
-export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'fill_work_days', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'save_contact', 'chat_message']);
+export const WRITE_TOOLS = new Set(['create_task', 'update_task', 'remember', 'update_memory', 'create_order', 'manage_order', 'order_pdf', 'log_work', 'set_presence', 'set_progress', 'learn_name', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'link_mail', 'save_contact', 'chat_message']);
 
 /** Alati koji samo čitaju ERP — odgovor iz njih je podatak, ne tvrdnja o upisu. */
 /**
@@ -1975,6 +1964,12 @@ async function logWorkTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     }
     // Odbijen poziv ne ostavlja nalog koji je usput napravio (P-080: prazan „Razni poslovi").
     const mark = (env.newOrderMade || []).length;
+    // Red s periodom („cijelu sedmicu", „od srijede"): ERP upiše svaki dan (P-091).
+    const period = await logWorkPeriod(env, args, today);
+    if (period) {
+        if (!period.ok) await dropNewOrders(env, mark);
+        return period;
+    }
     const res = await logWorkLines(env, args, today);
     if (!res.ok) await dropNewOrders(env, mark);
     return res.ok && repeated ? { ...res, ponovljeno: (repeated as { ponovljeno?: unknown }).ponovljeno } : res;
@@ -2038,11 +2033,183 @@ async function dropNewOrders(env: ToolEnv, mark: number): Promise<void> {
     }
 }
 
+// ── Period rada (P-091) ──────────────────────────────────────────────
+//
+// „Ove sedmice su Amer, Edin i Haso radili na istim nalozima, Tarik i Zlatan srijedu, četvrtak i
+// danas na Brdu, Selma od srijede ogledala" — model prepiše period riječima u red (`days`), ERP
+// pročita dane i svaki upiše istim putem kao dan po dan. Rečeno za period zamjenjuje botov raniji
+// upis tih radnika tih dana (ispravka sedmice), osim kad je traženo samo popunjavanje praznih
+// dana (`only_empty`). Kraći period ima prednost („cijelu sedmicu X, a danas Y").
+// „Kao ranije / na istim nalozima" za period = nalog(zi) zadnjeg dana rada PRIJE perioda.
+
+const ABSENT_DAY = new Set(['Bolovanje', 'Odmor', 'Odsutan', 'Vikend']);
+const WD_SHORT = ['ned', 'pon', 'uto', 'sri', 'čet', 'pet', 'sub'];
+
+/** Dani reda: `__days` (dugme, ERP ih je već pročitao) ili riječi iz `days`. */
+function lineDaysOf(l: Args, today: string): string[] | null {
+    if (Array.isArray(l.__days)) {
+        const d = (l.__days as unknown[]).filter(isIsoDate) as string[];
+        return d.length ? d.filter(x => x <= today) : null;
+    }
+    const said = text(l.days, 160);
+    return said ? workPeriod(said, today) : null;
+}
+
+/** „pon–čet 16.–19.11." / „pet 20.11." — uzastopni radni dani istog posla u jedan dio. */
+function periodLabel(dates: string[]): string {
+    const wd = (d: string) => WD_SHORT[new Date(`${d}T12:00:00Z`).getUTCDay()];
+    const dm = (d: string) => `${Number(d.slice(8))}.${Number(d.slice(5, 7))}.`;
+    const a = dates[0], b = dates[dates.length - 1];
+    if (a === b) return `${wd(a)} ${dm(a)}`;
+    const sameMonth = a.slice(0, 7) === b.slice(0, 7);
+    return `${wd(a)}–${wd(b)} ${sameMonth ? `${Number(a.slice(8))}.` : dm(a)}–${dm(b)}`;
+}
+
+async function logWorkPeriod(env: ToolEnv, a: Args, today: string): Promise<ToolResult | null> {
+    const raw = Array.isArray(a.lines) ? (a.lines as Args[]).slice(0, 40) : [];
+    const spans = raw.map(l => lineDaysOf(l, today));
+    if (!spans.some(Boolean)) return null;
+    // Period mora biti rečen (poruka ili razgovor) — dane koje niko nije rekao ERP ne upisuje.
+    const button = raw.some(l => Array.isArray(l.__days));
+    if (!button && env.messageText !== undefined) {
+        // „Popuni prazne dane" bez perioda = ova sedmica do danas (kao do sada).
+        const emptyWeek = a.only_empty === true && /\b(prazn\w*|popun\w*)\b/.test(foldText(env.messageText || '')) ? workPeriod('ove sedmice', today) || [] : [];
+        const said = new Set([...(workPeriod(env.messageText || '', today) || []), ...(workPeriod(env.talkText || '', today) || []), ...emptyWeek]);
+        for (const [i, d] of spans.entries()) {
+            if (!d) continue;
+            const ok = d.filter(x => said.has(x));
+            spans[i] = ok.length ? ok : null;
+        }
+        if (!spans.some(Boolean)) return { ok: false, error: 'Period iz days nije rečen u poruci — upiši dan iz poruke (bez days) ili pitaj za koje dane.' };
+    }
+    if (Date.parse(today) - Date.parse(spans.flatMap(d => d || []).sort()[0] || today) > 60 * 86_400_000) {
+        return { ok: false, error: 'Period je stariji od 60 dana — upiši ga u ERP-u.' };
+    }
+    const single = pickWorkDate(env, a.date, today);
+    const refs = workerRefs(env);
+    const nameOf = (id: string) => env.ctx.workers.find(w => w.value.id === id)?.value.name || id;
+    const idsOf = (l: Args): string[] => Array.isArray(l.workers)
+        ? (l.workers as unknown[]).map(x => resolveAlias(env.ctx.workers, x)?.id).filter((x): x is string => !!x)
+        : (() => {
+            const r = whoWorkers(text(l.who, 300), refs);
+            const he = pronounWorker(text(l.who, 300), `${env.talkText || ''}\n${env.messageText || ''}`, refs, r.ids);
+            return he ? [he, ...r.ids] : r.ids;
+        })();
+    type Entry = { l: Args; ids: string[]; days: string[]; period: boolean };
+    let entries: Entry[] = raw.map((l, i) => ({ l, ids: idsOf(l), days: spans[i] || [single], period: !!spans[i] }));
+    const notes: string[] = [];
+
+    const span = Array.from(new Set(entries.flatMap(e => e.days))).sort();
+    // Ne diraju se: dani odsustva u rasponu i, kod „popuni prazne dane", dani koji već imaju upis.
+    const [logs, att] = await Promise.all([
+        getWorkLogsInRange(env.orgId, span[0], span[span.length - 1]),
+        adminDb().collection('worker_attendance').where('Organization_ID', '==', env.orgId)
+            .where('Date', '>=', span[0]).where('Date', '<', `${span[span.length - 1]}T99`).get(),
+    ]);
+    const filled = new Set(logs.filter(l => !l.Work_Order_Deleted && logSource(l) !== 'auto').map(l => `${l.Worker_ID}|${String(l.Date).slice(0, 10)}`));
+    const absent = new Set(att.docs.map(d => d.data()).filter(x => ABSENT_DAY.has(String(x.Status))).map(x => `${x.Worker_ID}|${String(x.Date).slice(0, 10)}`));
+    const onlyEmpty = a.only_empty === true;
+
+    // „Kao ranije" za period: nalozi zadnjeg dana rada prije perioda, po radniku. Kod „popuni prazne
+    // dane": zadnji upisan dan uopšte (i u periodu, i nalog napravljen ovom porukom) — popunjava se
+    // ono što radnik sad radi.
+    const first = span[0];
+    const before = (await getWorkLogsInRange(env.orgId, addIsoDays(first, -30), addIsoDays(first, -1)))
+        .filter(l => !l.Work_Order_Deleted && logSource(l) !== 'auto');
+    const expanded: Entry[] = [];
+    for (const e of entries) {
+        if (!(e.period && e.l.like_last === true && !namesOrder(e.l))) { expanded.push(e); continue; }
+        const groups = new Map<string, string[]>();
+        for (const id of e.ids) {
+            const start = onlyEmpty ? '9999-12-31' : e.days[0];
+            const mine = [...before, ...logs.filter(l => !l.Work_Order_Deleted && logSource(l) !== 'auto')].filter(l => l.Worker_ID === id && String(l.Date).slice(0, 10) < start);
+            const lastDay = mine.map(l => String(l.Date).slice(0, 10)).sort().at(-1);
+            const orders = Array.from(new Set(mine.filter(l => String(l.Date).slice(0, 10) === lastDay).map(l => l.Work_Order_ID).filter(Boolean))).sort();
+            if (!orders.length) { notes.push(`${nameOf(id)}: nema rada prije ${periodLabel([start])} — reci na čemu je radio.`); continue; }
+            groups.set(orders.join('|'), [...(groups.get(orders.join('|')) || []), id]);
+        }
+        for (const [key, ids] of Array.from(groups.entries())) {
+            const { like_last: _ll, work: _w, ...rest } = e.l;
+            expanded.push({ ...e, ids, l: { ...rest, orders: key.split('|').map(id => `@${id}`), __erp: true } });
+        }
+    }
+    entries = expanded;
+
+    // Ko je kojeg dana na kojem redu: najkraći period koji pokriva dan (pa kasniji red).
+    const pick = new Map<string, number>();
+    entries.forEach((e, i) => e.ids.forEach(id => e.days.forEach(d => {
+        const k = `${id}|${d}`;
+        const cur = pick.get(k);
+        if (cur === undefined || entries[cur].days.length >= e.days.length) pick.set(k, i);
+    })));
+    const dates = Array.from(new Set(entries.flatMap(e => e.days))).sort();
+    const all = Array.from(new Set(entries.flatMap(e => e.ids)));
+
+    let booked = 0;
+    const failed: string[] = [];
+    for (const d of dates) {
+        const dayLines: Args[] = [];
+        entries.forEach((e, i) => {
+            const ws = e.ids.filter(id => pick.get(`${id}|${d}`) === i
+                && !(e.period && e.days.length > 1 && absent.has(`${id}|${d}`))
+                && !(onlyEmpty && filled.has(`${id}|${d}`)));
+            if (!ws.length) return;
+            const { workers: _w, days: _d, ...rest } = e.l;
+            dayLines.push({ ...rest, who: ws.map(nameOf).join(', '), ...(e.period ? { __days: e.days, ...(onlyEmpty ? {} : { replace: true }) } : {}) });
+        });
+        if (!dayLines.length) continue;
+        const res = await logWorkLines(env, {
+            ...a, date: d, lines: dayLines, __fixed_date: true, __quiet: true, __no_others: d !== single,
+            absent: d === single ? a.absent : undefined, clear: d === single ? a.clear : undefined,
+        }, today);
+        if (res.ok) booked++;
+        else failed.push(`${periodLabel([d])}: ${String((res as { error?: unknown }).error || 'nije upisano').split('\n')[0]}`);
+    }
+    if (!booked && !failed.length && onlyEmpty && !notes.length) {
+        env.summaries.push(`🗓 Nema praznih dana (${periodLabel(dates)}) — sve je već upisano.`);
+        return { ok: true, dana: 0, note: 'Nema praznih dana — sve je već upisano. Reci korisniku.' };
+    }
+    if (!booked) return { ok: false, error: failed.join('\n') || notes.join('\n') || 'Nema ničega za upis u tom periodu.' };
+
+    // Potvrda iz Knjige rada: ko je kojih dana na čemu (stvarno stanje poslije upisa).
+    const after = (await getWorkLogsInRange(env.orgId, dates[0], dates[dates.length - 1]))
+        .filter(l => !l.Work_Order_Deleted && all.includes(l.Worker_ID));
+    const names = new Map((await getBookableWorkOrders(env.orgId)).map(o => [o.Work_Order_ID, o.Name || o.Work_Order_Number || 'nalog']));
+    // Zatvoreni nalozi (rad na njima ostaje u Knjizi rada) nisu među otvorenim — naziv iz baze.
+    const missing = Array.from(new Set(after.map(l => l.Work_Order_ID).filter(id => id && !names.has(id))));
+    for (let i = 0; i < missing.length; i += 30) {
+        const snap = await adminDb().collection('work_orders').where('Organization_ID', '==', env.orgId).where('Work_Order_ID', 'in', missing.slice(i, i + 30)).get();
+        snap.docs.forEach(d => names.set(d.data().Work_Order_ID, d.data().Name || d.data().Work_Order_Number || 'nalog'));
+    }
+    const orderName = (l: WorkLog) => names.get(l.Work_Order_ID) || 'nalog';
+    const rows = new Map<string, string[]>();
+    for (const id of all) {
+        const byDay = new Map<string, string>();
+        for (const l of after.filter(x => x.Worker_ID === id)) {
+            const d = String(l.Date).slice(0, 10);
+            byDay.set(d, Array.from(new Set([...(byDay.get(d) || '').split(' + ').filter(Boolean), orderName(l)])).sort().join(' + '));
+        }
+        const parts: string[] = [];
+        let run: string[] = [];
+        const days = Array.from(byDay.keys()).sort();
+        days.forEach((d, i) => {
+            run.push(d);
+            if (i === days.length - 1 || byDay.get(days[i + 1]) !== byDay.get(d)) { parts.push(`${periodLabel(run)} · ${byDay.get(d)}`); run = []; }
+        });
+        const key = parts.join('; ') || 'ništa upisano';
+        rows.set(key, [...(rows.get(key) || []), nameOf(id).split(' ')[0]]);
+    }
+    env.summaries.push([`📒 Knjiga rada, ${periodLabel(dates)}:`, ...Array.from(rows.entries()).map(([k, ws]) => `• ${ws.join(', ')} — ${k}`)].join('\n'));
+    if (failed.length || notes.length) env.summaries.push(['⚠️ Nije upisano:', ...failed, ...notes].join('\n'));
+    return { ok: true, dana: booked, ...(failed.length || notes.length ? { nije_upisano: [...failed, ...notes] } : {}) };
+}
+
 async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolResult> {
     // Dan u redu (polje koje red nema) je dan poziva kad je jedan; dva dana u jednom pozivu ERP ne pogađa.
     const lineDays = Array.from(new Set((Array.isArray(a.lines) ? a.lines as Args[] : []).map(l => l.date).filter(isIsoDate)));
     if (lineDays.length > 1) return { ok: false, error: `Jedan dan po pozivu: date ide u poziv, ne u red. Redovi nose ${lineDays.join(' i ')} — pozovi log_work posebno za svaki dan.` };
-    const date = pickWorkDate(env, isIsoDate(a.date) ? a.date : lineDays[0], today);
+    // Dan perioda (logWorkPeriod) je već određen — ne čita se ponovo iz poruke.
+    const date = a.__fixed_date === true && isIsoDate(a.date) ? a.date : pickWorkDate(env, isIsoDate(a.date) ? a.date : lineDays[0], today);
     if (date > today) return { ok: false, error: 'Rad se ne upisuje unaprijed.' };
     if (Date.parse(today) - Date.parse(date) > 60 * 86_400_000) return { ok: false, error: 'Dan je stariji od 60 dana — upiši ga u ERP-u.' };
 
@@ -2070,7 +2237,7 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
     };
     // „Ostali rade kao jučer": ERP sam upiše nespomenute po zadnjem danu (rečeno ili zastavica modela).
     const saidText = env.messageText ?? env.groundText;
-    const others = a.others_like_last === true
+    const others = a.__no_others === true ? false : a.others_like_last === true
         ? (saidText === undefined || othersLikeLast(saidText))
         : saidText !== undefined && othersLikeLast(saidText);
     if (!rawLines.length && !rawAbsent.length && !rawClear.length && !others) return { ok: false, error: 'Nema ničega za upis.' };
@@ -2088,6 +2255,8 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
     const deferred: { raw: Args; token: string; ids: string[] }[] = [];
     /** Redovi čiji rečeni proizvod projekta nema nalog — pitanje „➕ Nalog …" poslije upisa ostalog. */
     const productAsks: ({ line: Args } & OrphanProducts)[] = [];
+    /** Novi nalog čiji naziv liči na proizvode iz ponude: razni poslovi ili proizvodni — pita se (P-092). */
+    const kindAsks: { line: Args; ask: OrderKindAsk }[] = [];
     let proposal: DayProposal | null = null;
     for (const [li, l] of rawLines.entries()) {
         // Model prepiše imena (`who`); oznake W# šalju samo ERP-ova dugmad (i stari pozivi).
@@ -2175,6 +2344,7 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
             if (!text(l.work, 120)) l.work = text(wanted!.name, 90);
             fresh = null;
         }
+        if (fresh && 'ask' in fresh) { kindAsks.push({ line: l, ask: fresh.ask }); continue; }
         if (fresh && 'error' in fresh) return { ok: false, error: fresh.error };
         // Posao kako je rečen (work) nalazi ERP: jedan nalog, više njih („sve naloge od Hamze osim vrata")
         // ili pitanje dugmadima (bookWorkDiary → matchTargets). Oznake R# važe za ERP-ova dugmad i stare
@@ -2192,6 +2362,9 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
         // Bez naloga u redu ERP ionako ponudi nalog (newOrderQuestion) — ovo je samo za izabran tuđi nalog.
         // Isto kad model kaže postojeći nalog samo tekstom posla („Hotel na brdu - Uzglavlja"), bez
         // naloga (P-074). Posao koji ne pogađa nijedan nalog ide u newOrderQuestion kao i prije.
+        // Nalog koji je ERP sam našao (zadnji rad radnika prije perioda, logWorkPeriod) nije rečen
+        // riječima — provjere „je li rečen" i „proizvod bez naloga" ga ne obaraju.
+        if (l.__erp === true) l.__product_ok = true;
         const workOrders = !fresh && !orders.length && l.__product_ok !== true ? ordersNamedIn(env, text(l.work, 120)) : [];
         // „Stavio si da rade na X, a ne na Y": X je pogrešan upis, ne novi (prigovor na prethodni odgovor).
         const wrong = !fresh && l.__product_ok !== true && env.messageText ? wronglyPlaced(env.messageText, orderGroundRefs(env)) : [];
@@ -2213,7 +2386,7 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
         // Pogrešno uparen red (ponavljanje 04.11.): nalog pogrešan za SVE u redu („osim za vrata", a
         // model dodao vrata) → ispada nalog, radnici ostaju; inače ispada samo pogrešan radnik.
         let orderList = orders as string[];
-        const pairs = fresh ? [] : groundPairs(env, ids as string[], orderList);
+        const pairs = fresh || l.__erp === true ? [] : groundPairs(env, ids as string[], orderList);
         if (pairs.length) {
             const common = orderList.filter(o => (ids as string[]).every(id => pairs.some(p => p.workerIds.includes(id) && p.wrongOrders.includes(o))));
             const rest = orderList.filter(o => !common.includes(o));
@@ -2355,7 +2528,9 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
     for (const id of Array.from(replaceDay)) if (!clearIds.includes(id)) await clearWorkerDay(env.orgId, id, date, { attendance: false }, track);
     const dayLabel = date === today ? 'danas' : formatReminder(`${date}T10:00:00Z`, env.tz, env.now).replace(/ u \d\d:\d\d$/, '');
     if (clearIds.length) env.summaries.push(`🧹 Uklonjeno iz dana (${dayLabel}): ${(clearIds as string[]).map(nameOf).join(', ')}`);
-    const whoQuestion = productAsks.length
+    const whoQuestion = kindAsks.length
+        ? orderKindQuestion(kindAsks[0], kindAsks.slice(1).map(k => k.line), date)
+        : productAsks.length
         ? productOrderQuestion(env, productAsks, date)
         : deferred.length ? vagueWorkerQuestion(env, deferred[0], deferred.slice(1), date) : null;
     if (othersNote) env.summaries.push(othersNote);
@@ -2435,7 +2610,8 @@ async function logWorkLines(env: ToolEnv, a: Args, today: string): Promise<ToolR
         recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
     env.changes.push(label);
     const dayName = date === today ? 'danas' : formatReminder(`${date}T10:00:00Z`, env.tz, env.now).replace(/ u \d\d:\d\d$/, '');
-    env.summaries.push(diarySummary(result, dayName));
+    // Period: potvrdu za sve dane piše logWorkPeriod iz Knjige rada (jedna tabela, ne dan po dan).
+    if (a.__quiet !== true) env.summaries.push(diarySummary(result, dayName));
     notePresenceDay(env, date, [...lines.flatMap(l => l.workerIds), ...absences.map(x => x.workerId), ...(clearIds as string[])]);
     if (unknownProcesses.length) {
         env.summaries.push(`⚙️ ${Array.from(new Set(unknownProcesses)).map(p => `„${p}"`).join(', ')} — nema u procesima, pa je rad upisan na nalog bez procesa.`);
@@ -2605,6 +2781,28 @@ function productFamily(names: string[]): string {
 }
 
 /** Pitanje za redove s rečenim proizvodom bez naloga: nalog za te proizvode, nalog koji je model izabrao, ili preskoči. */
+/**
+ * Novi nalog čiji naziv pogađa proizvode iz ponude: „Razni poslovi" (posao bez proizvoda) ili
+ * proizvodni nalog s tim proizvodima. Dugme pravi nalog i upisuje rad bez modela.
+ */
+function orderKindQuestion(first: { line: Args; ask: OrderKindAsk }, rest: Args[], date: string): ErpQuestion {
+    const { line, ask } = first;
+    const { new_order: _n, order: _o, orders: _os, ...base } = line;
+    const call = (l: Args | null): Args => { const all = [...(l ? [l] : []), ...rest]; return all.length ? { date, lines: all } : { ...SKIP_ARGS }; };
+    const project = ask.projectAlias ? { project: ask.projectAlias } : {};
+    const n = ask.products.length;
+    const family = productFamily(ask.products.map(p => p.name));
+    return {
+        tool: 'log_work',
+        question: `Nalog „${ask.name}": razni poslovi (bez proizvoda) ili proizvodni nalog s ${n} ${n === 1 ? 'proizvodom' : 'proizvoda'} iz ponude (${ask.products.slice(0, 3).map(p => p.name).join(', ')}${n > 3 ? '…' : ''})?`,
+        options: [
+            { label: `➕ Razni poslovi „${ask.name}"`.slice(0, 60), args: call({ ...base, new_order: { name: ask.name, ...project, __button: true, __job: true } }) },
+            { label: `➕ Proizvodni: ${family} (${n})`.slice(0, 60), args: call({ ...base, new_order: { name: ask.name, ...project, products: ask.words, __button: true } }) },
+            { label: 'Preskoči', args: call(null) },
+        ],
+    };
+}
+
 function productOrderQuestion(env: ToolEnv, asks: ({ line: Args } & OrphanProducts)[], date: string): ErpQuestion {
     const first = asks[0];
     const key = (x: OrphanProducts) => `${x.project.id}|${x.products.map(p => p.id).sort().join(',')}`;
@@ -2719,6 +2917,13 @@ const ORDER_KIND_NAME = /^(razni poslovi|razni posao|razno|razne stvari|novi nal
 const JOB_KIND = /\brazn\w* pos(ao|l\w+)\b|\brazno\b|\brazne stvari\b/;
 
 /**
+ * Naziv kaže RAD na terenu ili oko već napravljenog, ne izradu: „Korekcije i ugradnja obloga",
+ * „preostala vrata E501", „popravke". Proizvodi iz ponude u takvom nazivu ne čine nalog proizvodnim
+ * bez pitanja (P-092). „Noćni ormarići za hotel" (bez takve riječi) ostaje proizvodni kao i prije.
+ */
+const SITE_WORK = /\b(korekcij\w*|popravk\w*|popravlj\w*|ugradnj\w*|ugradi\w*|montaz\w*|montir\w*|servis\w*|reklamacij\w*|dorad\w*|preostal\w*|zamjen\w*|izmjen\w*|teren\w*|obilaz\w*|prevoz\w*|utovar\w*|istovar\w*)\b/;
+
+/**
  * Korisnik je uz novi nalog rekao vrstu „razni poslovi": u opisu posla tog reda, ili u poruci tik uz
  * naziv naloga (do 60 znakova ispred, 40 iza) — druga rečenica o nekom drugom nalogu se ne računa.
  */
@@ -2726,11 +2931,16 @@ export function saidAsJob(message: string, name: string, work = ''): boolean {
     if (JOB_KIND.test(foldText(work))) return true;
     const m = foldText(message), n = foldText(name);
     const at = n ? m.indexOf(n) : -1;
-    return at >= 0 && JOB_KIND.test(m.slice(Math.max(0, at - 60), at + n.length + 40));
+    if (at >= 0) return JOB_KIND.test(m.slice(Math.max(0, at - 60), at + n.length + 40));
+    // Naziv nije doslovno u poruci, a poruka ga imenuje dijelom i kaže „razni poslovi" — odgovor na
+    // pitanje o vrsti naloga tekstom („crni vrh korekcije su razni poslovi nalog", 20.11.).
+    return JOB_KIND.test(m) && workSaid(message, name, 0.5);
 }
 
 /** Napravi nalog iz `new_order` (rečeno ili izabrano dugmetom); isti naziv u istoj poruci = isti nalog. */
-async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | { error: string; soft?: true }> {
+interface OrderKindAsk { name: string; projectAlias: string; projectName: string; products: { id: string; name: string }[]; words: string[] }
+
+async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | { error: string; soft?: true } | { ask: OrderKindAsk }> {
     // Naziv kako ga je korisnik napisao: model ga zna „ispraviti" (14.11.: „Amera - Vrata" → „Amre - Vrata").
     const name = spec.__button === true ? text(spec.name, 90) : namedAsSaid(text(spec.name, 90), env.messageText || env.groundText || '');
     if (!name) return { error: 'Novi nalog: treba name (naziv kako ga je korisnik rekao).' };
@@ -2764,8 +2974,15 @@ async function newOrderFor(env: ToolEnv, spec: Args): Promise<{ id: string } | {
     const nameWords = tokens(foldText(name)).filter(w => w.length >= 4 && !projectWords.has(stem(w)) && !NOT_PRODUCT.test(w));
     // „Razni poslovi" rečeno uz nalog = posao BEZ proizvoda (broj …/Z), i kad naziv liči na proizvod projekta
     // (16.11.: „novi razni poslovi nalog: … preostala vrata" → napravljen proizvodni nalog s vratima iz ponude).
-    const job = spec.__button !== true && saidAsJob(env.messageText || env.groundText || '', name, text(spec.work, 160));
+    const job = spec.__job === true || (spec.__button !== true && saidAsJob(env.messageText || env.groundText || '', name, text(spec.work, 160)));
     const derived = project && !job && !given.length && nameWords.length ? await projectProducts(env, project.id, nameWords) : [];
+    // Naziv liči na proizvode iz ponude, a nije rečeno „razni poslovi" ni koji proizvodi: ERP ne
+    // pogađa vrstu naloga — pita dugmadima (P-092; 16. i 20.11.: „Korekcije i ugradnja obloga" i
+    // „preostala vrata" postali proizvodni nalozi sa 6 obloga / vratima iz ponude, planom i materijalima).
+    if (spec.__button !== true && derived.length && SITE_WORK.test(foldText(name))) {
+        const alias = env.ctx.projects.find(p => p.value.id === project!.id)?.alias || '';
+        return { ask: { name, projectAlias: alias, projectName: projectLabel(project!), products: derived, words: nameWords } };
+    }
     const products = job ? [] : project && given.length ? await projectProducts(env, project.id, given) : derived;
     // Rečeni proizvodi kojih projekat nema (ili projekta nema): nalog se pravi kao posao bez proizvoda —
     // naziv je rečen, pa nema šta pitati (mjerenje 15.11.: „napravi nalog Ormari …" → pitanje umjesto naloga).
@@ -2860,65 +3077,6 @@ function diaryIssueText(env: ToolEnv, issues: DiaryIssue[]): string {
     return parts.join('\n');
 }
 
-async function fillWorkDaysTool(env: ToolEnv, a: Args): Promise<ToolResult> {
-    const today = toZoned(env.now, env.tz).date;
-    const monday = (() => {
-        const t = Date.parse(`${today}T12:00:00Z`);
-        const wd = (new Date(t).getUTCDay() + 6) % 7;
-        return new Date(t - wd * 86_400_000).toISOString().slice(0, 10);
-    })();
-    const from = isIsoDate(a.from) ? a.from : monday;
-    const to = isIsoDate(a.to) && a.to < today ? a.to : today;
-    if (from > to) return { ok: false, error: 'Period nije ispravan (od je poslije do).' };
-    if (Date.parse(today) - Date.parse(from) > 60 * 86_400_000) return { ok: false, error: 'Period stariji od 60 dana — upiši ga u ERP-u.' };
-    if (Date.parse(to) - Date.parse(from) > 31 * 86_400_000) return { ok: false, error: 'Najviše mjesec dana odjednom.' };
-
-    const workerIds = (Array.isArray(a.workers) ? a.workers : []).map(x => resolveAlias(env.ctx.workers, x)?.id);
-    if (!workerIds.length || workerIds.some(id => !id)) return { ok: false, error: `Radnik ${JSON.stringify(a.workers)} ne postoji u listi.` };
-    // „Napravi nalog X i popuni mu prazne dane": nalog nije naveden, a ovom porukom je napravljen
-    // tačno jedan → to je taj (mjerenje 16.11.: model pošalje prazne orders i upis propadne).
-    const made = Object.keys(env.newOrders || {});
-    const aliases = Array.isArray(a.orders) && a.orders.length ? a.orders : made.length === 1 ? [made[0]] : [];
-    const orderIds = aliases.map(x => orderOf(env, x));
-    if (!orderIds.length) return { ok: false, error: 'Navedi naloge (R# iz liste NALOZI).' };
-    const bad = aliases.find((_, i) => !orderIds[i]);
-    if (bad !== undefined) return { ok: false, error: `Nalog ${String(bad)} nije u listi NALOZI.` };
-    const unsaid = groundWorkers(env, workerIds as string[]) || groundOrders(env, orderIds as string[]);
-    if (unsaid) return { ok: false, error: unsaid };
-
-    const befores = new Map<string, Record<string, unknown> | null>();
-    const track = (path: string, data: Record<string, unknown> | null) => { if (!befores.has(path)) befores.set(path, data); };
-    const res = await bookEmptyDays(env.orgId, {
-        workerIds: workerIds as string[], workOrderIds: Array.from(new Set(orderIds as string[])), from, to, today,
-    }, track);
-    if (!res.ok) {
-        // Dani prije greške su upisani — idu pod ↩️ Poništi ove poruke.
-        if (befores.size) {
-            await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
-                recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label: 'prazni dani' })));
-            env.changes.push('prazni dani (djelimično)');
-        }
-        const done = res.days.map(d => shortDay(`${d.date}T12:00:00Z`, env.tz)).join(', ');
-        return { ok: false, error: `${done ? `Upisano samo: ${done}.` : 'Ništa nije upisano.'}\n${diaryIssueText(env, res.issues)}` };
-    }
-    if (!res.days.length) {
-        return { ok: true, days: 0, note: `Nema praznih dana od ${shortDay(`${from}T12:00:00Z`, env.tz)} do ${shortDay(`${to}T12:00:00Z`, env.tz)} — sve je već upisano. Reci korisniku.` };
-    }
-    const label = 'prazni dani';
-    await Promise.all(Array.from(befores.entries()).map(([path, before]) =>
-        recordOp({ turnId: env.turnId, uid: env.uid, orgId: env.orgId, path, before, label })));
-    env.changes.push(label);
-    const byWorkers = new Map<string, string[]>();
-    res.days.forEach(d => {
-        const k = d.workers.join(', ');
-        byWorkers.set(k, [...(byWorkers.get(k) || []), shortDay(`${d.date}T12:00:00Z`, env.tz)]);
-    });
-    env.summaries.push([
-        res.days.length ? `🗓 Popunjeni prazni dani · ${res.workOrderNames.join(', ')}` : `🗓 Nema praznih dana — sve je već upisano.`,
-        ...Array.from(byWorkers.entries()).map(([w, days]) => `• ${w}: ${days.join(', ')}`),
-    ].filter(Boolean).join('\n'));
-    return { ok: true, days: res.days.length };
-}
 
 async function workReportTool(env: ToolEnv, a: Args): Promise<ToolResult> {
     const today = toZoned(env.now, env.tz).date;
@@ -4147,7 +4305,6 @@ export const TOOL_HANDLERS: Record<string, (env: ToolEnv, args: Args) => ToolRes
     list_orders: listOrdersTool,
     manage_order: manageOrderTool,
     log_work: logWorkTool,
-    fill_work_days: fillWorkDaysTool,
     set_presence: setPresenceTool,
     set_progress: setProgressTool,
     order_status: orderStatusTool,

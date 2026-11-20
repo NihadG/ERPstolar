@@ -301,7 +301,7 @@ export function timeOptions(now: Date, tz: string): string[] {
 const DAY_SAID = /\b(danas|jucer|juce|prekjucer|sutra|ponedjelj\w*|utor\w*|srijed\w*|cetvrt\w*|petak|petk\w*|subot\w*|nedjelj\w*|\d{1,2}\.\s?\d{1,2}\.?)\b/;
 
 /** Upisi koji prave nešto NOVO — pritužba bez sadržaja ih ne smije pokrenuti. */
-const NEW_WRITES = new Set(['create_task', 'remember', 'create_order', 'log_work', 'fill_work_days', 'set_progress', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'chat_message']);
+const NEW_WRITES = new Set(['create_task', 'remember', 'create_order', 'log_work', 'set_progress', 'material_arrived', 'email_order', 'email_contact', 'reply_mail', 'chat_message']);
 
 /** „↩️ Poništi prethodni upis" uz pritužbu važi ovoliko poslije te poruke. */
 const UNDO_PREVIOUS_MINUTES = 30;
