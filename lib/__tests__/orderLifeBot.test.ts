@@ -150,9 +150,14 @@ describe('novi nalog iz poruke', () => {
         expect(orderNamed('Brdo preostala vrata E501 i klizna')).toBeUndefined();
     });
 
-    it('bez „razni poslovi": isti naziv pravi proizvodni nalog s proizvodom projekta (kontrola)', async () => {
+    it('bez „razni poslovi": ERP pita dugmadima (P-092); „Proizvodni" pravi nalog s proizvodom projekta', async () => {
         const e = env('amer i edin montiraju vrata na brdu, napravi nalog Brdo preostala vrata', '2026-11-18');
         expect(await runTool(e, 'log_work', { lines: [{ who: 'amer i edin', work: 'vrata na Brdu', new_order: { name: 'Brdo preostala vrata', project: 'P1' } }] })).toMatchObject({ ok: true });
+        expect(orderNamed('Brdo preostala vrata')).toBeUndefined();
+        const q = (e as unknown as { erpQuestion: { options: { label: string; args: Record<string, unknown> }[] } }).erpQuestion;
+        expect(q.options[1].label).toMatch(/^➕ Proizvodni/);
+        const tap = { ...e, messageText: undefined, groundText: undefined, workerGround: undefined } as typeof e;
+        expect(await runTool(tap, 'log_work', q.options[1].args)).toMatchObject({ ok: true });
         const wo = orderNamed('Brdo preostala vrata')!;
         expect(wo).toMatchObject({ Work_Order_Type: 'Proizvodnja', Status: 'U toku' });
         expect(itemsOf(wo.Work_Order_ID).map(i => i.Product_Name)).toEqual(['Poz 9 - Vrata Šoping']);
@@ -163,8 +168,8 @@ describe('novi nalog iz poruke', () => {
     it('„napravi nalog X i popuni mu prazne dane": prazni dani idu na nalog napravljen tom porukom, i kad ga model ne navede', async () => {
         const e = env('za selmu kreni novi nalog koji se zove Prevoz robe, i popuni joj prazne dane', '2026-11-18');
         expect(await runTool(e, 'log_work', { lines: [{ who: 'selma', work: 'Prevoz robe', new_order: { name: 'Prevoz robe' } }] })).toMatchObject({ ok: true });
-        const res = await runTool(e, 'fill_work_days', { workers: ['W3'], orders: [] });
-        expect(JSON.stringify(res)).not.toMatch(/Navedi naloge/);
+        // „Popuni joj prazne dane" = isti posao za prazne dane ove sedmice (log_work s periodom, P-091).
+        const res = await runTool(e, 'log_work', { only_empty: true, lines: [{ who: 'selma', like_last: true, days: 'ove sedmice' }] });
         expect(res).toMatchObject({ ok: true });
         await undoTurn(e.turnId, 'u1');
     });

@@ -89,6 +89,79 @@ export function saidWorkDays(text: string, today: IsoDate, workers: GroundRef[] 
     return Array.from(new Set(dayHits(foldText(rest), today).map(h => h.date))).filter(d => d <= today);
 }
 
+// ── PERIOD RADA ───────────────────────────────────────────────────────
+//
+// Vlasnik rad javlja po sedmici: „ove sedmice su radili na…", „cijelu sedmicu", „od srijede",
+// „srijedu, četvrtak i danas", „u ponedjeljak". Dan po pozivu (log_work) to nije mogao, pa je
+// model tražio fill_work_days s oznakama R# i ispravka perioda se nije dala uraditi (20.11.).
+// Dane perioda čita ERP iz riječi koje model prepiše (`days`): raspon ide samo radnim danima
+// (pon–pet), a dan rečen imenom ostaje i kad je subota. Budući dani ispadaju.
+
+const WEEK = /\b(cijel\w*|ov\w*|cel\w*|tokom|kroz)\s+(sedmic\w*|tjed\w*|nedjelj\w*|nedelj\w*)\b|^\s*(sedmic\w*|tjed\w*)\s*$/;
+const LAST_WEEK = /\b(prosl\w*)\s+(sedmic\w*|tjed\w*|nedjelj\w*|nedelj\w*)\b/;
+
+function weekdayOf(word: string): number | null {
+    const wd = WEEKDAYS.find(([, re]) => re.test(word));
+    return wd ? wd[0] : null;
+}
+
+/** Zadnji takav dan zaključno s danas (0 = nedjelja). */
+const lastWeekday = (today: IsoDate, wd: number) => addDays(today, -((weekday(today) - wd + 7) % 7));
+
+function workingRange(from: IsoDate, to: IsoDate): IsoDate[] {
+    const out: IsoDate[] = [];
+    for (let d = from; d <= to && out.length < 40; d = addDays(d, 1)) if (weekday(d) !== 0 && weekday(d) !== 6) out.push(d);
+    return out;
+}
+
+/** Ponedjeljak sedmice u kojoj je dan. */
+export const mondayOf = (d: IsoDate): IsoDate => addDays(d, -((weekday(d) + 6) % 7));
+
+/**
+ * Dani perioda rečenog riječima („cijelu sedmicu", „od srijede", „od ponedjeljka do srijede",
+ * „srijedu, četvrtak i danas", „u ponedjeljak", „prošle sedmice"). Null kad riječi ne kažu dan.
+ */
+export function workPeriod(said: string, today: IsoDate): IsoDate[] | null {
+    const f = foldText(said || '');
+    if (!f.trim()) return null;
+    const out = new Set<IsoDate>();
+    if (LAST_WEEK.test(f)) {
+        const mon = addDays(mondayOf(today), -7);
+        workingRange(mon, addDays(mon, 4)).forEach(d => out.add(d));
+    } else if (WEEK.test(f)) {
+        workingRange(mondayOf(today), today).forEach(d => out.add(d));
+    }
+    const t = f.replace(/[.,]/g, ' ').split(/\s+/).filter(Boolean);
+    // „od srijede (do petka)", „ponedjeljak do srijede", „pon-sri"
+    const dayAt = (i: number): IsoDate | null => {
+        const w = t[i] || '';
+        if (w === 'danas') return today;
+        if (w === 'jucer' || w === 'juce') return addDays(today, -1);
+        const wd = weekdayOf(w);
+        return wd === null ? null : lastWeekday(today, wd);
+    };
+    const used = new Set<number>();
+    t.forEach((w, i) => {
+        if (w !== 'od' && w !== 'do') return;
+        if (w === 'od') {
+            const from = dayAt(i + 1);
+            if (!from) return;
+            const to = t[i + 2] === 'do' ? dayAt(i + 3) : null;
+            workingRange(from, to && to >= from ? to : today).forEach(d => out.add(d));
+            [i + 1, i + 2, i + 3].forEach(k => used.add(k));
+        } else if (!used.has(i)) {
+            const from = dayAt(i - 1), to = dayAt(i + 1);
+            if (from && to && to >= from) { workingRange(from, to).forEach(d => out.add(d)); used.add(i - 1); used.add(i + 1); }
+        }
+    });
+    // Dani rečeni imenom ili datumom („srijedu, četvrtak i danas", „12.11.").
+    // Na cijelom tekstu: datumi nose tačke, a dani iz raspona su ionako već unutra.
+    dayHits(f, today).forEach(h => out.add(h.date));
+    t.forEach((w, i) => { if (!used.has(i) && weekdayOf(w) === 0 && /^(u|za)$/.test(t[i - 1] || '')) out.add(lastWeekday(today, 0)); });
+    const days = Array.from(out).filter(d => d <= today).sort();
+    return days.length ? days : null;
+}
+
 /** Jedan rečen dan → taj dan; nijedan ili više („jučer i danas") → null (odlučuje se kao i prije). */
 export function saidWorkDay(text: string, today: IsoDate, workers: GroundRef[] = []): IsoDate | null {
     const days = saidWorkDays(text, today, workers);

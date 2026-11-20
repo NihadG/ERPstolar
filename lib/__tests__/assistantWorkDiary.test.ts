@@ -404,8 +404,9 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
 
         fill = env3();
         // Dva sloja, dva alata: Knjiga rada (prazni dani) i Procesi („sve zapakovali").
-        const res = await runTool(fill, 'fill_work_days', { workers: ['W1', 'W2'], orders: ['R1', 'R2'] });
-        expect(res).toMatchObject({ ok: true, days: 5 });
+        // Prazni dani = log_work s periodom i only_empty (P-091; fill_work_days s oznakama R# je ukinut).
+        const res = await runTool(fill, 'log_work', { only_empty: true, lines: [{ workers: ['W1', 'W2'], orders: ['R1', 'R2'], days: 'ove sedmice' }] });
+        expect(res).toMatchObject({ ok: true, dana: 5 });
         const done = await runTool(fill, 'set_progress', { orders: ['R1', 'R2'] });
         expect(done).toMatchObject({ ok: true, products: 2 });
     });
@@ -431,16 +432,16 @@ describe('„Bego i Braco radili na svim Čorlukinim osim vrata, u petak sve zap
     });
 
     it('potvrda kaže dane po radnicima i završene proizvode', () => {
-        expect(fill.summaries[0]).toMatch(/Popunjeni prazni dani · Corluka - Kuhinja, Corluka - Ostrvo/);
-        expect(fill.summaries[0]).toMatch(/• Bego, Braco: 19\.10\., 20\.10\., 23\.10\./);
-        expect(fill.summaries[0]).toMatch(/• Bego: 21\.10\., 22\.10\./);
+        expect(fill.summaries[0]).toMatch(/^📒 Knjiga rada, pon–pet 19\.–23\.10\.:/);
+        expect(fill.summaries[0]).toContain('• Bego — pon–pet 19.–23.10. · Corluka - Kuhinja + Corluka - Ostrvo');
+        expect(fill.summaries[0]).toContain('• Braco — pon–uto 19.–20.10. · Corluka - Kuhinja + Corluka - Ostrvo; sri 21.10. · Corluka - Vrata; pet 23.10. · Corluka - Kuhinja + Corluka - Ostrvo');
         expect(fill.summaries[1]).toMatch(/^⚙️ Procesi — proizvodi završeni \(dan zadnjeg rada iz Knjige rada\):\n• Corluka - Kuhinja — Kuhinja · 23\.10\.\n• Corluka - Ostrvo — Ostrvo · 23\.10\./);
         expect(fill.summaries[1]).toMatch(/📒 Knjiga rada i 🗓 prisustvo — nisu mijenjani\./);
     });
 
     it('drugi put: nema praznih dana', async () => {
-        const res = await runTool(env3(), 'fill_work_days', { workers: ['W1'], orders: ['R1'] });
-        expect(res).toMatchObject({ ok: true, days: 0 });
+        const res = await runTool(env3(), 'log_work', { only_empty: true, lines: [{ workers: ['W1'], orders: ['R1'], days: 'ove sedmice' }] });
+        expect(res).toMatchObject({ ok: true, dana: 0 });
     });
 
     it('↩️ Poništi vraća sve: auto dani, procesi, stavke', async () => {
