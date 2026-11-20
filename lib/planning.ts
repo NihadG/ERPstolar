@@ -137,14 +137,30 @@ export function workerWorksSaturday(workerId: string, saturdayISO: string, atten
 }
 
 /**
+ * Subotnja smjena (Worker.Saturday_Anchor): radnik radi subotu `anchorISO` i svaku drugu od nje,
+ * unaprijed i unazad. Null kad smjena nije zadata ili `saturdayISO` nije subota.
+ */
+export function shiftWorksSaturday(anchorISO: string | undefined, saturdayISO: string): boolean | null {
+    if (!anchorISO) return null;
+    const a = new Date(anchorISO + 'T12:00:00Z'), s = new Date(saturdayISO + 'T12:00:00Z');
+    if (isNaN(a.getTime()) || isNaN(s.getTime()) || s.getUTCDay() !== SATURDAY) return null;
+    const weeks = Math.round((s.getTime() - a.getTime()) / (7 * 86400000));
+    return weeks % 2 === 0;
+}
+
+export interface WorkerShiftLite { Worker_ID: string; Saturday_Anchor?: string }
+
+/**
  * Provjera za rok: subota je RADNA za nalog ako je BAR JEDAN dodijeljeni radnik radi.
+ * Radnik sa subotnjom smjenom (`workers`) ide po smjeni; ostali po šihtarici.
  * Nema dodijeljenih radnika → subota radna (shop-level fallback).
  */
-export function buildSaturdayChecker(workerIds: string[], attendance: AttendanceLite[]): (d: Date) => boolean {
+export function buildSaturdayChecker(workerIds: string[], attendance: AttendanceLite[], workers: WorkerShiftLite[] = []): (d: Date) => boolean {
+    const anchors = new Map(workers.filter(w => w.Saturday_Anchor).map(w => [w.Worker_ID, w.Saturday_Anchor!]));
     return (d: Date) => {
         if (!workerIds.length) return true;
         const iso = toISO(d);
-        return workerIds.some(w => workerWorksSaturday(w, iso, attendance));
+        return workerIds.some(w => shiftWorksSaturday(anchors.get(w), iso) ?? workerWorksSaturday(w, iso, attendance));
     };
 }
 
@@ -199,8 +215,10 @@ export function weeklyCapacity(
     numWeeks: number,
     workerIds: string[],
     attendance: AttendanceLite[],
-    orders: CapacityOrderInput[]
+    orders: CapacityOrderInput[],
+    workers: WorkerShiftLite[] = []
 ): WeekCapacity[] {
+    const anchors = new Map(workers.filter(w => w.Saturday_Anchor).map(w => [w.Worker_ID, w.Saturday_Anchor!]));
     if (numWeeks <= 0) return [];
     const weekStart = mondayOf(fromISO);
     const attByKey = new Map<string, string>(); // workerId|date → status
@@ -239,7 +257,7 @@ export function weeklyCapacity(
                         // budući unos u šihtarici ima prednost (planiran odmor / potvrđen rad)
                         if (!ABSENT_STATUSES.has(marked)) available += 1;
                     } else if (dow === 6) {
-                        if (workerWorksSaturday(w, iso, attendance)) available += 1;
+                        if (shiftWorksSaturday(anchors.get(w), iso) ?? workerWorksSaturday(w, iso, attendance)) available += 1;
                     } else {
                         available += 1;
                     }

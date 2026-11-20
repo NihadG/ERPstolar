@@ -179,6 +179,11 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                                             {worker.Daily_Rate} KM/dan
                                         </span>
                                     )}
+                                    {worker.Saturday_Anchor && (
+                                        <span style={{ marginLeft: '8px', color: '#475569' }} title="Subotnja smjena: radi svaku drugu subotu">
+                                            Subota: svaka druga od {worker.Saturday_Anchor.slice(8, 10)}.{worker.Saturday_Anchor.slice(5, 7)}.
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                             <div className="simple-card-meta">
@@ -275,6 +280,20 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                             <option value="Zauzet">Zauzet</option>
                             <option value="Na godišnjem">Na godišnjem</option>
                         </select>
+                    </div>
+                    <div className="form-group">
+                        <label>Subota (smjena)</label>
+                        <input
+                            type="date"
+                            title="Subota koju radnik radi — od nje radi svaku drugu. Prazno = po šihtarici."
+                            value={editingWorker?.Saturday_Anchor || ''}
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                const sat = v && new Date(`${v}T12:00:00Z`).getUTCDay() === 6;
+                                setEditingWorker({ ...editingWorker, Saturday_Anchor: sat ? v : '' });
+                            }}
+                        />
+                        <small style={{ color: '#64748b' }}>Subota koju radi; od nje svaka druga. Prazno = po šihtarici.</small>
                     </div>
                 </div>
             </Modal>

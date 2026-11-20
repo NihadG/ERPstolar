@@ -244,7 +244,7 @@ export default function CanvasTab({
     const isSaturdayWorking = useMemo(() => {
         const ids = workers.filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
             .map(w => w.Worker_ID);
-        return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[]);
+        return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[], workers);
     }, [workers, attendance]);
 
     // Per-NALOG subotnja rotacija: boja subote na traci (i njena dužina pri
@@ -263,10 +263,10 @@ export default function CanvasTab({
             if (!ids.length) return isSaturdayWorking;
             const key = ids.slice().sort().join('|');
             let checker = cache.get(key);
-            if (!checker) { checker = buildSaturdayChecker(ids, satAtt); cache.set(key, checker); }
+            if (!checker) { checker = buildSaturdayChecker(ids, satAtt, workers); cache.set(key, checker); }
             return checker;
         };
-    }, [attendance, isSaturdayWorking]);
+    }, [attendance, isSaturdayWorking, workers]);
 
     const leadTimes = useMemo(() => buildSupplierLeadTimes(orders), [orders]);
 

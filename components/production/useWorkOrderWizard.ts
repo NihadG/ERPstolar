@@ -222,9 +222,9 @@ export function useWorkOrderWizard({
 
     const suggestedDueDate = useMemo(() => {
         if (totalPlannedDays <= 0) return '';
-        const checker = buildSaturdayChecker(assignedWorkerIds, wizardAttendance);
+        const checker = buildSaturdayChecker(assignedWorkerIds, wizardAttendance, workers);
         return workOrderDueDate(startDate || todayISO(), totalPlannedDays, checker);
-    }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate]);
+    }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate, workers]);
 
     // Auto-popuni rok kad uđemo u posljednji korak ("Radnik & rok" / "Dodjela") ako još nije postavljen (ostaje uredljiv).
     useEffect(() => {

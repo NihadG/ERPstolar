@@ -174,11 +174,11 @@ export default function WorkOrderExpandedDetail({
         const workerIds = Array.from(new Set(
             (workOrder.items || []).flatMap(it => (it.Assigned_Workers || []).map(w => w.Worker_ID))
         ));
-        const suggested = workOrderDueDate(startISO, totalDays, buildSaturdayChecker(workerIds, attLite));
+        const suggested = workOrderDueDate(startISO, totalDays, buildSaturdayChecker(workerIds, attLite, workers));
         const currentDue = workOrder.Due_Date?.split('T')[0] || '';
         if (suggested === currentDue) return null;
         return { suggested, totalDays, startISO };
-    }, [workOrder, attLite]);
+    }, [workOrder, attLite, workers]);
 
     const applySuggestedDue = async () => {
         if (!dueSuggestion) return;
