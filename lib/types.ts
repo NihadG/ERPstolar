@@ -2100,6 +2100,12 @@ export interface PlanBlock {
      * nalog od početka do kraja radi jedna ekipa — odluka korisnika 21.11.2026.
      */
     divisible?: boolean;
+    /**
+     * Jedinica ½ dana: blok počinje od podne / završava u podne, pa rubni dan daje pola
+     * kapaciteta i dijeli se sa susjednim blokom iste ekipe (lib/canvas/opt/evaluate.ts).
+     */
+    startsPM?: boolean;
+    endsAM?: boolean;
 
     // ── Nabavka ('purchase') ──
     orderByISO?: string;          // kad narudžba mora otići (startISO = isto, endISO = dolazak)

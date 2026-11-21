@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { addDays } from './model';
+import { isHolidayFor } from '../planning';
 
 /** Uzastopni dani trake iste vrste — radni (puna traka) ili neradni (tanka linija). */
 export interface WorkRun {
@@ -41,7 +42,7 @@ export function workRuns(
     for (let i = 0; i <= 400 && cur <= endISO; i++) {
         const d = new Date(`${cur}T12:00:00`);
         const dow = d.getDay();
-        const working = dow === 0 ? false : dow === 6 ? (isSaturdayWorking ? isSaturdayWorking(d) : true) : true;
+        const working = dow === 0 || isHolidayFor(isSaturdayWorking, d) ? false : dow === 6 ? (isSaturdayWorking ? isSaturdayWorking(d) : true) : true;
         const last = runs[runs.length - 1];
         if (last && last.working === working) last.toISO = cur;
         else runs.push({ fromISO: cur, toISO: cur, working });
@@ -53,7 +54,7 @@ export function workRuns(
 
 export interface WeekendMark {
     iso: string;
-    kind: 'sat' | 'sun';
+    kind: 'sat' | 'sun' | 'holiday';
     /** Subota: radi li dodijeljena ekipa. Nedjelja je uvijek false. */
     working: boolean;
 }
@@ -76,7 +77,9 @@ export function weekendMarksInSpan(
     for (let i = 0; i <= 400 && cur <= endISO; i++) {
         const d = new Date(`${cur}T12:00:00`);
         const dow = d.getDay();
-        if (dow === 6) {
+        if (dow !== 0 && isHolidayFor(isSaturdayWorking, d)) {
+            out.push({ iso: cur, kind: 'holiday', working: false });
+        } else if (dow === 6) {
             out.push({ iso: cur, kind: 'sat', working: isSaturdayWorking ? isSaturdayWorking(d) : true });
         } else if (dow === 0) {
             out.push({ iso: cur, kind: 'sun', working: false });

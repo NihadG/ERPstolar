@@ -76,7 +76,7 @@ describe('ekipe od više ljudi', () => {
         const wo = {
             Work_Order_ID: 'wo1', Status: 'U toku',
             Planned_Start_Date: '2026-08-03', Due_Date: '2026-08-07',
-            items: [{ Assigned_Workers: [{ Worker_ID: 'w3' }] }],
+            items: [{ ID: 'i1', Status: 'U toku', Quantity: 1, Planned_Labor_Days: 5, Assigned_Workers: [{ Worker_ID: 'w3' }] }],
         } as unknown as WorkOrder;
         const s = scenarioOf([
             blk('a', {

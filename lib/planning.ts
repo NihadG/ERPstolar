@@ -2,12 +2,33 @@
 // PLANIRANJE ROKA NALOGA
 // Rok = projekcija planiranih radnih dana (suma "dani" po proizvodu iz ponude)
 // na kalendar, počevši od dana početka naloga.
-// Radni dan = svaki dan OSIM NEDJELJE (subota se RAČUNA — kod korisnika se radi subotom).
-// Praznici / subotnja rotacija po radniku = zaseban korak (kasnije).
+// Radni dan = svaki dan OSIM NEDJELJE i PRAZNIKA; subota po smjeni/rotaciji radnika.
+//
+// Pravilo dana (`isSaturdayWorking`) se kroz aplikaciju prosljeđuje kao funkcija
+// za subotu; PRAZNICI putuju uz nju kao svojstvo `holidays` (withHolidays), pa ih
+// poštuju svi koji već primaju pravilo — rok naloga, čarobnjak, Platno, model —
+// bez mijenjanja potpisa. Neradan praznik je neradan i radnim danom.
 // ════════════════════════════════════════════════════════════════════
 
 function toISO(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Pravilo subote s praznicima koji putuju uz njega (vidi zaglavlje). */
+export type DayRule = ((d: Date) => boolean) & { holidays?: ReadonlySet<string> };
+
+/** Pravilo subote + praznici. Bez pravila subota radi (dosadašnji podrazumijevani slučaj). */
+export function withHolidays(rule: ((d: Date) => boolean) | undefined, holidays: Iterable<string> | undefined): DayRule {
+    const set = new Set(holidays || []);
+    const base = rule || (() => true);
+    const out = ((d: Date) => !set.has(toISO(d)) && base(d)) as DayRule;
+    out.holidays = set.size ? set : (rule as DayRule | undefined)?.holidays;
+    return out;
+}
+
+/** Je li dan praznik po pravilu (praznik je neradan i kad pada radnim danom). */
+export function isHolidayFor(rule: ((d: Date) => boolean) | undefined, d: Date): boolean {
+    return !!(rule as DayRule | undefined)?.holidays?.has(toISO(d));
 }
 
 /** Radni dan = nije nedjelja. (Subota je radni dan.) */
@@ -34,6 +55,7 @@ export function workOrderDueDate(
     const working = (d: Date): boolean => {
         const dow = d.getDay();
         if (dow === 0) return false;                                   // nedjelja — ne radi
+        if (isHolidayFor(isSaturdayWorking, d)) return false;          // praznik
         if (dow === 6) return isSaturdayWorking ? isSaturdayWorking(d) : true; // subota — rotacija/po defaultu radi
         return true;                                                  // pon–pet
     };
@@ -188,13 +210,13 @@ export function groupByShift<T>(items: T[], anchorOf: (item: T) => string | unde
  * Radnik sa subotnjom smjenom (`workers`) ide po smjeni; ostali po šihtarici.
  * Nema dodijeljenih radnika → subota radna (shop-level fallback).
  */
-export function buildSaturdayChecker(workerIds: string[], attendance: AttendanceLite[], workers: WorkerShiftLite[] = []): (d: Date) => boolean {
+export function buildSaturdayChecker(workerIds: string[], attendance: AttendanceLite[], workers: WorkerShiftLite[] = [], holidays?: Iterable<string>): DayRule {
     const anchors = new Map(workers.filter(w => w.Saturday_Anchor).map(w => [w.Worker_ID, w.Saturday_Anchor!]));
-    return (d: Date) => {
+    return withHolidays((d: Date) => {
         if (!workerIds.length) return true;
         const iso = toISO(d);
         return workerIds.some(w => shiftWorksSaturday(anchors.get(w), iso) ?? workerWorksSaturday(w, iso, attendance));
-    };
+    }, holidays);
 }
 
 // ════════════════════════════════════════════════════════════════════

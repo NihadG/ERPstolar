@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
     PlanScenario, PlanBlock, PlanBlockKind, PlanLink, PlanLinkKind, PlanZoom, PlanGroupBy,
 } from '../types';
-import { workOrderDueDate, todayISO } from '../planning';
+import { workOrderDueDate, todayISO, isHolidayFor } from '../planning';
 
 /**
  * Firestore dokument ide do 1 MiB; blok je ~300 B. Granica je namjerno niža od
@@ -136,6 +136,7 @@ export function isWorkDay(iso: string, isSaturdayWorking?: (d: Date) => boolean)
     const d = parseDay(iso);
     const dow = d.getDay();
     if (dow === 0) return false;                                    // nedjelja
+    if (isHolidayFor(isSaturdayWorking, d)) return false;               // praznik (lib/planning withHolidays)
     if (dow === 6) return isSaturdayWorking ? isSaturdayWorking(d) : true;
     return true;
 }

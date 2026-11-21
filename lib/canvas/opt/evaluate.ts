@@ -33,6 +33,10 @@ export interface Placement {
     endISO: string;
     /** Dio posla u ovom komadu (dijeljiv nalog); bez toga cijeli posao. */
     workerDays?: number;
+    /** Počinje od podne — prvi dan daje pola kapaciteta (jedinica ½ dana). */
+    startsPM?: boolean;
+    /** Završava u podne — zadnji dan daje pola kapaciteta. */
+    endsAM?: boolean;
 }
 
 export type ViolationKind = 'unassigned' | 'crew-not-allowed' | 'too-short' | 'overload' | 'precedence' | 'release';
@@ -94,13 +98,25 @@ const EPS = 1e-6;
 const PRIO_RANK: Record<Job['priority'], number> = { urgent: 4, high: 3, medium: 2, low: 1 };
 
 /** Plan sa platna: raspored kakav je sad (datumi i dodijeljeni radnici blokova). */
-export function placementsFromScenario(inst: Instance, blocks: { id: string; startISO: string; endISO: string; workerRefs?: { id?: string }[] }[]): Placement[] {
+export function placementsFromScenario(inst: Instance, blocks: { id: string; startISO: string; endISO: string; workerRefs?: { id?: string }[]; startsPM?: boolean; endsAM?: boolean }[]): Placement[] {
     const jobIds = new Set(inst.jobs.map(j => j.id));
     return blocks.filter(b => jobIds.has(b.id)).map(b => {
         const ids = (b.workerRefs || []).map(r => r.id).filter((x): x is string => !!x);
         const key = ids.length ? Array.from(new Set(ids)).sort().join('+') : null;
-        return { jobId: b.id, crewKey: key, startISO: b.startISO, endISO: b.endISO };
+        return { jobId: b.id, crewKey: key, startISO: b.startISO, endISO: b.endISO, ...(b.startsPM ? { startsPM: true } : {}), ...(b.endsAM ? { endsAM: true } : {}) };
     });
+}
+
+/**
+ * Najviše koliko dana komad smije uzeti na rubnom danu (jedinica ½ dana): prvi dan od podne
+ * ili zadnji do podne = 0,5; jednodnevni komad s oznakom = 0,5. Tako dva bloka iste ekipe dijele
+ * dan bez prekoračenja (1,5 dana posla + sljedeći od podne).
+ */
+function halfCap(p: Placement, first: boolean, last: boolean): number {
+    if (first && last) return p.startsPM || p.endsAM ? 0.5 : 1;
+    if (first && p.startsPM) return 0.5;
+    if (last && p.endsAM) return 0.5;
+    return 1;
 }
 
 export function evaluate(inst: Instance, placements: Placement[], baseline?: Placement[]): Evaluation {
@@ -137,7 +153,8 @@ export function evaluate(inst: Instance, placements: Placement[], baseline?: Pla
             const days: { iso: string; cap: number }[] = [];
             for (let d = s; d <= e && days.length < 400; d++) {
                 const iso = isoAt(inst.startISO, d);
-                const cap = crew ? crewCapacity(inst, crew.key, iso) : Math.min(...workerIds.map(w => freeCapacity(inst, w, iso)));
+                const full = crew ? crewCapacity(inst, crew.key, iso) : Math.min(...workerIds.map(w => freeCapacity(inst, w, iso)));
+                const cap = Math.min(full, halfCap(p, d === s, d === e));
                 if (cap > 0) days.push({ iso, cap });
             }
             const total = days.reduce((x, d) => x + d.cap, 0);

@@ -16,6 +16,7 @@ import NameClassificationReview from '@/components/settings/NameClassificationRe
 import TeamSection from '@/components/settings/TeamSection';
 import TelegramSection from '@/components/settings/TelegramSection';
 import ContactsSection from '@/components/settings/ContactsSection';
+import HolidaysSection from '@/components/settings/HolidaysSection';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
     free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
@@ -345,7 +346,7 @@ export default function SettingsPage() {
     // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije i Korisnici
     // se čuvaju odmah po akciji (Poveži/Kreiraj nalog/Deaktiviraj), pa tu prikazujemo
     // napomenu umjesto dugmeta — glavno dugme bi tamo bilo prazno obećanje.
-    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici' && activeSection !== 'telegram' && activeSection !== 'kontakti';
+    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici' && activeSection !== 'telegram' && activeSection !== 'kontakti' && activeSection !== 'praznici';
 
     return (
         <div className="settings-page">
@@ -428,6 +429,14 @@ export default function SettingsPage() {
                             <span className="sidebar-item-label">Kontakti</span>
                         </button>
 
+                        <button
+                            className={`sidebar-item ${activeSection === 'praznici' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('praznici')}
+                        >
+                            <span className="material-icons-round">event_busy</span>
+                            <span className="sidebar-item-label">Praznici</span>
+                        </button>
+
                         <span className="nav-eyebrow">Integracije</span>
                         <button
                             className={`sidebar-item ${activeSection === 'integracije' ? 'active' : ''}`}
@@ -471,6 +480,10 @@ export default function SettingsPage() {
 
                     {activeSection === 'kontakti' && (
                         <ContactsSection showMessage={showMessage} />
+                    )}
+
+                    {activeSection === 'praznici' && (
+                        <HolidaysSection showMessage={showMessage} />
                     )}
 
                     {activeSection === 'company' && (

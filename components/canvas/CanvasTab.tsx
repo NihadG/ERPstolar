@@ -75,6 +75,7 @@ import {
 } from '@/lib/canvas/label';
 import { shortNameMap, shortNameOf } from '@/lib/canvas/crews';
 import { todayISO } from '@/lib/planning';
+import { useHolidays } from '@/components/settings/useHolidays';
 import { measureText, resetTextMeasure } from './measure';
 import './CanvasTab.css';
 
@@ -140,6 +141,8 @@ export default function CanvasTab({
     const { organization } = useAuth();
     // Preview nema organizaciju → ništa se ne učitava i autosave ne piše (useScenario).
     const orgId = preview ? '' : (organization?.Organization_ID || '');
+    // Praznici radionice (Postavke → Praznici) — neradni dani na traci i u rasporedu.
+    const { dates: holidayDates } = useHolidays(orgId || null);
     const isMobile = useIsMobile();
     const today = preview?.todayISO || todayISO();
 
@@ -266,8 +269,8 @@ export default function CanvasTab({
 
     // ── Redovi ──────────────────────────────────────────────────
     const rows = useMemo(
-        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle, todayISO: today }, layout),
-        [scenario, groupBy, workers, workOrders, attendance, showIdle, layout, today]
+        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle, todayISO: today, holidays: holidayDates }, layout),
+        [scenario, groupBy, workers, workOrders, attendance, showIdle, layout, today, holidayDates]
     );
     const sections = useMemo(() => groupRowsBySection(rows), [rows]);
     /** Boje projekata plana — dva projekta nikad iste boje (legenda, trake, naslovi). */
@@ -299,8 +302,8 @@ export default function CanvasTab({
     const isSaturdayWorking = useMemo(() => {
         const ids = workers.filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
             .map(w => w.Worker_ID);
-        return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[], workers);
-    }, [workers, attendance]);
+        return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[], workers, holidayDates);
+    }, [workers, attendance, holidayDates]);
 
     // Per-NALOG subotnja rotacija: boja subote na traci (i njena dužina pri
     // razvlačenju) prati DODIJELJENU ekipu naloga, ne cijeli pogon — inače radnik
@@ -318,10 +321,10 @@ export default function CanvasTab({
             if (!ids.length) return isSaturdayWorking;
             const key = ids.slice().sort().join('|');
             let checker = cache.get(key);
-            if (!checker) { checker = buildSaturdayChecker(ids, satAtt, workers); cache.set(key, checker); }
+            if (!checker) { checker = buildSaturdayChecker(ids, satAtt, workers, holidayDates); cache.set(key, checker); }
             return checker;
         };
-    }, [attendance, isSaturdayWorking, workers]);
+    }, [attendance, isSaturdayWorking, workers, holidayDates]);
 
     const leadTimes = useMemo(() => buildSupplierLeadTimes(orders), [orders]);
 

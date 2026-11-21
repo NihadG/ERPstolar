@@ -143,16 +143,30 @@ describe('rubni slučajevi', () => {
         expect(r.unscheduled[0].reason).toMatch(/slobodnih dana/);
     });
 
-    test('stvarni preuzet nalog zauzima radnika (auto planira oko njega)', () => {
-        const realWO: WorkOrder = {
-            Work_Order_ID: 'wo1', Status: 'U toku',
-            Planned_Start_Date: '2026-08-03', Due_Date: '2026-08-07',
-            items: [{ ID: 'i1', Assigned_Workers: [{ Worker_ID: 'w1', Worker_Name: 'Ismet', Daily_Rate: 0 }] }],
-        } as unknown as WorkOrder;
+    const realWO = (item: Record<string, unknown>, due = '2026-08-07') => ({
+        Work_Order_ID: 'wo1', Status: 'U toku',
+        Planned_Start_Date: '2026-08-03', Due_Date: due,
+        items: [{ ID: 'i1', Status: 'U toku', Quantity: 1, Assigned_Workers: [{ Worker_ID: 'w1', Worker_Name: 'Ismet', Daily_Rate: 0 }], ...item }],
+    }) as unknown as WorkOrder;
+
+    test('stvarni preuzet nalog zauzima radnika za preostali rad (auto planira oko njega)', () => {
         const s = scenarioOf([blk('a', { workerDays: 2, crewOptions: [C('c1', 'w1', 'Ismet')] })]);
-        const a = found(s, 'a', ctx({ workOrders: [realWO] }))!;
-        // w1 zauzet 03–07 (Pon–Pet); prvi slobodan je 10. (naredni ponedjeljak)
+        const a = found(s, 'a', ctx({ workOrders: [realWO({ Planned_Labor_Days: 5 })] }))!;
+        // 5 radnik-dana na w1 → zauzet 03–07 (Pon–Pet); prvi slobodan je 10. (naredni ponedjeljak)
         expect(a.startISO).toBe('2026-08-10');
+    });
+
+    test('upisani rad skraćuje zauzetost, a ne rok naloga', () => {
+        const s = scenarioOf([blk('a', { workerDays: 2, crewOptions: [C('c1', 'w1', 'Ismet')] })]);
+        // plan 5, upisano 3 → ostalo 2 (03–04), iako je rok 21.8.
+        const a = found(s, 'a', ctx({ workOrders: [realWO({ Planned_Labor_Days: 5, Actual_Labor_Days: 3 }, '2026-08-21')] }))!;
+        expect(a.startISO).toBe('2026-08-05');
+    });
+
+    test('nalog bez plana dana ne zauzima radnika do roka', () => {
+        const s = scenarioOf([blk('a', { workerDays: 2, crewOptions: [C('c1', 'w1', 'Ismet')] })]);
+        const a = found(s, 'a', ctx({ workOrders: [realWO({}, '2026-08-21')] }))!;
+        expect(a.startISO).toBe('2026-08-03');
     });
 });
 
