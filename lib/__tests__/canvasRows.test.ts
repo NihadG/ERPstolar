@@ -271,8 +271,100 @@ describe("layout 'rows' — red po nalogu", () => {
         expect(rows.some(r => r.id === 'ord-ms')).toBe(false);
     });
 
-    test('radnici ostaju zasebna sekcija', () => {
+    test('nema sekcije Radnici — ekipa je u redu naloga, zauzetost je prikaz Ekipe', () => {
         const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
-        expect(rows.filter(r => r.section === 'radnici').map(r => r.label)).toContain('Ismet');
+        expect(rows.some(r => r.section === 'radnici')).toBe(false);
+        expect(rows.find(r => r.id === 'ord-o1')!.sublabel).toBe('Ismet');
+    });
+});
+
+// ── Pomoćno: plan s parovima i smjenama ─────────────────────────────
+const shiftWorker = (id: string, name: string, anchor?: string): Worker =>
+    ({ ...worker(id, name), ...(anchor ? { Saturday_Anchor: anchor } : {}) } as Worker);
+const crewCtx = (over: Partial<RowContext> = {}): RowContext => ctx({
+    workers: [
+        shiftWorker('n', 'Nedim Begić', '2026-11-21'), shiftWorker('a', 'Aldin Hodžić', '2026-11-21'),
+        shiftWorker('i', 'Imer Kovač', '2026-11-28'), shiftWorker('h', 'Haris Delić', '2026-11-28'),
+        shiftWorker('e', 'Emrah Zukić'),
+    ],
+    todayISO: '2026-11-21',
+    ...over,
+});
+const NA = [{ id: 'n', name: 'Nedim Begić' }, { id: 'a', name: 'Aldin Hodžić' }];
+const IH = [{ id: 'i', name: 'Imer Kovač' }, { id: 'h', name: 'Haris Delić' }];
+const crewBlocks = [
+    newBlock('order', '2026-11-30', '2026-12-01', { id: 'g12', title: 'Poz 12 - Umivaonik · Hotel Jezero', projectRef: { id: 'pJ', name: 'Hotel Jezero' }, workerRefs: NA, priority: 'high' }),
+    newBlock('order', '2026-12-02', '2026-12-02', { id: 'g8', title: 'Poz 8 - Krevet · Hotel Jezero', projectRef: { id: 'pJ', name: 'Hotel Jezero' }, workerRefs: NA, priority: 'high' }),
+    newBlock('order', '2026-11-30', '2026-12-03', { id: 'g5', title: 'Poz 5 - Ogledala · Hotel Jezero', projectRef: { id: 'pJ', name: 'Hotel Jezero' }, workerRefs: IH, priority: 'high' }),
+    newBlock('order', '2026-12-03', '2026-12-08', { id: 'r1', title: 'Poz 1 - Pult · Recepcija Atrij', projectRef: { id: 'pR', name: 'Recepcija Atrij' }, workerRefs: NA, priority: 'urgent' }),
+    newBlock('milestone', '2026-12-10', '2026-12-10', { id: 'rok', title: 'Predaja', projectRef: { id: 'pR', name: 'Recepcija Atrij' } }),
+];
+
+// ── Layout 'unified-project': projekat → red po ekipi ───────────────
+describe("layout 'unified-project' — Projekti: red po ekipi", () => {
+    const rows = buildRows(scenarioWith(crewBlocks), 'project', crewCtx(), 'unified-project');
+
+    test('projekti po prioritetu: hitni prvi', () => {
+        expect(rows.filter(r => r.groupHeader).map(r => r.label)).toEqual(['Recepcija Atrij', 'Hotel Jezero']);
+        expect(rows.find(r => r.label === 'Recepcija Atrij')!.groupHeader!.urgent).toBe(true);
+    });
+
+    test('ispod projekta jedan red po ekipi, s njenim nalozima redom', () => {
+        const jezero = rows.filter(r => r.groupKey === 'pJ');
+        expect(jezero.map(r => r.crew!.refs.map(x => x.id).join('+'))).toEqual(['n+a', 'i+h']);
+        expect(jezero[0].blocks.map(b => b.id)).toEqual(['g12', 'g8']);
+        expect(jezero[0].subVariants![0]).toBe('Smjena A · 2 naloga');
+        expect(jezero[1].subVariants![0]).toBe('Smjena B · 1 nalog');
+    });
+
+    test('rok i nabavka projekta idu u zaseban red na dnu projekta', () => {
+        const rec = rows.filter(r => r.groupKey === 'pR');
+        expect(rec[rec.length - 1].label).toBe('Nabavka i rokovi');
+        expect(rec[rec.length - 1].blocks.map(b => b.id)).toEqual(['rok']);
+    });
+
+    test('novi blok nacrtan u redu ekipe dobija i projekat i par', () => {
+        const row = rows.find(r => r.groupKey === 'pJ' && r.crew?.refs[0].id === 'i')!;
+        expect(row.context).toEqual({ projectRef: { id: 'pJ', name: 'Hotel Jezero' }, workerRefs: IH });
+    });
+
+    test('nema sekcije Radnici', () => {
+        expect(rows.some(r => r.section === 'radnici')).toBe(false);
+    });
+});
+
+// ── Layout 'crews': smjena → par, preko svih projekata ──────────────
+describe("layout 'crews' — Ekipe po subotnjoj smjeni", () => {
+    const rows = buildRows(scenarioWith(crewBlocks), 'project', crewCtx(), 'crews');
+
+    test('grupe su smjene A i B, pa obaveze na vrhu i slobodni na dnu', () => {
+        expect(rows.filter(r => r.groupHeader).map(r => r.label))
+            .toEqual(['Rokovi i nabavka', 'Smjena A', 'Smjena B', 'Slobodni radnici']);
+    });
+
+    test('par ima JEDAN red sa svim projektima i kaže kad je slobodan', () => {
+        const na = rows.find(r => r.id === 'ekipa-a|n')!;
+        expect(na.blocks.map(b => b.id)).toEqual(['g12', 'g8', 'r1']);
+        // r1 završava u utorak 8.12. → slobodni od srijede 9.12.
+        expect(na.subVariants![0]).toBe('slobodni od 9.12. · 2 projekta');
+    });
+
+    test('naslov smjene nabraja njene radne subote od danas', () => {
+        const a = rows.find(r => r.label === 'Smjena A')!.groupHeader!;
+        expect(a.metaVariants![0]).toBe('subote 21.11., 5.12., 19.12.');
+        expect(a.isSaturdayWorking!(new Date('2026-12-05T12:00:00'))).toBe(true);
+        expect(a.isSaturdayWorking!(new Date('2026-12-12T12:00:00'))).toBe(false);
+    });
+
+    test('subota ekipe ide po smjeni (A ne radi 28.11., B radi)', () => {
+        const na = rows.find(r => r.id === 'ekipa-a|n')!;
+        const ih = rows.find(r => r.id === 'ekipa-h|i')!;
+        const sat = new Date('2026-11-28T12:00:00');
+        expect(na.crew!.isSaturdayWorking(sat)).toBe(false);
+        expect(ih.crew!.isSaturdayWorking(sat)).toBe(true);
+    });
+
+    test('aktivni radnik koji nije ni u jednom nalogu je među slobodnima', () => {
+        expect(rows.filter(r => r.groupKey === 'slobodni').map(r => r.label)).toEqual(['Emrah Zukić']);
     });
 });

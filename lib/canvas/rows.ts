@@ -12,19 +12,52 @@
 
 import type {
     PlanScenario, PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanRef, Worker, WorkOrder, WorkerAttendance,
+    TaskPriority,
 } from '../types';
-import { projectColors, NO_PROJECT_COLORS, type ProjectColors } from './palette';
+import { projectColorMap, NO_PROJECT_COLORS, type ProjectColors } from './palette';
+import { crewKeyOf, crewShift, shiftAnchor, shiftSaturdays, type CrewShift, type ShiftLetter } from './crews';
+import { addDays, toISODate } from './model';
+import { buildSaturdayChecker, shiftWorksSaturday, todayISO as todayISOFn, type AttendanceLite } from '../planning';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
-export type CanvasSection = 'obaveze' | 'plan' | 'nalozi' | 'radnici' | 'nabavka';
+export type CanvasSection = 'obaveze' | 'plan' | 'ekipe' | 'nalozi' | 'radnici' | 'nabavka';
 
 export const SECTION_LABEL: Record<CanvasSection, string> = {
     obaveze: 'Obaveze',
     plan: 'Plan',
+    ekipe: 'Ekipe',
     nalozi: 'Nalozi',
     radnici: 'Radnici',
     nabavka: 'Nabavka',
 };
+
+/** Ključ projekta bloka — isti za boju, grupu i legendu. */
+export function projectKeyOf(ref: PlanRef | undefined | null): string {
+    return ref ? (ref.id || `name:${ref.name}`) : '';
+}
+
+/**
+ * Boje svih projekata plana, bez sudara (vidi `projectColorMap`). Ključ boje je
+ * id projekta (ili naziv) — isti kao ranije u `projectColors`.
+ */
+export function scenarioProjectColors(scenario: PlanScenario): Map<string, ProjectColors> {
+    return projectColorMap(scenario.Blocks.map(b => b.projectRef ? (b.projectRef.id || b.projectRef.name) : null));
+}
+
+/** Boja projekta bloka iz mape plana. */
+export function colorsFor(map: Map<string, ProjectColors>, ref: PlanRef | undefined | null): ProjectColors {
+    return (ref && map.get(ref.id || ref.name)) || NO_PROJECT_COLORS;
+}
+
+// ── Tekst za lijevu kolonu (bosanska množina) ───────────────────────
+const plural = (n: number, one: string, few: string, many: string) => {
+    const m10 = n % 10, m100 = n % 100;
+    const w = m10 === 1 && m100 !== 11 ? one : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? few : many;
+    return `${n} ${w}`;
+};
+const dmShort = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
+const nalogaN = (n: number) => plural(n, 'nalog', 'naloga', 'naloga');
+const PRIORITY_RANK: Record<TaskPriority, number> = { urgent: 3, high: 2, medium: 1, low: 0 };
 
 /**
  * Sloj bloka u OBJEDINJENOM redu. Nalog je okosnica (gornji sloj), a logistika
@@ -64,12 +97,14 @@ export interface CanvasRow {
     /** Sintetički red („Nedodijeljeno") — nema stvarnog entiteta iza sebe. */
     synthetic?: boolean;
     /**
-     * Naslovni red grupe (npr. ime projekta) — nema vlastite trake, samo dijeli
-     * naloge ispod. Klik ga skuplja/širi. Sažetak trake stoji na desnoj strani.
+     * Naslovni red grupe (projekat, smjena) — nema vlastite trake, samo dijeli
+     * redove ispod. Klik ga skuplja/širi.
      */
     groupHeader?: {
         /** Ključ grupe — za pamćenje skupljenog stanja. */
         key: string;
+        /** Šta je grupa: projekat, subotnja smjena, slobodni radnici, ostalo. */
+        kind?: 'project' | 'shift' | 'free' | 'other';
         /** Broj naloga u grupi. */
         count: number;
         /** Raspon grupe (za mini-traku u zaglavlju). */
@@ -79,11 +114,35 @@ export interface CanvasRow {
         draftCount: number;
         /** Rok projekta, ako postoji. */
         dueISO?: string;
+        /** Projekat s hitnim nalogom — jedina oznaka stanja u naslovu. */
+        urgent?: boolean;
+        /** Smjena grupe (prikaz Ekipe). */
+        shift?: CrewShift;
+        /** Subote kad smjena radi — sivljenje neradnih subota u naslovnom redu. */
+        isSaturdayWorking?: (d: Date) => boolean;
+        /** Podnaslov, od najpotpunijeg do najkraćeg — kolona bira koji stane. */
+        metaVariants?: string[];
     };
     /** Boje projekta ovog reda (kapica, tinta trake, tekst). */
     colors?: ProjectColors;
     /** Red pripada grupi s ovim ključem — za skupljanje. */
     groupKey?: string;
+    /**
+     * Red EKIPE (prikazi Projekti i Ekipe): radnici reda i njihova smjena. Ekipa
+     * radi jedno po jedno, pa je dan predaje (kraj = početak sljedećeg) ista traka,
+     * a druga traka znači stvarno dvostruko zauzeće.
+     */
+    crew?: {
+        key: string;
+        refs: PlanRef[];
+        shift: CrewShift;
+        /** Subota radna ako bar jedan član radi (ista pravila kao rok naloga). */
+        isSaturdayWorking: (d: Date) => boolean;
+    };
+    /** Podnaslov reda, od najpotpunijeg do najkraćeg — kolona bira koji stane. */
+    subVariants?: string[];
+    /** Šta dobija novi blok nacrtan u ovom redu (projekat, ekipa). */
+    context?: { projectRef?: PlanRef; workerRefs?: PlanRef[] };
 }
 
 export interface RowContext {
@@ -93,6 +152,8 @@ export interface RowContext {
     attendance: WorkerAttendance[];
     /** Prikaži i radnike koji nemaju ništa u scenariju (da se vidi ko je slobodan). */
     showIdleWorkers?: boolean;
+    /** Danas — od kog datuma se nabrajaju radne subote smjene. */
+    todayISO?: string;
 }
 
 const ABSENT_STATUSES = new Set(['Odsutan', 'Bolovanje', 'Odmor']);
@@ -196,9 +257,11 @@ function absencesByWorker(attendance: WorkerAttendance[]): Map<string, ShadowBar
  * (nalog s dva radnika je na oba reda) — to je pogled, ne duplikat.
  *
  * `layout` bira raspored:
- *  - `detailed`        → klasične sekcije po vrsti (Obaveze/Nalozi/Nabavka + Radnici).
- *  - `unified-project` → jedan red po projektu (sve vrste zajedno) + Radnici.
- *  - `unified-global`  → jedan red sa svim blokovima + Radnici.
+ *  - `unified-project` → „Projekti": projekat → jedan red po ekipi.
+ *  - `crews`           → „Ekipe": smjena → jedan red po ekipi, preko svih projekata.
+ *  - `rows`            → „Nalozi": jedan red po nalogu.
+ *  - `detailed`        → stari: sekcije po vrsti (Obaveze/Nalozi/Nabavka + Radnici).
+ *  - `unified-global`  → stari: jedan red sa svim blokovima + Radnici.
  */
 export function buildRows(
     scenario: PlanScenario,
@@ -206,10 +269,309 @@ export function buildRows(
     ctx: RowContext,
     layout: PlanLayout = 'detailed'
 ): CanvasRow[] {
-    if (layout === 'rows') return buildRowsPerOrder(scenario, ctx);
-    if (layout === 'unified-project') return buildUnifiedRows(scenario, ctx, 'project');
-    if (layout === 'unified-global') return buildUnifiedRows(scenario, ctx, 'global');
+    if (layout === 'rows') return buildRowsPerOrder(scenario);
+    if (layout === 'unified-project') return buildProjectRows(scenario, ctx);
+    if (layout === 'crews') return buildCrewRows(scenario, ctx);
+    if (layout === 'unified-global') return buildUnifiedRows(scenario, ctx);
     return buildDetailedRows(scenario, groupBy, ctx);
+}
+
+// ── Ekipe: zajedničko za Projekti i Ekipe ───────────────────────────
+
+/** Provjera subote za ekipu — keširana po sastavu (ista pravila kao rok naloga). */
+function crewCheckerFactory(ctx: RowContext): (ids: string[]) => (d: Date) => boolean {
+    const att = ctx.attendance as unknown as AttendanceLite[];
+    const cache = new Map<string, (d: Date) => boolean>();
+    return (ids: string[]) => {
+        const key = ids.slice().sort().join('|');
+        let chk = cache.get(key);
+        if (!chk) { chk = buildSaturdayChecker(ids, att, ctx.workers); cache.set(key, chk); }
+        return chk;
+    };
+}
+
+/** Radni dan za ekipu: nedjelja nikad, subota po smjeni. */
+function isCrewWorkday(iso: string, chk: (d: Date) => boolean): boolean {
+    const d = new Date(`${iso}T12:00:00`);
+    const dow = d.getDay();
+    return dow === 0 ? false : dow === 6 ? chk(d) : true;
+}
+
+/** Prvi radni dan ekipe POSLIJE datuma. */
+function nextCrewWorkday(iso: string, chk: (d: Date) => boolean): string {
+    let cur = addDays(iso, 1);
+    for (let i = 0; i < 14 && !isCrewWorkday(cur, chk); i++) cur = addDays(cur, 1);
+    return cur;
+}
+
+const SHIFT_LABEL = (s: CrewShift) => (s === 'A' || s === 'B' ? `Smjena ${s}` : s === 'mix' ? 'Mješovita smjena' : '');
+
+// ── PROJEKTI: projekat → jedan red po ekipi ─────────────────────────
+
+/**
+ * „Projekti". Stari objedinjeni red projekta slagao je sve naloge u 2–3 trake
+ * pohlepnim pakovanjem — iz trake se nije vidjelo ko radi. Ovdje je ispod
+ * naslova projekta JEDAN RED PO EKIPI koja na njemu radi: red sam kaže „ovo
+ * radi Nedim + Aldin", a nalozi para stoje u nizu.
+ *
+ * Narudžbe, transport, rokovi i napomene projekta idu u red „Nabavka i rokovi"
+ * na dnu projekta. Projekti su poredani po prioritetu (hitni prvi), pa po početku.
+ */
+function buildProjectRows(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
+    const rows: CanvasRow[] = [];
+    const blocks = scenario.Blocks;
+    const colors = scenarioProjectColors(scenario);
+    const checkerFor = crewCheckerFactory(ctx);
+    const workersById = new Map(ctx.workers.map(w => [w.Worker_ID, w]));
+
+    // Narudžba pripada projektu NALOGA koji hrani (veza „stiglo → kreće").
+    const blockById = new Map(blocks.map(b => [b.id, b]));
+    const linkedProject = new Map<string, PlanRef>();
+    for (const l of scenario.Links) {
+        if (l.kind !== 'delivery-to-start') continue;
+        const nalog = blockById.get(l.to);
+        if (nalog?.projectRef) linkedProject.set(l.from, nalog.projectRef);
+    }
+    const projectOf = (b: PlanBlock): PlanRef | undefined =>
+        (b.kind === 'purchase' ? linkedProject.get(b.id) : undefined) || b.projectRef;
+
+    const UNASSIGNED = '__unassigned__';
+    const grouped = new Map<string, { ref?: PlanRef; label: string; work: PlanBlock[]; other: PlanBlock[] }>();
+    for (const b of blocks) {
+        const pr = projectOf(b);
+        const key = pr ? projectKeyOf(pr) : UNASSIGNED;
+        const e = grouped.get(key) || { ref: pr, label: pr ? pr.name.trim() : 'Bez projekta', work: [], other: [] };
+        (WORK_KINDS.has(b.kind) ? e.work : e.other).push(b);
+        grouped.set(key, e);
+    }
+
+    const rank = (e: { work: PlanBlock[] }) => Math.max(-1, ...e.work.map(b => PRIORITY_RANK[b.priority || 'medium']));
+    const first = (list: PlanBlock[]) => list.reduce((a, b) => (b.startISO < a ? b.startISO : a), list[0]?.startISO || '9999');
+    const entries = Array.from(grouped.entries()).sort(([ka, a], [kb, b]) => {
+        if (ka === UNASSIGNED) return 1;
+        if (kb === UNASSIGNED) return -1;
+        return rank(b) - rank(a)
+            || first([...a.work, ...a.other]).localeCompare(first([...b.work, ...b.other]))
+            || a.label.localeCompare(b.label, 'hr');
+    });
+
+    for (const [key, e] of entries) {
+        const all = [...e.work, ...e.other];
+        const fromISO = first(all);
+        const toISO = all.reduce((a, b) => (b.endISO > a ? b.endISO : a), all[0].endISO);
+        const c = colorsFor(colors, e.ref);
+        const n = e.work.length;
+        rows.push({
+            id: `grp-${key}`,
+            label: e.label,
+            section: 'plan',
+            blocks: [],
+            shadows: [],
+            colors: c,
+            synthetic: key === UNASSIGNED,
+            context: e.ref ? { projectRef: e.ref } : undefined,
+            groupHeader: {
+                key, kind: 'project', count: n, fromISO, toISO,
+                draftCount: e.work.filter(b => !b.linkedWorkOrderId).length,
+                urgent: e.work.some(b => b.priority === 'urgent'),
+                metaVariants: n
+                    ? [`${nalogaN(n)} · ${dmShort(fromISO)}–${dmShort(toISO)}`, nalogaN(n)]
+                    : [`${dmShort(fromISO)}–${dmShort(toISO)}`],
+            },
+        });
+
+        // Jedan red po ekipi, redom kojim ekipe počinju.
+        const crews = new Map<string, { refs: PlanRef[]; blocks: PlanBlock[] }>();
+        for (const b of e.work) {
+            const k = crewKeyOf(b.workerRefs);
+            const ce = crews.get(k) || { refs: b.workerRefs || [], blocks: [] };
+            ce.blocks.push(b);
+            crews.set(k, ce);
+        }
+        const crewList = Array.from(crews.entries()).sort(([ka, a], [kb, b]) => {
+            if (!ka) return 1;                       // „Bez ekipe" na dno projekta
+            if (!kb) return -1;
+            return first(a.blocks).localeCompare(first(b.blocks));
+        });
+        for (const [ck, ce] of crewList) {
+            const ids = ce.refs.map(r => r.id).filter((x): x is string => !!x);
+            const shift = crewShift(ce.refs, workersById);
+            const cnt = nalogaN(ce.blocks.length);
+            rows.push({
+                id: `crew-${key}-${ck || 'none'}`,
+                label: ce.refs.map(r => r.name).join(' + ') || 'Bez ekipe',
+                section: 'plan',
+                blocks: ce.blocks.slice().sort(byStart),
+                shadows: [],
+                colors: c,
+                groupKey: key,
+                synthetic: !ck,
+                crew: { key: ck, refs: ce.refs, shift, isSaturdayWorking: checkerFor(ids) },
+                subVariants: shift ? [`${SHIFT_LABEL(shift)} · ${cnt}`, SHIFT_LABEL(shift)] : [cnt],
+                context: { ...(e.ref ? { projectRef: e.ref } : {}), ...(ce.refs.length ? { workerRefs: ce.refs } : {}) },
+            });
+        }
+
+        if (e.other.length) {
+            rows.push({
+                id: `ostalo-${key}`,
+                label: 'Nabavka i rokovi',
+                section: 'plan',
+                blocks: e.other.slice().sort(byStart),
+                shadows: [],
+                colors: c,
+                groupKey: key,
+                subVariants: [plural(e.other.length, 'stavka', 'stavke', 'stavki')],
+                context: e.ref ? { projectRef: e.ref } : undefined,
+            });
+        }
+    }
+    return rows;
+}
+
+// ── EKIPE: smjena → jedan red po ekipi ──────────────────────────────
+
+/**
+ * „Ekipe" — zamjena za staru sekciju „Radnici", koja je isti blok crtala
+ * jednom po čovjeku (dva puta za par) i nije pokazivala ni par ni smjenu.
+ *
+ * Red = ekipa (radnici na nalogu), preko SVIH projekata; boja trake kaže
+ * projekat. Ekipe su grupisane po subotnjoj smjeni (A/B), pa se odmah vidi ko
+ * radi koju subotu. Podnaslov reda kaže kad je ekipa slobodna. Na dnu su
+ * „Slobodni radnici" — aktivni ljudi koji u planu nemaju ništa.
+ */
+function buildCrewRows(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
+    const rows: CanvasRow[] = [];
+    const blocks = scenario.Blocks;
+    const today = ctx.todayISO || todayISOFn();
+    const checkerFor = crewCheckerFactory(ctx);
+    const workersById = new Map(ctx.workers.map(w => [w.Worker_ID, w]));
+    const shadowWO = realWorkOrdersByWorker(ctx.workOrders);
+    const shadowAbs = absencesByWorker(ctx.attendance);
+    const firstName = (n: string) => (n || '').trim().split(/\s+/)[0] || n;
+
+    /** Sjene članova ekipe — stvarni nalozi jednom, odsustva s imenom člana. */
+    const crewShadows = (refs: PlanRef[]): ShadowBar[] => {
+        const seen = new Set<string>();
+        const out: ShadowBar[] = [];
+        for (const r of refs) {
+            if (!r.id) continue;
+            for (const s of shadowWO.get(r.id) || []) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+            for (const s of shadowAbs.get(r.id) || []) {
+                out.push(refs.length > 1 ? { ...s, label: `${firstName(r.name)}: ${s.label}` } : s);
+            }
+        }
+        return out;
+    };
+
+    // ── Rokovi, narudžbe, transport — jedan red na vrhu ──
+    const other = blocks.filter(b => !WORK_KINDS.has(b.kind)).sort(byStart);
+    if (other.length) {
+        rows.push({
+            id: 'grp-obaveze', label: 'Rokovi i nabavka', section: 'ekipe', blocks: [], shadows: [],
+            groupHeader: { key: 'obaveze', kind: 'other', count: other.length, draftCount: 0,
+                metaVariants: [plural(other.length, 'stavka', 'stavke', 'stavki')] },
+        });
+        rows.push({
+            id: 'ekipe-obaveze', label: 'Svi projekti', section: 'ekipe', blocks: other, shadows: [],
+            groupKey: 'obaveze',
+        });
+    }
+
+    // ── Ekipe iz naloga ──
+    const crews = new Map<string, { refs: PlanRef[]; blocks: PlanBlock[] }>();
+    for (const b of blocks.filter(x => WORK_KINDS.has(x.kind))) {
+        const k = crewKeyOf(b.workerRefs);
+        const e = crews.get(k) || { refs: b.workerRefs || [], blocks: [] };
+        e.blocks.push(b);
+        crews.set(k, e);
+    }
+    const inCrew = new Set<string>();
+    for (const e of crews.values()) for (const r of e.refs) if (r.id) inCrew.add(r.id);
+
+    const groups: { key: string; shift: CrewShift; label: string; list: [string, { refs: PlanRef[]; blocks: PlanBlock[] }][] }[] = [
+        { key: 'smjena-A', shift: 'A', label: 'Smjena A', list: [] },
+        { key: 'smjena-B', shift: 'B', label: 'Smjena B', list: [] },
+        { key: 'smjena-mix', shift: 'mix', label: 'Mješovite ekipe', list: [] },
+        { key: 'smjena-none', shift: null, label: 'Bez smjene', list: [] },
+    ];
+    for (const entry of crews.entries()) {
+        const s = entry[0] ? crewShift(entry[1].refs, workersById) : null;
+        groups.find(g => g.shift === s)!.list.push(entry);
+    }
+
+    for (const g of groups) {
+        if (!g.list.length) continue;
+        const letter = g.shift === 'A' || g.shift === 'B' ? g.shift as ShiftLetter : null;
+        const sats = letter ? shiftSaturdays(letter, today, 3).map(dmShort) : [];
+        rows.push({
+            id: `grp-${g.key}`, label: g.label, section: 'ekipe', blocks: [], shadows: [],
+            groupHeader: {
+                key: g.key, kind: 'shift', shift: g.shift, draftCount: 0,
+                count: g.list.reduce((a, [, e]) => a + e.blocks.length, 0),
+                isSaturdayWorking: letter
+                    ? (d: Date) => shiftWorksSaturday(shiftAnchor(letter), toISODate(d)) !== false
+                    : undefined,
+                metaVariants: sats.length
+                    ? [`subote ${sats.join(', ')}`, `subote ${sats[0]} i ${sats[1] ?? ''}`.trim(), `subota ${sats[0]}`]
+                    : g.shift === 'mix' ? ['subota ako radi bar jedan'] : ['subota po šihtarici'],
+            },
+        });
+        // Ekipe po imenu prvog člana — stabilan, abecedni red.
+        g.list.sort(([ka, a], [kb, b]) => {
+            if (!ka) return 1;
+            if (!kb) return -1;
+            return (a.refs[0]?.name || '').localeCompare(b.refs[0]?.name || '', 'hr');
+        });
+        for (const [ck, e] of g.list) {
+            const ids = e.refs.map(r => r.id).filter((x): x is string => !!x);
+            const chk = checkerFor(ids);
+            const last = e.blocks.reduce((a, b) => (b.endISO > a ? b.endISO : a), e.blocks[0].endISO);
+            const projects = new Set(e.blocks.map(b => projectKeyOf(b.projectRef))).size;
+            const free = `${e.refs.length > 1 ? 'slobodni' : 'slobodan'} od ${dmShort(nextCrewWorkday(last, chk))}`;
+            rows.push({
+                id: `ekipa-${ck || 'none'}`,
+                label: e.refs.map(r => r.name).join(' + ') || 'Bez ekipe',
+                section: 'ekipe',
+                blocks: e.blocks.slice().sort(byStart),
+                shadows: crewShadows(e.refs),
+                groupKey: g.key,
+                synthetic: !ck,
+                crew: { key: ck, refs: e.refs, shift: g.shift, isSaturdayWorking: chk },
+                subVariants: ck
+                    ? [`${free} · ${plural(projects, 'projekat', 'projekta', 'projekata')}`, free]
+                    : [nalogaN(e.blocks.length)],
+                context: e.refs.length ? { workerRefs: e.refs } : undefined,
+            });
+        }
+    }
+
+    // ── Slobodni radnici ──
+    const free = ctx.workers
+        .filter(w => (w.Status === 'Aktivan' || w.Status === 'Dostupan') && !inCrew.has(w.Worker_ID))
+        .sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'hr'));
+    if (free.length) {
+        rows.push({
+            id: 'grp-slobodni', label: 'Slobodni radnici', section: 'ekipe', blocks: [], shadows: [],
+            groupHeader: { key: 'slobodni', kind: 'free', count: 0, draftCount: 0, metaVariants: ['nisu u ovom planu'] },
+        });
+        for (const w of free) {
+            const refs = [{ id: w.Worker_ID, name: w.Name }];
+            const shift = crewShift(refs, workersById);
+            rows.push({
+                id: `slobodan-${w.Worker_ID}`,
+                label: w.Name,
+                section: 'ekipe',
+                blocks: [],
+                shadows: crewShadows(refs),
+                groupKey: 'slobodni',
+                crew: { key: crewKeyOf(refs), refs, shift, isSaturdayWorking: checkerFor([w.Worker_ID]) },
+                subVariants: [shift ? SHIFT_LABEL(shift) : 'bez smjene'],
+                context: { workerRefs: refs },
+            });
+        }
+    }
+    return rows;
 }
 
 // ── Jedan nalog = jedan red ─────────────────────────────────────────
@@ -224,9 +586,9 @@ const WORK_KINDS = new Set<PlanBlockKind>(['order', 'montaza']);
  *
  * Nalozi su grupisani po projektu (naslovni red se može skupiti). Narudžba koja
  * hrani nalog crta se kao tanka traka ispod njega u istom redu. Rokovi ostaju u
- * sekciji Obaveze, radnici u svojoj sekciji.
+ * redu Obaveze na vrhu.
  */
-function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
+function buildRowsPerOrder(scenario: PlanScenario): CanvasRow[] {
     const rows: CanvasRow[] = [];
     const blocks = scenario.Blocks;
 
@@ -255,15 +617,16 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
     // ── Grupiši naloge po projektu ──────────────────────────────
     const workBlocks = blocks.filter(b => WORK_KINDS.has(b.kind));
     const UNASSIGNED = '__unassigned__';
-    const grouped = new Map<string, { label: string; colors: ProjectColors; blocks: PlanBlock[]; projectId?: string }>();
+    const colorMap = scenarioProjectColors(scenario);
+    const grouped = new Map<string, { label: string; colors: ProjectColors; blocks: PlanBlock[]; ref?: PlanRef }>();
     for (const b of workBlocks) {
         const pr = b.projectRef;
         const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
         const label = pr ? pr.name : 'Bez projekta';
-        // Iste boje koje traka dobija kroz projectColors — da se akcent reda i
+        // Iste boje koje traka dobija iz mape plana — da se akcent reda i
         // ispuna trake ne raziđu.
         const entry = grouped.get(key)
-            || { label, colors: pr ? projectColors(pr.id || pr.name) : NO_PROJECT_COLORS, blocks: [], projectId: pr?.id };
+            || { label, colors: colorsFor(colorMap, pr), blocks: [], ref: pr };
         entry.blocks.push(b);
         grouped.set(key, entry);
     }
@@ -283,13 +646,18 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
         // Naslovni red projekta
         rows.push({
             id: `grp-${key}`,
-            label: entry.label,
+            label: entry.label.trim(),
             section: 'plan',
             blocks: [],
             shadows: [],
             colors: entry.colors,
             synthetic: key === UNASSIGNED,
-            groupHeader: { key, count: ordered.length, fromISO, toISO, draftCount },
+            context: entry.ref ? { projectRef: entry.ref } : undefined,
+            groupHeader: {
+                key, kind: 'project', count: ordered.length, fromISO, toISO, draftCount,
+                urgent: ordered.some(b => b.priority === 'urgent'),
+                metaVariants: [`${nalogaN(ordered.length)} · ${dmShort(fromISO)}–${dmShort(toISO)}`, nalogaN(ordered.length)],
+            },
         });
 
         // Jedan red po nalogu
@@ -305,12 +673,14 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
                 shadows: [],
                 colors: entry.colors,
                 groupKey: key,
+                context: entry.ref ? { projectRef: entry.ref } : undefined,
             });
         }
     }
 
-    // ── RADNICI ─────────────────────────────────────────────────
-    rows.push(...buildWorkerRows(scenario, ctx));
+    // Radnici NISU ovdje: ekipa svakog naloga piše se u njegovom redu, a
+    // zauzetost po ljudima je prikaz „Ekipe". Stara sekcija „Radnici" je samo
+    // ponavljala iste blokove.
 
     // ── NABAVKA: narudžbe koje ne hrane nijedan nalog ───────────
     const looseSupplies = blocks.filter(b => b.kind === 'purchase' && !linkedPurchase.has(b.id));
@@ -456,77 +826,30 @@ function buildWorkerRows(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
 }
 
 /**
- * OBJEDINJENI raspored: nalog, narudžba, transport, rok i montaža istog projekta žive
- * u JEDNOM redu. Nalog je okosnica; ostalo se crta ispod (vidi `blockLayer`). Radnici
- * ostaju zasebna sekcija — kapacitet je druga osa i miješanje bi ga zamaglilo.
+ * Stari prikaz „Jedan red": svi blokovi u jednom redu (nalog okosnica, ostalo
+ * ispod — vidi `blockLayer`) + Radnici. Ostaje u meniju ⋯ za pregled cijelog
+ * plana u jednom potezu.
  */
-function buildUnifiedRows(
-    scenario: PlanScenario,
-    ctx: RowContext,
-    mode: 'project' | 'global'
-): CanvasRow[] {
+function buildUnifiedRows(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
     const rows: CanvasRow[] = [];
     const blocks = scenario.Blocks;
-
-    if (mode === 'global') {
-        if (blocks.length) {
-            rows.push({
-                id: 'plan-all',
-                label: 'Svi blokovi',
-                sublabel: 'objedinjeno',
-                section: 'plan',
-                blocks: [...blocks].sort(byStart),
-                shadows: [],
-            });
-        }
-    } else {
-        // Narudžba pripada projektu NALOGA koji hrani (veza „stiglo → kreće"), ne svom
-        // (moguće pogrešnom) projectRef-u. Tako narudžba vezana za Emirov nalog stoji pod
-        // Emirom, čak i ako joj je projectRef ostao na drugom projektu.
-        const blockById = new Map(blocks.map(b => [b.id, b]));
-        const linkedProject = new Map<string, PlanRef>();
-        for (const l of scenario.Links) {
-            if (l.kind !== 'delivery-to-start') continue;
-            const nalog = blockById.get(l.to);          // l.from = narudžba, l.to = nalog
-            if (nalog?.projectRef) linkedProject.set(l.from, nalog.projectRef);
-        }
-        const projectOf = (b: PlanBlock): PlanRef | undefined =>
-            (b.kind === 'purchase' ? linkedProject.get(b.id) : undefined) || b.projectRef;
-
-        const UNASSIGNED = '__unassigned__';
-        const grouped = new Map<string, { label: string; blocks: PlanBlock[] }>();
-        for (const b of blocks) {
-            const pr = projectOf(b);
-            const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
-            const label = pr ? pr.name : 'Bez projekta';
-            const entry = grouped.get(key) || { label, blocks: [] };
-            entry.blocks.push(b);
-            grouped.set(key, entry);
-        }
-        const entries = Array.from(grouped.entries()).sort(([ka, a], [kb, bb]) => {
-            if (ka === UNASSIGNED) return 1;          // „Bez projekta" na kraj
-            if (kb === UNASSIGNED) return -1;
-            return a.label.localeCompare(bb.label, 'hr');
+    if (blocks.length) {
+        rows.push({
+            id: 'plan-all',
+            label: 'Svi blokovi',
+            sublabel: 'objedinjeno',
+            section: 'plan',
+            blocks: [...blocks].sort(byStart),
+            shadows: [],
         });
-        for (const [key, entry] of entries) {
-            rows.push({
-                id: `plan-${key}`,
-                label: entry.label,
-                section: 'plan',
-                blocks: entry.blocks.sort(byStart),
-                shadows: [],
-                synthetic: key === UNASSIGNED,
-            });
-        }
     }
-
     rows.push(...buildWorkerRows(scenario, ctx));
     return rows;
 }
 
 /** Redovi grupisani po sekcijama, u fiksnom redoslijedu prikaza. */
 export function groupRowsBySection(rows: CanvasRow[]): { section: CanvasSection; rows: CanvasRow[] }[] {
-    const order: CanvasSection[] = ['obaveze', 'plan', 'nalozi', 'radnici', 'nabavka'];
+    const order: CanvasSection[] = ['obaveze', 'plan', 'ekipe', 'nalozi', 'radnici', 'nabavka'];
     return order
         .map(section => ({ section, rows: rows.filter(r => r.section === section) }))
         .filter(g => g.rows.length > 0);

@@ -61,7 +61,13 @@
 
 .cv-dock-toggle { color: var(--text-tertiary); }
 
-.cv-badge {
+/* Broj uz tab doka — u redu s nazivom. CanvasTab.css ima drugu `.cv-badge`
+   (apsolutna, za ugao ikona-dugmeta); bez užeg selektora je broj ovdje
+   bježao na desnu ivicu ekrana. */
+.cv-dock-tabs .cv-badge {
+    position: static;
+    display: inline-block;
+    height: auto;
     min-width: 18px;
     padding: 1px 6px;
     border-radius: var(--cm-r-pill);
@@ -69,13 +75,16 @@
     color: var(--text-secondary);
     font-size: 11px;
     font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
     font-variant-numeric: tabular-nums;
 }
 
-.cv-badge.err { background: var(--error); color: #fff; }
+.cv-dock-tabs .cv-badge.err { background: var(--error); color: #fff; }
 
 .cv-dock-body {
-    max-height: 210px;
+    /* Na nižem ekranu dok uzima manje — platno je glavni sadržaj. */
+    max-height: clamp(120px, 24dvh, 210px);
     overflow-y: auto;
     padding: 10px 12px;
 }

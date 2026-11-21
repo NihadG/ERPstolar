@@ -12,12 +12,13 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, Check, LayoutGrid,
-    Pause, X,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, LayoutGrid,
+    Pause, Check, X,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance, Task,
@@ -53,21 +54,28 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileCanvasView from '@/components/tabs/mobile/MobileCanvasView';
 import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
-import { buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, type CanvasRow } from '@/lib/canvas/rows';
-import { blockStatusMap, type BlockStatus } from '@/lib/canvas/status';
-import { projectColors } from '@/lib/canvas/palette';
 import {
-    HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
-    blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
-    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, nonWorkingBands,
+    buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, scenarioProjectColors, colorsFor, projectKeyOf,
+    type CanvasRow,
+} from '@/lib/canvas/rows';
+import { blockStatusMap, type BlockStatus } from '@/lib/canvas/status';
+import {
+    TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
+    blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands, headerWidthFor,
+    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, nonWorkingBands, visibleDates,
     type Viewport, type BlockRect,
 } from '@/lib/canvas/geometry';
 import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
     countWorkingDays,
 } from '@/lib/canvas/model';
-import { weekendMarksInSpan } from '@/lib/canvas/weekend';
+import { workRuns } from '@/lib/canvas/weekend';
+import {
+    parsePlanTitle, fitBlockLabel, fitWords, fitVariants, isFullLabel, LABEL, type BlockLabelFit,
+} from '@/lib/canvas/label';
+import { shortNameMap, shortNameOf } from '@/lib/canvas/crews';
 import { todayISO } from '@/lib/planning';
+import { measureText, resetTextMeasure } from './measure';
 import './CanvasTab.css';
 
 interface CanvasTabProps {
@@ -82,22 +90,37 @@ interface CanvasTabProps {
     /** Osvježi podatke app-a nakon pretvorbe (nalog/narudžba postanu vidljivi u svojim tabovima). */
     onRefresh?: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    /**
+     * SAMO za /canvas-preview: plan iz memorije umjesto iz baze. Ne učitava se
+     * ništa, a autosave ne piše (nema organizacije). U aplikaciji se ne prosljeđuje.
+     */
+    preview?: { scenario: PlanScenario; attendance?: WorkerAttendance[]; todayISO?: string };
 }
 
 const ZOOMS: PlanZoom[] = ['dan', 'sedmica', 'mjesec'];
 const GROUPS: PlanGroupBy[] = ['project', 'worker', 'supplier', 'kind'];
-const LAYOUTS: { key: PlanLayout; label: string }[] = [
-    { key: 'rows', label: 'Nalozi — red po nalogu' },
-    { key: 'unified-project', label: 'Objedinjeno — po projektu' },
-    { key: 'unified-global', label: 'Objedinjeno — jedan red' },
-    { key: 'detailed', label: 'Detaljno — po vrsti' },
+/** Tri pogleda u traci. Stari rasporedi (detaljno, jedan red) su u meniju ⋯. */
+const LENSES: { key: PlanLayout; label: string; title: string }[] = [
+    { key: 'unified-project', label: 'Projekti', title: 'Projekat → jedan red po ekipi koja na njemu radi' },
+    { key: 'crews', label: 'Ekipe', title: 'Parovi po subotnjoj smjeni, preko svih projekata — ko je kad zauzet' },
+    { key: 'rows', label: 'Nalozi', title: 'Jedan red po nalogu, puni naziv lijevo' },
 ];
-const LAYOUT_SHORT: Record<PlanLayout, string> = {
-    rows: 'Nalozi',
-    'unified-project': 'Projekt',
-    'unified-global': 'Jedan red',
-    detailed: 'Detaljno',
-};
+const OLD_LAYOUTS: { key: PlanLayout; label: string }[] = [
+    { key: 'detailed', label: 'Stari prikaz: detaljno po vrsti' },
+    { key: 'unified-global', label: 'Stari prikaz: sve u jednom redu' },
+];
+const MONTHS_FULL = ['Januar', 'Februar', 'Mart', 'April', 'Maj', 'Juni', 'Juli', 'August', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'];
+const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+const DOW_LETTER = ['N', 'P', 'U', 'S', 'Č', 'P', 'S'];
+const DOW_SHORT = ['ned', 'pon', 'uto', 'sri', 'čet', 'pet', 'sub'];
+/** Mjesto za tačku statusa / katanac ispred šifre u natpisu trake. */
+const STATUS_DOT_W = 13;
+const LOCK_W = 14;
+/** Bosanska množina: 1 nalog, 2 naloga, 5 naloga. */
+function bsPlural(n: number, one: string, few: string, many: string): string {
+    const m10 = n % 10, m100 = n % 100;
+    return `${n} ${m10 === 1 && m100 !== 11 ? one : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? few : many}`;
+}
 /** Ispod ovoliko piksela povlačenje je zapravo klik — klik NE pravi blok (dupli klik pravi). */
 const MIN_DRAW_PX = 6;
 /** „2026-08-17" → „17.8." */
@@ -112,16 +135,29 @@ const QUICK_KINDS: { kind: PlanBlockKind; key: string }[] = [
 ];
 
 export default function CanvasTab({
-    projects, workers, workOrders, orders, suppliers, tasks = [], onRefresh, showToast,
+    projects, workers, workOrders, orders, suppliers, tasks = [], onRefresh, showToast, preview,
 }: CanvasTabProps) {
     const { organization } = useAuth();
-    const orgId = organization?.Organization_ID || '';
+    // Preview nema organizaciju → ništa se ne učitava i autosave ne piše (useScenario).
+    const orgId = preview ? '' : (organization?.Organization_ID || '');
     const isMobile = useIsMobile();
+    const today = preview?.todayISO || todayISO();
 
-    const [scenarios, setScenarios] = useState<PlanScenario[]>([]);
-    const [loaded, setLoaded] = useState<PlanScenario | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [attendance, setAttendance] = useState<WorkerAttendance[]>([]);
+    const [scenarios, setScenarios] = useState<PlanScenario[]>(preview ? [preview.scenario] : []);
+    const [loaded, setLoaded] = useState<PlanScenario | null>(preview?.scenario || null);
+    const [loading, setLoading] = useState(!preview);
+    const [attendance, setAttendance] = useState<WorkerAttendance[]>(preview?.attendance || []);
+    /** Projekat istaknut iz legende (prikaz Ekipe) — ostali blokovi se priguše. */
+    const [focusProject, setFocusProject] = useState<string | null>(null);
+    /** Kartica na hover: puni naziv, datumi, ekipa. */
+    const [hover, setHover] = useState<{ id: string; left: number; top: number; bottom: number } | null>(null);
+    // Natpisi se mjere u fontu aplikacije — kad se font učita, izmjeri ponovo.
+    const [, setFontTick] = useState(0);
+    useEffect(() => {
+        let alive = true;
+        document.fonts?.ready.then(() => { if (alive) { resetTextMeasure(); setFontTick(t => t + 1); } });
+        return () => { alive = false; };
+    }, []);
     const [showIdle, setShowIdle] = useState(false);
     const [drawerId, setDrawerId] = useState<string | null>(null);
     const [chainOpen, setChainOpen] = useState(false);
@@ -158,23 +194,26 @@ export default function CanvasTab({
     const scenario = state.scenario;
 
     // ── Vidljivi prozor ─────────────────────────────────────────
+    // Lijeva kolona je uža na laptopu (headerWidthFor), da osa zadrži ~4 sedmice.
     const gridRef = useRef<HTMLDivElement>(null);
-    const [widthPx, setWidthPx] = useState(1000);
+    const [gridW, setGridW] = useState(1220);
     useEffect(() => {
         const el = gridRef.current;
         if (!el) return;
         const ro = new ResizeObserver(entries => {
             const w = entries[0]?.contentRect.width || 0;
-            if (w > 0) setWidthPx(Math.max(320, w - HEADER_WIDTH));
+            if (w > 0) setGridW(w);
         });
         ro.observe(el);
         return () => ro.disconnect();
-    }, []);
+    }, [loading]);
+    const headerW = headerWidthFor(gridW);
+    const widthPx = Math.max(320, gridW - headerW);
 
     const zoom = scenario.View?.zoom || 'sedmica';
     const groupBy = scenario.View?.groupBy || 'project';
-    const layout = scenario.View?.layout || 'rows';
-    const anchorISO = scenario.View?.anchorISO || todayISO();
+    const layout = scenario.View?.layout || 'unified-project';
+    const anchorISO = scenario.View?.anchorISO || today;
     const vp: Viewport = useMemo(() => ({ anchorISO, zoom, widthPx }), [anchorISO, zoom, widthPx]);
 
     // ── Učitavanje ──────────────────────────────────────────────
@@ -227,10 +266,26 @@ export default function CanvasTab({
 
     // ── Redovi ──────────────────────────────────────────────────
     const rows = useMemo(
-        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle }, layout),
-        [scenario, groupBy, workers, workOrders, attendance, showIdle, layout]
+        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle, todayISO: today }, layout),
+        [scenario, groupBy, workers, workOrders, attendance, showIdle, layout, today]
     );
     const sections = useMemo(() => groupRowsBySection(rows), [rows]);
+    /** Boje projekata plana — dva projekta nikad iste boje (legenda, trake, naslovi). */
+    const projectColorsMap = useMemo(() => scenarioProjectColors(scenario), [scenario]);
+    /** Kratka imena za ekipe („Nedim + Aldin"). */
+    const shortNames = useMemo(() => shortNameMap(workers), [workers]);
+    /** Legenda prikaza Ekipe: projekti plana, redom kojim počinju. */
+    const legend = useMemo(() => {
+        const seen = new Map<string, { key: string; name: string; ink: string; start: string }>();
+        for (const b of scenario.Blocks) {
+            if (!b.projectRef || (b.kind !== 'order' && b.kind !== 'montaza')) continue;
+            const key = projectKeyOf(b.projectRef);
+            const cur = seen.get(key);
+            if (!cur) seen.set(key, { key, name: b.projectRef.name.trim(), ink: colorsFor(projectColorsMap, b.projectRef).ink, start: b.startISO });
+            else if (b.startISO < cur.start) cur.start = b.startISO;
+        }
+        return Array.from(seen.values()).sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name, 'hr'));
+    }, [scenario.Blocks, projectColorsMap]);
 
     // Živi status blokova pretvorenih u stvarne naloge/narudžbe — ČITA se iz entiteta,
     // preslikava na blok (bez pisanja). Nacrti nisu u mapi (podrazumijevani izgled).
@@ -337,7 +392,8 @@ export default function CanvasTab({
 
     const rowContext = useCallback((row: CanvasRow) => {
         // Novi blok naslijedi kontekst reda u kojem je nacrtan — bez toga bi svaki
-        // blok trebalo ručno vezati za projekt/radnika.
+        // blok trebalo ručno vezati za projekt/radnika. Red ekipe daje i projekat i par.
+        if (row.context) return row.context;
         if (row.section === 'radnici') {
             const w = workers.find(x => `radnik-${x.Worker_ID}` === row.id);
             return w ? { workerRefs: [{ id: w.Worker_ID, name: w.Name }] } : {};
@@ -617,19 +673,22 @@ export default function CanvasTab({
     }, [promotingId, dispatch, onRefresh]);
 
     // ── Render ──────────────────────────────────────────────────
-    const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
+    const ticks = useMemo(() => headerTicks(vp, today), [vp, today]);
     const bands = useMemo(() => monthBands(vp), [vp]);
     const nonwork = useMemo(() => nonWorkingBands(vp), [vp]);
-    const todayX = xForDate(todayISO(), vp);
+    const visDates = useMemo(() => visibleDates(vp), [vp]);
+    const todayX = xForDate(today, vp);
+    const dw = dayWidth(zoom);
+    /** Pomak prve sedmične linije mreže (ponedjeljak) od lijeve ivice ose. */
+    const weekOffset = Math.max(0, visDates.findIndex(d => new Date(`${d}T12:00:00`).getDay() === 1)) * dw;
 
     // Raspon klizača: cijeli plan (+ danas), s malim rubom sa svake strane.
     const timeRange = useMemo(() => {
         const b = scenarioBounds(scenario);
-        const today = todayISO();
         const lo = b ? (b.fromISO < today ? b.fromISO : today) : today;
         const hi = b ? (b.toISO > today ? b.toISO : today) : today;
         return { fromISO: addDays(lo, -14), toISO: addDays(hi, 14) };
-    }, [scenario]);
+    }, [scenario, today]);
     const selected = new Set(state.selectedIds);
 
     // Umjesto spageta strelica preko cijelog platna: kad je blok izabran, njegovi
@@ -646,13 +705,30 @@ export default function CanvasTab({
     }, [state.selectedIds, scenario.Links]);
 
     /**
-     * Jedan blok — dijeli ga primarni (nalog/montaža) i sekundarni (narudžba/transport)
-     * sloj objedinjenog reda. `compact` daje užu, prigušenu traku; `hasSupply` lijepi
-     * oznaku „u ovom intervalu stiže narudžba" na nalog.
+     * Subote kad ekipa reda NE radi — siva ćelija u pozadini reda, ista siva kao
+     * nedjelja. Red ekipe zna smjenu para, pa se vidi „ovaj par 5.12. ne radi".
+     */
+    const offSaturdays = (isSat?: (d: Date) => boolean) => {
+        if (!isSat || zoom === 'mjesec') return null;
+        return visDates.map((iso, i) => {
+            const d = new Date(`${iso}T12:00:00`);
+            if (d.getDay() !== 6 || isSat(d)) return null;
+            return <span key={iso} className="cv-off" style={{ left: i * dw, width: dw }} />;
+        });
+    };
+
+    /**
+     * Jedan blok. Traka = RADNI KOMADI spojeni tankom isprekidanom linijom preko
+     * dana kad se ne radi (nedjelja, subota kad ekipa ne radi) — ranije je to bilo
+     * crveno zatamnjenje preko trake i djelovalo kao greška.
+     *
+     * Natpis: šifra pozicije + naziv, skraćen NA GRANICI RIJEČI, unutar JEDNOG
+     * radnog komada (nikad preko linije); ostali komadi nose samo šifru, pa se za
+     * svaki komad zna čiji je. Puni naziv je u kartici na hover.
      */
     const renderBlock = (
         item: PlanBlock, lane: number, rect: BlockRect, rowId: string,
-        opts?: { compact?: boolean; hasSupply?: boolean }
+        opts?: { compact?: boolean; trimStart?: boolean; trimEnd?: boolean; noLabel?: boolean; withSuffix?: boolean }
     ) => {
         const isDragged = drag.preview?.blockId === item.id;
         const mode = isDragged ? drag.preview!.mode : null;
@@ -675,32 +751,94 @@ export default function CanvasTab({
 
         // Živi status stvarnog naloga/narudžbe iza bloka (nacrt nije u mapi).
         const st = statusById.get(item.id);
-        // Boja = PROJEKT, ali kao MEKA TINTA s tamnim tekstom i tankom kapicom
-        // (ink) lijevo — smireno i čitljivo i kad ih je dvadeset. Vrijedi samo za
-        // radne blokove; rok/narudžba zadržavaju semantičku boju (crveno/žuto).
+        // Boja = PROJEKT (meka tinta, tamni tekst), iz mape plana — dva projekta nikad
+        // iste boje. Rok/narudžba/transport zadržavaju semantičku boju vrste.
         const isWorkKind = item.kind === 'order' || item.kind === 'montaza';
-        const colors = isWorkKind ? projectColors(item.projectRef?.id || item.projectRef?.name) : null;
-        // Vikend NA traci naloga: subota zelena kad dodijeljena ekipa radi, crvena
-        // kad ne; nedjelja uvijek crvena. Skriveno na mjesečnom zumu (dan je 11px,
-        // oznaka bi bila šum) i na kompaktnim/logističkim trakama. Isti per-nalog
-        // checker koji nosi i dužinu trake, pa se boja i dužina slažu.
-        const weekend = (isWorkKind && !opts?.compact && zoom !== 'mjesec')
-            ? weekendMarksInSpan(effStart, effEnd, satCheckerFor(item.workerRefs))
-            : [];
-        // Naziv koji ne stane U traku ostaje prazan — ime je u lijevoj koloni.
-        const fits = eff.width > MIN_LABEL_WIDTH;
-        // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
-        // „po projektu" je red već projekt, pa je suvišno (i znalo bi se ne slagati s
-        // grupisanjem po vezanom nalogu).
-        const projectSuffix = (item.kind === 'purchase' && layout !== 'unified-project')
-            ? (item.projectRef?.name || '') : '';
+        const colors = isWorkKind ? colorsFor(projectColorsMap, item.projectRef) : null;
 
+        // Dan predaje u redu ekipe: taj dan se dijeli napola sa susjednim nalogom.
+        const half = dw / 2;
+        const tL = opts?.trimStart && !eff.clippedStart && !isDragged ? half : 0;
+        const tR = opts?.trimEnd && !eff.clippedEnd && !isDragged ? half : 0;
+        // 1 px razmaka sa svake strane — susjedni nalozi iste boje se ne stapaju.
+        const left = eff.left + 1 + tL;
+        const width = Math.max(4, eff.width - 2 - tL - tR);
+
+        // Radni / neradni komadi. Isti per-nalog checker koji nosi i dužinu trake,
+        // pa se komadi i dužina slažu. Na mjesečnom zumu (dan = 11 px) traka je puna.
+        const runs = isWorkKind && !opts?.compact && zoom !== 'mjesec'
+            ? workRuns(effStart, effEnd, satCheckerFor(item.workerRefs))
+            : [{ fromISO: effStart, toISO: effEnd, working: true }];
+        const onRuns: { l: number; w: number }[] = [];
+        const runEls = runs.map((run, i) => {
+            const rr = blockRect(run.fromISO, run.toISO, vp);
+            if (!rr.visible) return null;
+            let l = rr.left - left;
+            let r = rr.left + rr.width - left;
+            if (!run.working) {
+                return <span key={i} className="cv-run off" style={{ left: l, width: Math.max(2, r - l) }} />;
+            }
+            l = Math.max(0, l);
+            r = Math.min(width, r);
+            const first = onRuns.length === 0;
+            onRuns.push({ l, w: r - l });
+            const sqL = run.fromISO === effStart && eff.clippedStart;
+            const sqR = run.toISO === effEnd && eff.clippedEnd;
+            return (
+                <span key={i}
+                    className={`cv-run on${first ? ' first' : ''}${sqL ? ' sq-l' : ''}${sqR ? ' sq-r' : ''}`}
+                    style={{ left: l, width: Math.max(2, r - l) }} />
+            );
+        });
+
+        // Natpis — u prvom komadu u koji cijeli stane, inače u najdužem.
+        const parsed = parsePlanTitle(item.title, item.projectRef?.name);
+        const reserve = (st ? STATUS_DOT_W : 0) + (item.locked ? LOCK_W : 0);
+        let host = onRuns.find(x => isFullLabel(fitBlockLabel(parsed, x.w, measureText, { reserve })));
+        if (!host) host = onRuns.reduce<{ l: number; w: number } | undefined>((a, x) => (!a || x.w > a.w ? x : a), undefined);
+        const fit: BlockLabelFit | null = host && !opts?.noLabel
+            ? fitBlockLabel(parsed, host.w, measureText, { reserve, withSuffix: opts?.withSuffix })
+            : null;
+        const marks = (item.locked || st) ? (
+            <>
+                {item.locked && <Lock size={10} className="cv-lock" />}
+                {st && <StatusMark status={st.status} />}
+            </>
+        ) : null;
+        const labels: React.ReactNode[] = [];
+        if (parsed.code && !opts?.noLabel) {
+            for (const x of onRuns) {
+                if (x === host) continue;
+                const f = fitBlockLabel({ code: parsed.code, name: '', suffix: '' }, x.w, measureText);
+                if (f) labels.push(
+                    <span key={`c${x.l}`} className="cv-lbl center" style={{ left: x.l, width: x.w }}>
+                        <span className={`cv-code${f.bare ? ' bare' : ''}`}>{parsed.code}</span>
+                    </span>
+                );
+            }
+        }
+        if (host && (fit || marks)) {
+            labels.push(
+                <span key="host" className={`cv-lbl${fit?.centered ? ' center' : ''}`} style={{ left: host.l, width: host.w }}>
+                    {marks}
+                    {fit?.code && <span className={`cv-code${fit.bare ? ' bare' : ''}`}>{fit.code}</span>}
+                    {fit?.name && (
+                        <span className="cv-nm">
+                            {fit.name}
+                            {fit.suffix && <span className="cv-sfx"> · {fit.suffix}</span>}
+                        </span>
+                    )}
+                </span>
+            );
+        }
+
+        const dim = !!focusProject && projectKeyOf(item.projectRef) !== focusProject;
         return (
             <div key={item.id}
-                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${isWorkKind && !st ? ' is-draft' : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
+                className={`cv-block k-${item.kind}${isWorkKind ? ' work' : ''}${opts?.compact ? ' compact' : ''}${st ? ` real s-${st.status}` : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${dim ? ' dim' : ''}`}
                 style={{
-                    left: eff.left,
-                    width: Math.max(6, eff.width),
+                    left,
+                    width,
                     top: laneTop(lane),
                     ...(colors ? {
                         ['--cv-bar' as string]: colors.bar,
@@ -708,26 +846,20 @@ export default function CanvasTab({
                         ['--cv-txt' as string]: colors.txt,
                     } : {}),
                 }}
-                onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
+                onPointerDown={e => { setHover(null); drag.onPointerDown(e, item.id, rowId, 'move'); }}
                 onPointerMove={drag.onPointerMove}
                 onPointerUp={drag.onPointerUp}
                 onPointerCancel={drag.onPointerCancel}
-                title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${st ? ` · stvarni: ${st.label}${st.ref ? ` (${st.ref})` : ''}` : ''}`}
+                onPointerEnter={e => {
+                    if (drag.isDragging) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setHover({ id: item.id, left: r.left, top: r.top, bottom: r.bottom });
+                }}
+                onPointerLeave={() => setHover(h => (h?.id === item.id ? null : h))}
+                aria-label={`${item.title} · ${item.startISO} → ${item.endISO}`}
             >
-                {/* Vikend na traci — SAMO crveno kad se NE radi; radna subota se
-                    podrazumijeva pa nema oznake. Ispod naziva (z-index), prati ivice. */}
-                {weekend.map(m => {
-                    if (m.working) return null;               // radi se → bez oznake
-                    const segL = xForDate(m.iso, vp);
-                    const l = Math.max(segL, eff.left);
-                    const r = Math.min(segL + dayWidth(zoom), eff.left + eff.width);
-                    if (r <= l) return null;
-                    return (
-                        <span key={m.iso}
-                            className={`cv-wk ${m.kind} off`}
-                            style={{ left: l - eff.left, width: r - l }} />
-                    );
-                })}
+                {runEls}
+                {labels}
                 {item.kind !== 'milestone' && !item.locked && (
                     <span className="cv-handle left"
                         style={{ width: RESIZE_HANDLE_PX }}
@@ -735,19 +867,6 @@ export default function CanvasTab({
                         onPointerMove={drag.onPointerMove}
                         onPointerUp={drag.onPointerUp} />
                 )}
-                <span className="cv-block-label">
-                    {item.locked && <Lock size={10} />}
-                    {st && <StatusMark status={st.status} />}
-                    {fits ? item.title : ''}
-                    {projectSuffix && eff.width > MIN_LABEL_WIDTH * 2 && (
-                        <span className="cv-block-project">· {projectSuffix}</span>
-                    )}
-                    {opts?.hasSupply && (
-                        <span className="cv-supply-dot" title="U ovom intervalu stiže narudžba materijala">
-                            <Package size={10} />
-                        </span>
-                    )}
-                </span>
                 {item.kind !== 'milestone' && !item.locked && (
                     <span className="cv-handle right"
                         style={{ width: RESIZE_HANDLE_PX }}
@@ -760,29 +879,46 @@ export default function CanvasTab({
     };
 
     /**
-     * Naslovni red grupe (projekt). Skuplja/širi naloge, i pokazuje raspon grupe
-     * kao tanku „ovojnicu" u boji projekta — vidi se KADA je projekt aktivan i
-     * kad je skupljen. Sažetak (broj naloga, nacrti, rok) stoji u lijevoj koloni.
+     * Naslovni red grupe — projekat (tačka u boji, broj naloga, raspon, „hitno")
+     * ili subotnja smjena (slovo, radne subote). Skuplja/širi redove ispod.
+     * Projekat crta tanku traku svog raspona; smjena sivi svoje neradne subote.
      */
-    const renderGroupHeader = (row: CanvasRow, vpp: Viewport) => {
+    const renderGroupHeader = (row: CanvasRow) => {
         const gh = row.groupHeader!;
         const collapsed = collapsedGroups.has(gh.key);
-        const env = gh.fromISO && gh.toISO ? blockRect(gh.fromISO, gh.toISO, vpp) : null;
+        const kind = gh.kind || 'project';
+        const env = kind === 'project' && gh.fromISO && gh.toISO ? blockRect(gh.fromISO, gh.toISO, vp) : null;
         const ink = row.colors?.ink;
-        const rangeTxt = gh.fromISO && gh.toISO ? `${dm(gh.fromISO)} – ${dm(gh.toISO)}` : '';
+        const markW = kind === 'project' ? 18 : 30;
+        const textAvail = headerW - 12 - 14 - 8 - markW - 14;
+        const name = fitWords(row.label, textAvail, measureText, 600, 14);
+        const urgentW = gh.urgent ? measureText(' · hitno', 600, 12) : 0;
+        const meta = gh.metaVariants?.length
+            ? fitVariants(gh.metaVariants, textAvail - urgentW, measureText, 400, 12) : '';
+        const tag = kind === 'shift'
+            ? (gh.shift === 'A' || gh.shift === 'B' ? gh.shift : gh.shift === 'mix' ? '±' : '–')
+            : null;
         return (
-            <div key={row.id} className={`cv-grouprow${collapsed ? ' collapsed' : ''}`}>
+            <div key={row.id} className={`cv-grouprow k-${kind}${collapsed ? ' collapsed' : ''}`}>
                 <button className="cv-group-head" onClick={() => toggleGroup(gh.key)}
-                    title={collapsed ? 'Proširi projekt' : 'Skupi projekt'}>
-                    <ChevronDown size={13} className="cv-group-caret" />
-                    <span className="cv-group-dot" style={{ background: ink }} />
-                    <span className="cv-group-name" title={row.label}>{row.label}</span>
-                    <span className="cv-group-ct">{gh.count}</span>
-                    {gh.draftCount > 0 && <span className="cv-group-draft">{gh.draftCount} nacrt</span>}
-                    {rangeTxt && <span className="cv-group-rng">{rangeTxt}</span>}
+                    title={collapsed ? `Proširi — ${row.label}` : `Skupi — ${row.label}`}>
+                    <ChevronDown size={14} className="cv-group-caret" />
+                    {kind === 'project' && <span className="cv-group-dot" style={{ background: ink }} />}
+                    {tag && <span className="cv-shift-tag">{tag}</span>}
+                    {kind === 'free' && <span className="cv-shift-tag soft"><Users size={12} /></span>}
+                    {kind === 'other' && <span className="cv-shift-tag soft"><Package size={12} /></span>}
+                    <span className="cv-group-text">
+                        <span className="cv-group-name" title={row.label}>{name}</span>
+                        {(meta || gh.urgent) && (
+                            <span className="cv-group-meta">
+                                {meta}{gh.urgent && <span className="cv-urgent">{meta ? ' · ' : ''}hitno</span>}
+                            </span>
+                        )}
+                    </span>
                 </button>
                 <div className="cv-row-lane cv-group-lane">
-                    {collapsed && env && env.visible && (
+                    {offSaturdays(gh.isSaturdayWorking)}
+                    {env && env.visible && (
                         <div className="cv-envelope"
                             style={{ left: env.left, width: Math.max(6, env.width), background: ink }} />
                     )}
@@ -790,6 +926,133 @@ export default function CanvasTab({
             </div>
         );
     };
+
+    /**
+     * Lijeva kolona reda. Red EKIPE: imena kao dugmad (otvaraju kalendar radnika)
+     * i jedan red teksta ispod — smjena i broj naloga, ili „slobodni od", ili
+     * crveno upozorenje kad ekipa ima dva naloga u isto vrijeme. Red NALOGA:
+     * šifra pozicije + naziv skraćen na granici riječi, ekipa ispod.
+     */
+    const renderRowHead = (row: CanvasRow, overlapLanes: number) => {
+        const indent = row.groupKey ? 34 : 14;
+        const avail = headerW - indent - 14;
+        const subOf = () => row.subVariants?.length
+            ? fitVariants(row.subVariants, avail, measureText, 400, 12)
+            : row.sublabel ? fitWords(row.sublabel, avail, measureText, 400, 12) : '';
+
+        if (row.crew) {
+            const warn = overlapLanes > 1 && row.crew.refs.length > 0;
+            const sub = warn
+                ? <span className="cv-warn">{overlapLanes === 2 ? 'dva naloga' : `${overlapLanes} naloga`} u isto vrijeme</span>
+                : subOf();
+            return (
+                <div className={`cv-row-head${row.groupKey ? ' indent' : ''}`}>
+                    <span className="cv-row-label cv-crew-names" title={row.crew.refs.map(r => r.name).join(' + ')}>
+                        {row.crew.refs.length ? row.crew.refs.map((r, i) => (
+                            <Fragment key={r.id || r.name}>
+                                {i > 0 && <span className="cv-plus">+</span>}
+                                <button className="cv-name-btn" disabled={!r.id}
+                                    onClick={() => r.id && setCalendarWorkerId(r.id)}
+                                    title={`Kalendar — ${r.name}`}>
+                                    {shortNameOf(r, shortNames)}
+                                </button>
+                            </Fragment>
+                        )) : 'Bez ekipe'}
+                    </span>
+                    {sub && <span className="cv-row-sub">{sub}</span>}
+                </div>
+            );
+        }
+
+        // Red radnika (stari prikazi) je dugme: otvara njegov mjesečni kalendar.
+        if (row.section === 'radnici') {
+            return (
+                <button
+                    className="cv-row-head clickable"
+                    onClick={() => setCalendarWorkerId(row.id.replace(/^radnik-/, ''))}
+                    title={`Otvori kalendar — ${row.label}`}
+                >
+                    <span className="cv-row-label">{fitWords(row.label, headerW - 28, measureText, 500, 13)}</span>
+                    {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
+                </button>
+            );
+        }
+
+        // Red naloga (Nalozi): šifra + naziv; klik otvara detalje bloka.
+        if (row.id.startsWith('ord-')) {
+            const b = row.blocks[0];
+            const p = parsePlanTitle(row.label, b?.projectRef?.name);
+            const pillW = p.code ? measureText(p.code, LABEL.codeWeight, LABEL.codePx) + LABEL.pillPad + LABEL.gap : 0;
+            const crew = (b?.workerRefs || []).map(r => shortNameOf(r, shortNames)).join(' + ');
+            return (
+                <div className={`cv-row-head cv-order-head${row.groupKey ? ' indent' : ''}`}
+                    onClick={() => { if (b) { dispatch({ type: 'SELECT', ids: [b.id] }); setDrawerId(b.id); } }}
+                    style={row.colors ? { ['--cv-ink' as string]: row.colors.ink, ['--cv-txt' as string]: row.colors.txt } : undefined}
+                    title={row.label}>
+                    <span className="cv-row-label cv-order-label">
+                        {p.code && <span className="cv-code">{p.code}</span>}
+                        {fitWords(p.name || row.label, avail - pillW, measureText, 500, 13)}
+                    </span>
+                    {crew && <span className="cv-row-sub">{fitWords(crew, avail, measureText, 400, 12)}</span>}
+                </div>
+            );
+        }
+
+        const sub = subOf();
+        return (
+            <div className={`cv-row-head${row.groupKey ? ' indent' : ''}`}>
+                <span className="cv-row-label" title={row.label}>{fitWords(row.label, avail, measureText, 500, 13)}</span>
+                {sub && <span className="cv-row-sub">{sub}</span>}
+            </div>
+        );
+    };
+
+    /** Naslov u uglu zaglavlja: koji je prikaz i šta je u njemu. */
+    const corner = (() => {
+        const work = scenario.Blocks.filter(b => b.kind === 'order' || b.kind === 'montaza').length;
+        if (layout === 'unified-project') {
+            const n = rows.filter(r => r.groupHeader?.kind === 'project').length;
+            return { title: 'Projekti', sub: `${bsPlural(n, 'projekat', 'projekta', 'projekata')} · ${bsPlural(work, 'nalog', 'naloga', 'naloga')}` };
+        }
+        if (layout === 'crews') {
+            const crews = rows.filter(r => r.crew && r.blocks.length).length;
+            const free = rows.filter(r => r.id.startsWith('slobodan-')).length;
+            return { title: 'Ekipe', sub: `${bsPlural(crews, 'ekipa', 'ekipe', 'ekipa')}${free ? ` · ${free} slobodno` : ''}` };
+        }
+        if (layout === 'rows') return { title: 'Nalozi', sub: bsPlural(work, 'nalog', 'naloga', 'naloga') };
+        return { title: 'Plan', sub: bsPlural(scenario.Blocks.length, 'blok', 'bloka', 'blokova') };
+    })();
+
+    /** Kartica na hover — puni naziv, projekat, datumi, radni dani, ekipa, stvarni nalog. */
+    const hoverCard = (() => {
+        if (!hover || drag.isDragging || typeof document === 'undefined') return null;
+        const b = scenario.Blocks.find(x => x.id === hover.id);
+        if (!b) return null;
+        const p = parsePlanTitle(b.title, b.projectRef?.name);
+        const st = statusById.get(b.id);
+        const isWork = b.kind === 'order' || b.kind === 'montaza';
+        const workDays = isWork ? countWorkingDays(b.startISO, b.endISO, satCheckerFor(b.workerRefs)) : 0;
+        const crew = (b.workerRefs || []).map(r => r.name).join(' + ');
+        const above = hover.top > 150;
+        const left = Math.min(Math.max(8, hover.left), (typeof window !== 'undefined' ? window.innerWidth : 1200) - 336);
+        const dmLong = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
+        return createPortal(
+            <div className={`cv-tip${above ? ' above' : ''}`} style={{ left, top: above ? hover.top - 8 : hover.bottom + 8 }} role="tooltip">
+                <b>{p.code ? `Poz ${p.code} · ` : ''}{p.name || b.title}</b>
+                {b.projectRef && (
+                    <span><i style={{ background: colorsFor(projectColorsMap, b.projectRef).ink }} />{b.projectRef.name.trim()}</span>
+                )}
+                <span>
+                    {dmLong(b.startISO)} – {dmLong(b.endISO)}
+                    {isWork ? ` · ${bsPlural(workDays, 'radni dan', 'radna dana', 'radnih dana')}` : ` · ${BLOCK_LABEL[b.kind]}`}
+                    {isWork && b.workerDays !== undefined ? ` · ${b.workerDays} radnik-dana` : ''}
+                </span>
+                {crew && <span>{crew}</span>}
+                {st && <span>Stvarni {b.kind === 'purchase' ? 'narudžba' : 'nalog'}{st.ref ? ` ${st.ref}` : ''} · {st.label}</span>}
+            </div>,
+            document.body
+        );
+    })();
 
     if (loading) {
         return <div className="cv-center"><Loader2 size={20} className="cv-spin" /> Učitavanje platna…</div>;
@@ -840,10 +1103,21 @@ export default function CanvasTab({
                     ]}
                 />
 
-                <span className="cv-divider" />
+                <span className="cv-divider cv-view-div" />
 
-                {/* ── Pogled ─────────────────────────────────── */}
-                <div className="cv-seg" role="group" aria-label="Zum">
+                {/* ── Pogled: tri prikaza, zum, datum ─────────────
+                    Na laptopu (container query u CSS-u) ova grupa prelazi u drugi
+                    red, a plan i radnje ostaju gore — namjerno, ne nasumičan prelom. */}
+                <div className="cv-seg cv-view" role="group" aria-label="Prikaz">
+                    {LENSES.map(l => (
+                        <button key={l.key} className={layout === l.key ? 'on' : ''} title={l.title}
+                            onClick={() => { setFocusProject(null); dispatch({ type: 'SET_VIEW', view: { layout: l.key } }); }}>
+                            {l.label}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="cv-seg cv-view" role="group" aria-label="Zum">
                     {ZOOMS.map(z => (
                         <button key={z} className={zoom === z ? 'on' : ''}
                             onClick={() => dispatch({ type: 'SET_VIEW', view: { zoom: z } })}>
@@ -852,13 +1126,13 @@ export default function CanvasTab({
                     ))}
                 </div>
 
-                <div className="cv-nav" role="group" aria-label="Pomjeri prikaz">
+                <div className="cv-nav cv-view" role="group" aria-label="Pomjeri prikaz">
                     <button className="cv-nav-arrow" aria-label="Ranije"
                         onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? -30 : -7) } })}>
                         <ChevronLeft size={16} />
                     </button>
                     <button className="cv-nav-today"
-                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorLeading(todayISO(), vp) } })}>
+                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorLeading(today, vp) } })}>
                         Danas
                     </button>
                     <button className="cv-nav-arrow" aria-label="Kasnije"
@@ -867,26 +1141,12 @@ export default function CanvasTab({
                     </button>
                 </div>
 
-                <CanvasMenu
-                    align="left"
-                    title="Raspored redova"
-                    trigger={open => (
-                        <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Objedinjeni ili detaljni prikaz">
-                            <LayoutGrid size={14} /> {LAYOUT_SHORT[layout]} <ChevronDown size={13} className="cv-caret" />
-                        </button>
-                    )}
-                    items={LAYOUTS.map(l => ({
-                        key: l.key, label: l.label, active: layout === l.key,
-                        onClick: () => dispatch({ type: 'SET_VIEW', view: { layout: l.key } }),
-                    }))}
-                />
-
-                {/* Grupisanje ima smisla samo u detaljnom prikazu — objedinjeni sam bira osu. */}
+                {/* Grupisanje ima smisla samo u starom detaljnom prikazu. */}
                 {layout === 'detailed' && (
                     <CanvasMenu
                         align="left"
                         trigger={open => (
-                            <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Grupiši redove">
+                            <button className={`cv-btn ghost cv-view${open ? ' on' : ''}`} title="Grupiši redove">
                                 <Rows3 size={14} /> {GROUP_BY_LABEL[groupBy]} <ChevronDown size={13} className="cv-caret" />
                             </button>
                         )}
@@ -897,8 +1157,11 @@ export default function CanvasTab({
                     />
                 )}
 
+                <span className="cv-break" aria-hidden="true" />
+                <span className="cv-spacer" />
+
                 <CanvasMenu
-                    align="left"
+                    align="right"
                     title="Crtaj povlačenjem"
                     trigger={open => (
                         <button className={`cv-icon-btn lg${open ? ' on' : ''}`} title={`Šta se crta: ${BLOCK_LABEL[quickKind]}`}>
@@ -911,19 +1174,17 @@ export default function CanvasTab({
                     }))}
                 />
 
-                <span className="cv-spacer" />
-
                 {/* ── Kreiranje / raspored ───────────────────── */}
                 <button className="cv-btn primary" onClick={() => setPickerOpen(true)}>
-                    <Package size={15} /> Novi nalog
+                    <Package size={15} /> <span className="lbl">Novi nalog</span>
                 </button>
-                <button className="cv-btn" onClick={() => setBatchOpen(true)}
-                    title="Unesi više naloga odjednom (proizvodni, montaža, razni)">
-                    <ClipboardList size={15} /> Batch
+                <button className="cv-btn squeeze" onClick={() => setBatchOpen(true)}
+                    title="Batch — unesi više naloga odjednom (proizvodni, montaža, razni)">
+                    <ClipboardList size={15} /> <span className="lbl">Batch</span>
                 </button>
-                <button className="cv-btn accent" onClick={runSchedule}
-                    title="Automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
-                    <Sparkles size={15} /> Rasporedi
+                <button className="cv-btn accent squeeze" onClick={runSchedule}
+                    title="Rasporedi — automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
+                    <Sparkles size={15} /> <span className="lbl">Rasporedi</span>
                 </button>
 
                 {/* ── Još (overflow) ─────────────────────────── */}
@@ -938,8 +1199,15 @@ export default function CanvasTab({
                         { key: 'chain', label: 'Lanac: poredaj od roka unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
                         { key: 'compare', label: 'Uporedi planove', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
                         { key: 'templates', label: 'Šabloni lanaca', icon: <Bookmark size={14} />, badge: templates.length, onClick: () => setTemplatesOpen(true) },
-                        { key: 'idle', label: showIdle ? 'Sakrij prazne radnike' : 'Prikaži sve radnike', icon: <Users size={14} />, active: showIdle, divider: true, onClick: () => setShowIdle(v => !v) },
                         { key: 'print', label: 'Štampaj plan', icon: <Printer size={14} />, onClick: printPlan },
+                        ...OLD_LAYOUTS.map((l, i) => ({
+                            key: l.key, label: l.label, icon: <LayoutGrid size={14} />, active: layout === l.key, divider: i === 0,
+                            onClick: () => dispatch({ type: 'SET_VIEW', view: { layout: l.key } }),
+                        })),
+                        ...(layout === 'detailed' || layout === 'unified-global' ? [{
+                            key: 'idle', label: showIdle ? 'Sakrij prazne radnike' : 'Prikaži sve radnike',
+                            icon: <Users size={14} />, active: showIdle, onClick: () => setShowIdle(v => !v),
+                        }] : []),
                     ]}
                 />
 
@@ -971,38 +1239,73 @@ export default function CanvasTab({
                 onScrub={iso => dispatch({ type: 'SET_VIEW', view: { anchorISO: iso } })}
             />
 
+            {/* Legenda prikaza Ekipe: red je par, pa boja jedina kaže projekat.
+                Klik istakne projekat (ostali se priguše), drugi klik vraća sve. */}
+            {layout === 'crews' && legend.length > 0 && (
+                <div className="cv-legend" role="group" aria-label="Projekti">
+                    <span className="cv-legend-lbl">Boja = projekat</span>
+                    {legend.map(p => (
+                        <button key={p.key} className={focusProject === p.key ? 'on' : ''}
+                            aria-pressed={focusProject === p.key}
+                            onClick={() => setFocusProject(f => (f === p.key ? null : p.key))}>
+                            <i style={{ background: p.ink }} />{p.name}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {/* Platno */}
-            <div className="cv-grid" ref={gridRef}
+            <div className={`cv-grid${focusProject ? ' focusing' : ''}`} ref={gridRef}
                 style={{
-                    ['--cv-header-w' as string]: `${HEADER_WIDTH}px`,
-                    ['--cv-day-w' as string]: `${dayWidth(zoom)}px`,
+                    ['--cv-header-w' as string]: `${headerW}px`,
+                    ['--cv-day-w' as string]: `${dw}px`,
+                    ['--cv-week-off' as string]: `${weekOffset}px`,
                 }}>
-                {/* Zaglavlje s datumima */}
+                {/* Zaglavlje: mjesec (puno ime) + dan (slovo i broj). Ponedjeljak jači,
+                    nedjelja siva kolona, danas plavi krug. */}
                 <div className="cv-head" style={{ height: TIMELINE_HEADER_HEIGHT }}>
-                    <div className="cv-head-corner">{scenario.Blocks.length} blokova</div>
+                    <div className="cv-head-corner">
+                        <b>{corner.title}</b>
+                        <span>{corner.sub}</span>
+                    </div>
                     <div className="cv-head-dates">
                         {bands.map(b => (
-                            <div key={b.label} className="cv-band" style={{ left: b.left, width: b.width }}>{b.label}</div>
-                        ))}
-                        {ticks.map(t => (
-                            <div key={t.iso}
-                                className={`cv-tick${t.major ? ' major' : ''}${t.isToday ? ' today' : ''}${t.isNonWorking ? ' nonwork' : ''}`}
-                                style={{ left: t.left, width: t.width }}>
-                                {t.label}
+                            <div key={`${b.year}-${b.month}`} className="cv-band" style={{ left: b.left, width: b.width }}>
+                                {b.width > 120
+                                    ? <>{MONTHS_FULL[b.month]} <em>{b.year}</em></>
+                                    : b.width > 40 ? MONTHS_SHORT[b.month] : ''}
                             </div>
                         ))}
+                        {zoom === 'mjesec'
+                            ? ticks.map(t => (
+                                <div key={t.iso}
+                                    className={`cv-week${today >= t.iso && today < addDays(t.iso, 7) ? ' today' : ''}`}
+                                    style={{ left: t.left, width: t.width }}>
+                                    {t.label}
+                                </div>
+                            ))
+                            : ticks.map(t => (
+                                <div key={t.iso}
+                                    className={`cv-day${t.dow === 1 ? ' mon' : ''}${t.dow === 0 ? ' sun' : ''}${t.isToday ? ' today' : ''}`}
+                                    style={{ left: t.left, width: t.width }}>
+                                    <i>{zoom === 'dan' ? DOW_SHORT[t.dow] : DOW_LETTER[t.dow]}</i>
+                                    <b>{t.day}</b>
+                                </div>
+                            ))}
                     </div>
                 </div>
 
                 {/* Redovi */}
-                <div className="cv-body">
-                    {/* Nedjelje — tonirane kolone kroz cijelo platno, ispod traka.
-                        Bez ovoga se u mreži nije vidjelo gdje sedmica prestaje. */}
-                    <div className="cv-nonwork-layer" style={{ left: HEADER_WIDTH }}>
-                        {nonwork.map(b => (
-                            <div key={b.iso} className="cv-nonwork" style={{ left: b.left, width: b.width }} />
-                        ))}
-                    </div>
+                <div className={`cv-body z-${zoom}`}>
+                    {/* Nedjelje — siva kolona kroz cijelo platno, ispod traka. Neradne
+                        subote sivi svaki red ekipe za sebe (njena smjena). */}
+                    {zoom !== 'mjesec' && (
+                        <div className="cv-nonwork-layer" style={{ left: headerW }}>
+                            {nonwork.map(b => (
+                                <div key={b.iso} className="cv-nonwork" style={{ left: b.left, width: b.width }} />
+                            ))}
+                        </div>
+                    )}
                     {sections.length === 0 && (
                         <div className="cv-empty">
                             Prazno platno. <strong>Dupli klik</strong> pravi blok; povuci mišem da nacrtaš
@@ -1011,15 +1314,15 @@ export default function CanvasTab({
                     )}
                     {sections.map(sec => (
                         <div key={sec.section} className="cv-section">
-                            <div className="cv-section-head">{SECTION_LABEL[sec.section]}</div>
+                            {/* Naslov sekcije samo u starim prikazima — novi imaju naslove grupa. */}
+                            {(layout === 'detailed' || layout === 'unified-global') && (
+                                <div className="cv-section-head">{SECTION_LABEL[sec.section]}</div>
+                            )}
                             {sec.rows
                                 .filter(row => !(row.groupKey && collapsedGroups.has(row.groupKey)))
                                 .map(row => {
-                                // Naslovni red grupe (projekt): skuplja/širi naloge ispod. Nema traka,
-                                // samo sažetak raspona i broja naloga na desnoj strani.
-                                if (row.groupHeader) {
-                                    return renderGroupHeader(row, vp);
-                                }
+                                if (row.groupHeader) return renderGroupHeader(row);
+
                                 // Objedinjeni red: nalog (primarni) je okosnica, ostalo (narudžba/
                                 // transport/rok) ide u sekundarni sloj ispod. Detaljni red: sve primarno.
                                 const isUnified = layout !== 'detailed';
@@ -1030,7 +1333,8 @@ export default function CanvasTab({
                                     ? row.blocks.filter(b => blockLayer(b.kind) !== 'primary')
                                     : [];
 
-                                const packedPrimary = packLanes(primaryBlocks, b => b, vp);
+                                // Red ekipe: dan predaje nije preklapanje (ista traka, dan napola).
+                                const packedPrimary = packLanes(primaryBlocks, b => b, vp, { handoff: !!row.crew });
                                 const packedSecondary = packLanes(secondaryBlocks, b => b, vp);
                                 const packedShadows = packLanes(row.shadows, s => s, vp);
 
@@ -1040,38 +1344,13 @@ export default function CanvasTab({
                                 const secBase = primaryLanes;
                                 const shadowBase = primaryLanes + secondaryLanes;
                                 const h = rowHeight(Math.max(1, primaryLanes + secondaryLanes + shadowLanes));
-
-                                // Nalog kojem narudžba pada u interval → oznaka „materijal stiže tu".
-                                const supplyPurchases = secondaryBlocks.filter(b => b.kind === 'purchase');
-                                const hasSupply = (b: PlanBlock) =>
-                                    supplyPurchases.some(p => p.startISO <= b.endISO && p.endISO >= b.startISO);
+                                // U prikazu Nalozi naziv je u lijevoj koloni — traka nosi samo vrijeme.
+                                const orderRow = row.id.startsWith('ord-');
 
                                 return (
-                                    <div key={row.id} className={`cv-row${row.synthetic ? ' synthetic' : ''}`}
+                                    <div key={row.id} className={`cv-row${row.synthetic ? ' synthetic' : ''}${row.crew ? ' crew' : ''}`}
                                         data-row-id={row.id} style={{ height: h }}>
-                                        {/* Red radnika je dugme: otvara njegov mjesečni kalendar.
-                                            Ostale sekcije nemaju šta otvoriti, pa ostaju običan div
-                                            (dugme koje ništa ne radi laže tastaturi i čitaču ekrana). */}
-                                        {row.section === 'radnici' ? (
-                                            <button
-                                                className="cv-row-head clickable"
-                                                onClick={() => setCalendarWorkerId(row.id.replace(/^radnik-/, ''))}
-                                                title={`Otvori kalendar — ${row.label}`}
-                                            >
-                                                <span className="cv-row-label">{row.label}</span>
-                                                {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
-                                            </button>
-                                        ) : (
-                                            <div className={`cv-row-head${row.groupKey ? ' cv-order-head' : ''}`}
-                                                onClick={row.groupKey ? () => { const b = row.blocks[0]; if (b) { dispatch({ type: 'SELECT', ids: [b.id] }); setDrawerId(b.id); } } : undefined}
-                                                style={row.colors && row.groupKey ? { ['--cv-row-hue' as string]: row.colors.ink } : undefined}>
-                                                {row.groupKey && <span className="cv-order-cap" />}
-                                                <span className="cv-order-meta">
-                                                    <span className="cv-row-label" title={row.label}>{row.label}</span>
-                                                    {row.sublabel && <span className="cv-row-sub" title={row.sublabel}>{row.sublabel}</span>}
-                                                </span>
-                                            </div>
-                                        )}
+                                        {renderRowHead(row, primaryLanes)}
 
                                         <div className="cv-row-lane"
                                             onPointerDown={e => {
@@ -1094,6 +1373,8 @@ export default function CanvasTab({
                                                 createOnDoubleClick(row, e.clientX, e.currentTarget);
                                             }}
                                         >
+                                            {row.crew && offSaturdays(row.crew.isSaturdayWorking)}
+
                                             {/* Sjene stvarnog posla — ispod svega, bez ručica */}
                                             {packedShadows.placed.map(({ item, lane, rect }) => (
                                                 <div key={item.id}
@@ -1114,8 +1395,12 @@ export default function CanvasTab({
                                             )}
 
                                             {/* Primarni sloj — nalog/montaža, okosnica reda */}
-                                            {packedPrimary.placed.map(({ item, lane, rect }) =>
-                                                renderBlock(item, lane, rect, row.id, { hasSupply: isUnified && hasSupply(item) })
+                                            {packedPrimary.placed.map(({ item, lane, rect, trimStart, trimEnd }) =>
+                                                renderBlock(item, lane, rect, row.id, {
+                                                    trimStart, trimEnd,
+                                                    noLabel: orderRow,
+                                                    withSuffix: layout === 'crews',
+                                                })
                                             )}
 
                                             {/* Nacrt novog bloka */}
@@ -1136,10 +1421,11 @@ export default function CanvasTab({
 
                     {/* Linija današnjeg dana — preko svega */}
                     {todayX >= 0 && todayX <= widthPx && (
-                        <div className="cv-today" style={{ left: HEADER_WIDTH + todayX }} />
+                        <div className="cv-today" style={{ left: headerW + todayX }} />
                     )}
                 </div>
             </div>
+            {hoverCard}
 
             <CanvasDock
                 scenario={scenario}
