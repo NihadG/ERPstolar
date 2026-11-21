@@ -2095,6 +2095,11 @@ export interface PlanBlock {
     crewOptions?: PlanCrew[];
     /** ID ekipe (crewOptions[].id) izabrane u zadnjem rasporedu — za prikaz i ponovni run. */
     assignedCrewId?: string;
+    /**
+     * Nalog smiju raditi i dvije ekipe (dijeli se po komadima/danima). Bez oznake
+     * nalog od početka do kraja radi jedna ekipa — odluka korisnika 21.11.2026.
+     */
+    divisible?: boolean;
 
     // ── Nabavka ('purchase') ──
     orderByISO?: string;          // kad narudžba mora otići (startISO = isto, endISO = dolazak)

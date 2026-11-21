@@ -26,7 +26,7 @@ const arg = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] 
 
 const SNAPSHOT_COLS = ['projects', 'products', 'product_materials', 'materials', 'orders', 'order_items', 'suppliers', 'workers',
     'work_orders', 'work_order_items', 'work_logs', 'worker_attendance', 'tasks', 'memory_items', 'contacts', 'assistant_vocab',
-    'process_catalog', 'process_material_rules', 'process_flow_templates', 'offers', 'offer_products'];
+    'process_catalog', 'process_material_rules', 'process_flow_templates', 'offers', 'offer_products', 'planning_scenarios'];
 
 function env() {
     const out = {};
