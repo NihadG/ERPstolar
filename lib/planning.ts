@@ -150,6 +150,39 @@ export function shiftWorksSaturday(anchorISO: string | undefined, saturdayISO: s
 
 export interface WorkerShiftLite { Worker_ID: string; Saturday_Anchor?: string }
 
+export interface ShiftGroup<T> { key: string; label: string; items: T[] }
+
+/**
+ * Radnici grupisani po subotnjoj smjeni (za šihtaricu i knjiženje): smjena čija je radna subota
+ * najbliža (od `todayISO`) ide prva, „Bez smjene" zadnja. Naziv kaže sljedeće dvije radne subote.
+ * Isti redoslijed u grupi kao na ulazu.
+ */
+export function groupByShift<T>(items: T[], anchorOf: (item: T) => string | undefined, todayISO: string): ShiftGroup<T>[] {
+    const nextSat = (anchor: string) => {
+        const t = Date.parse(todayISO + 'T12:00:00Z');
+        for (let d = t; d < t + 15 * 86400000; d += 86400000) {
+            const iso = new Date(d).toISOString().slice(0, 10);
+            if (shiftWorksSaturday(anchor, iso)) return iso;
+        }
+        return '';
+    };
+    const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
+    const groups = new Map<string, ShiftGroup<T> & { first: string }>();
+    for (const it of items) {
+        const anchor = anchorOf(it);
+        const first = anchor ? nextSat(anchor) : '';
+        const key = first || 'bez';
+        if (!groups.has(key)) {
+            const second = first ? new Date(Date.parse(first + 'T12:00:00Z') + 14 * 86400000).toISOString().slice(0, 10) : '';
+            groups.set(key, { key, first, items: [], label: first ? `Smjena · subote ${dm(first)}, ${dm(second)}…` : 'Bez subotnje smjene' });
+        }
+        groups.get(key)!.items.push(it);
+    }
+    return Array.from(groups.values())
+        .sort((a, b) => (a.first ? 0 : 1) - (b.first ? 0 : 1) || a.first.localeCompare(b.first))
+        .map(({ first: _f, ...g }) => g);
+}
+
 /**
  * Provjera za rok: subota je RADNA za nalog ako je BAR JEDAN dodijeljeni radnik radi.
  * Radnik sa subotnjom smjenom (`workers`) ide po smjeni; ostali po šihtarici.

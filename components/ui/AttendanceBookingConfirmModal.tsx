@@ -19,7 +19,8 @@
 // na potvrdi) — mijenja se samo raspored.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { groupByShift } from '@/lib/planning';
 import type { WorkOrder, Worker, Project, Task } from '@/lib/types';
 import type { ProposalRow, PresentOrderOption } from '@/lib/attendanceBooking';
 import { workOrderDisplayName } from '@/lib/utils';
@@ -130,7 +131,7 @@ export default function AttendanceBookingConfirmModal({
     // Ponudu naloga je već izračunao prijedlog (prisutan: aktivni/pauzirani/nepokrenuti;
     // teren: šire — i završeni, i „Razni poslovi"). Nalog kreiran odavde nosi naziv
     // iz baze čim ga roditelj osvježi, a do tada onaj koji je korisnik upisao.
-    const entries = useMemo<Entry[]>(() => rows.map(r => {
+    const rawEntries = useMemo<Entry[]>(() => rows.map(r => {
         const known = new Set(r.orders.map(o => o.workOrderId));
         const extra = extraOrders
             .filter(x => !known.has(x.option.workOrderId))
@@ -151,6 +152,18 @@ export default function AttendanceBookingConfirmModal({
             options: [...r.orders, ...extra],
         };
     }), [rows, extraOrders, orderById]);
+
+    // Po subotnjoj smjeni (Worker.Saturday_Anchor): smjena s najbližom radnom subotom prva — isto kao šihtarica.
+    const shiftGroups = useMemo(() => {
+        const anchor = new Map(workers.map(w => [w.Worker_ID, w.Saturday_Anchor]));
+        return groupByShift(rawEntries, e => anchor.get(e.workerId), date);
+    }, [rawEntries, workers, date]);
+    const entries = useMemo(() => shiftGroups.flatMap(g => g.items), [shiftGroups]);
+    const shiftLabelAt = useMemo(() => {
+        const m = new Map<string, string>();
+        if (shiftGroups.length > 1) shiftGroups.forEach(g => g.items[0] && m.set(g.items[0].workerId, `${g.label} · ${g.items.length}`));
+        return m;
+    }, [shiftGroups]);
 
     // Izabrani radnik u prikazu „Po radnicima": prvi kome fali nalog, inače prvi.
     const [selectedId, setSelectedId] = useState<string>(() => {
@@ -379,6 +392,7 @@ export default function AttendanceBookingConfirmModal({
                             selectedId={selected?.workerId || ''}
                             onSelect={setSelectedId}
                             presenceOf={presenceOf}
+                            shiftLabelAt={shiftLabelAt}
                         />
                         {selected && (
                             <WorkerDetail
@@ -438,12 +452,14 @@ export default function AttendanceBookingConfirmModal({
 // ═══════════════════════════════════════════════════════════════════════════
 // LIJEVO — svi radnici dana: izbor, sažetak i upozorenje „bez naloga"
 // ═══════════════════════════════════════════════════════════════════════════
-function WorkerRail({ entries, picks, selectedId, onSelect, presenceOf }: {
+function WorkerRail({ entries, picks, selectedId, onSelect, presenceOf, shiftLabelAt }: {
     entries: Entry[];
     picks: Picks;
     selectedId: string;
     onSelect: (workerId: string) => void;
     presenceOf: (workerId: string) => 0.5 | 1;
+    /** Prvi radnik svake smjene → naslov grupe iznad njega. */
+    shiftLabelAt: Map<string, string>;
 }) {
     const listRef = useRef<HTMLDivElement>(null);
     const empty = entries.filter(e => (picks[e.workerId]?.size || 0) === 0).length;
@@ -473,8 +489,9 @@ function WorkerRail({ entries, picks, selectedId, onSelect, presenceOf }: {
                     const isSel = e.workerId === selectedId;
                     const half = presenceOf(e.workerId) === 0.5;
                     return (
+                        <Fragment key={e.workerId}>
+                        {shiftLabelAt.has(e.workerId) && <div className="abk-rail-shift" role="presentation">{shiftLabelAt.get(e.workerId)}</div>}
                         <button
-                            key={e.workerId}
                             type="button"
                             role="option"
                             aria-selected={isSel}
@@ -495,6 +512,7 @@ function WorkerRail({ entries, picks, selectedId, onSelect, presenceOf }: {
                                 <span className={`abk-rail-count${names.length === 0 ? ' is-zero' : ''}`}>{names.length}</span>
                             </span>
                         </button>
+                        </Fragment>
                     );
                 })}
             </div>

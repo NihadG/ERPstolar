@@ -23,6 +23,7 @@ import { workOrderDisplayName } from '@/lib/utils';
 import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
 import { getAttendanceOrderContext, commitAttendanceDay } from '@/lib/attendance';
 import AttendanceBookingConfirmModal, { type BookingDecision } from '@/components/ui/AttendanceBookingConfirmModal';
+import { groupByShift } from '@/lib/planning';
 import PayrollModal from '@/components/ui/PayrollModal';
 import {
     CheckCircle2,
@@ -208,6 +209,9 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         const search = searchTerm.toLowerCase();
         return activeWorkers.filter(w => w.Name.toLowerCase().includes(search));
     }, [activeWorkers, searchTerm]);
+
+    // Radnici po subotnjoj smjeni (Worker.Saturday_Anchor) — smjena s najbližom radnom subotom prva.
+    const shiftGroups = useMemo(() => groupByShift(filteredWorkers, w => w.Saturday_Anchor, formatLocalDateISO(new Date())), [filteredWorkers]);
 
 
 
@@ -1500,7 +1504,15 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                                     </td>
                                 </tr>
                             ) : (
-                                filteredWorkers.map(worker => (
+                                shiftGroups.flatMap(group => [
+                                    shiftGroups.length > 1 && (
+                                        <tr key={`smjena-${group.key}`} className="att-shift-row">
+                                            <td colSpan={flattenedDays.length + 1} style={{ padding: '8px 16px', background: '#eef2ff', color: '#3730a3', fontSize: '12px', fontWeight: 700, letterSpacing: '0.02em', position: 'sticky', left: 0 }}>
+                                                {group.label} <span style={{ fontWeight: 500, color: '#6366f1' }}>· {group.items.length}</span>
+                                            </td>
+                                        </tr>
+                                    ),
+                                    ...group.items.map(worker => (
                                     <tr
                                         key={worker.Worker_ID}
                                         style={{ borderBottom: '1px solid #f1f5f9' }}
@@ -1573,7 +1585,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                                             );
                                         })}
                                     </tr>
-                                ))
+                                ))])
                             )}
                         </tbody>
                     </table>
