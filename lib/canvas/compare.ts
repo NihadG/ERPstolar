@@ -13,6 +13,7 @@ import type { PlanScenario } from '../types';
 import { detectConflicts, type ConflictContext } from './conflicts';
 import { dailyCapacity, capacitySummary, type CapacityContext } from './capacity';
 import { diffDays } from './model';
+import type { ModelKpi } from './opt/propose';
 
 export interface ScenarioKpi {
     scenarioId: string;
@@ -153,5 +154,36 @@ export function compareScenarios(a: ScenarioKpi, b: ScenarioKpi): KpiDelta[] {
         neutral: true,
     });
 
+    return rows;
+}
+
+/** Red poređenja po modelu rasporeda (ključ nije polje ScenarioKpi). */
+export type ModelDelta = Omit<KpiDelta, 'key'> & { key: string };
+
+const dmy = (iso: string | null) => (iso ? `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.${iso.slice(0, 4)}` : '—');
+
+/**
+ * „Šta ako" po modelu (faza 6): izvodljivost, kraj, dokazano najraniji kraj, hitno,
+ * kašnjenje preko rokova. Granica ne zavisi od rasporeda nego od POSLA — pa pokaže
+ * šta novi posao stvarno košta, čak i kad je kopija plana još neraspoređena.
+ */
+export function compareModel(a: ModelKpi | null, b: ModelKpi | null): ModelDelta[] {
+    if (!a || !b) return [];
+    const rows: ModelDelta[] = [];
+    const ok = (k: ModelKpi) => (k.feasible ? 'izvodljiv' : `${k.violationCount} prekršaja`);
+    rows.push({
+        key: 'm-feasible', label: 'Provjere (model)', a: ok(a), b: ok(b),
+        delta: a.violation === b.violation ? '' : signed(Math.round((b.violation - a.violation) * 10) / 10),
+        worse: b.violation > a.violation, neutral: a.violation === b.violation,
+    });
+    const dateRow = (key: string, label: string, x: string | null, y: string | null) => {
+        const d = x && y ? diffDays(x, y) : 0;
+        rows.push({ key, label, a: dmy(x), b: dmy(y), delta: d ? `${signed(d)} d` : '', worse: d > 0, neutral: !d });
+    };
+    dateRow('m-end', 'Sve gotovo (model)', a.endISO, b.endISO);
+    dateRow('m-bound', 'Dokazano najranije', a.boundISO, b.boundISO);
+    dateRow('m-urgent', 'Hitno gotovo', a.urgentEndISO, b.urgentEndISO);
+    const dt = b.tardiness - a.tardiness;
+    rows.push({ key: 'm-late', label: 'Kašnjenje preko rokova', a: `${a.tardiness} d`, b: `${b.tardiness} d`, delta: dt ? `${signed(dt)} d` : '', worse: dt > 0, neutral: !dt });
     return rows;
 }

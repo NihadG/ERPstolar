@@ -18,6 +18,8 @@ import { buildInstance, isJobBlock } from '@/lib/canvas/opt/instance';
 import { placementsFromScenario } from '@/lib/canvas/opt/evaluate';
 import { qualityReport } from '@/lib/canvas/opt/quality';
 import { remainingLines, remainingWork } from '@/lib/canvas/opt/remaining';
+import { movableBlockIds, proposeSchedule } from '@/lib/canvas/opt/propose';
+import { planVsReality } from '@/lib/canvas/opt/reality';
 import { effectiveHolidays, holidayDates } from '@/lib/holidays';
 import { todayISO } from '@/lib/planning';
 import type { PlanScenario } from '@/lib/types';
@@ -45,11 +47,23 @@ run('ocjena planova s Platna', () => {
             const startISO = jobs.map((b: { startISO: string }) => b.startISO).sort()[0];
             const calendar = buildWorkerCalendar({ workers, attendance, holidays });
             const linked = sc.Blocks.map((b: { linkedWorkOrderId?: string }) => b.linkedWorkOrderId).filter(Boolean) as string[];
-            const rest = remainingWork({ workOrders, workLogs, calendar, startISO: today, skipWorkOrderIds: linked });
+            const rest = remainingWork({ workOrders, workLogs, calendar, startISO: today, skipWorkOrderIds: linked, skipProductIds: sc.Blocks.flatMap((b: { productRefs?: { id?: string }[] }) => (b.productRefs || []).map(p => p.id)).filter(Boolean) as string[] });
             const inst = buildInstance(sc, { startISO, calendar, projects, fixedLoad: rest.fixedLoad });
             const r = qualityReport(inst, placementsFromScenario(inst, sc.Blocks));
             out.push(`## ${sc.Name} (verzija ${sc.Version}, mijenjan ${String(sc.Modified_Date).slice(0, 16).replace('T', ' ')}, ${jobs.length} naloga)`, '');
             out.push(...r.lines.map(l => (l.startsWith('  ') ? `- ${l.trim()}` : l)), '');
+            // Prijedlog optimizatora v2 od danas (isto što daje „Rasporedi" na Platnu).
+            let optLine = '[platno]   → optimizator: nema naloga s kandidat-ekipama (nema šta rasporediti)';
+            if (movableBlockIds(sc).size) {
+                const t0 = Date.now();
+                const p = proposeSchedule(sc, { workers, workOrders, attendance: attendance as never, projects, holidays, workLogs }, { startISO: today > startISO ? today : startISO, todayISO: today });
+                const q = p.quality.after;
+                out.push(`Prijedlog optimizatora (od ${today > startISO ? today : startISO}, ${p.quality.evals} rasporeda, ${Date.now() - t0} ms):`, ...q.lines.map(l => `- ${l.trim()}`), '');
+                optLine = (`[platno]   → optimizator: ${q.lines[0]}; ${q.evaluation.violations.length ? `neizvodljiv (${q.evaluation.objective.violation})` : 'izvodljiv'}`);
+            }
+            // Plan vs stvarnost (faza 6): nalozi s Platna pretvoreni u stvarne naloge.
+            const real = planVsReality({ scenario: sc, workOrders, workLogs, todayISO: today, isWorkFor: () => iso => calendar.available('__radionica__', iso) > 0 });
+            out.push('Plan vs stvarnost:', ...real.lines.map(l => `- ${l}`), ...real.rows.slice(0, 15).map(r => `- ${r.title}: ${r.verdict}`), '');
             if (rest.orders.length) out.push('Stvarni nalozi u toku (preostali rad):', ...remainingLines(rest.orders).map(l => `- ${l}`), '');
             if (r.evaluation.violations.length) {
                 out.push('Prekršene provjere:');
@@ -58,6 +72,7 @@ run('ocjena planova s Platna', () => {
                 out.push('');
             }
             summary.push(`[platno] ${sc.Name}: ${r.lines[0]}; ${r.evaluation.violations.length ? `neizvodljiv (${r.evaluation.objective.violation})` : 'izvodljiv'}`);
+            summary.push(optLine);
         }
         const file = path.join(DIR, 'platno.md');
         fs.writeFileSync(file, out.join('\n'));

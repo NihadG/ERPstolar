@@ -18,7 +18,8 @@
 // „prekoračen" — vlasnik zna da tu još ima posla koji plan ne vidi.
 //
 // Blokovi Platna povezani sa stvarnim nalogom (linkedWorkOrderId) su već u
-// scenariju, pa se ti nalozi preskaču da se rad ne broji dvaput.
+// scenariju, pa se ti nalozi preskaču da se rad ne broji dvaput. Isto važi za
+// stavke čiji proizvod plan već nosi kao blok (productRefs), i kad blok nije povezan.
 //
 // Čista funkcija, bez Firebase i Reacta. jest: lib/__tests__/platnoKalendari.test.ts
 // ════════════════════════════════════════════════════════════════════
@@ -29,6 +30,7 @@ import { isoAt } from './instance';
 
 export interface RemainingItem {
     ID?: string;
+    Product_ID?: string;
     Status?: string;
     Quantity?: number;
     Planned_Labor_Days?: number;
@@ -81,6 +83,11 @@ export interface RemainingInput {
     horizonDays?: number;
     /** Nalozi koje scenarij već nosi kao blok (linkedWorkOrderId). */
     skipWorkOrderIds?: Iterable<string>;
+    /**
+     * Proizvodi koje scenarij već nosi kao blok (productRefs) — njihove stavke stvarnih naloga
+     * se ne broje, inače bi isti posao zauzeo radnike dvaput (blok + stvarni nalog).
+     */
+    skipProductIds?: Iterable<string>;
 }
 
 export interface RemainingResult {
@@ -110,6 +117,7 @@ function orderWorkers(items: RemainingItem[]): string[] {
 export function remainingWork(input: RemainingInput): RemainingResult {
     const horizon = input.horizonDays ?? 365;
     const skip = new Set(input.skipWorkOrderIds || []);
+    const skipProducts = new Set(input.skipProductIds || []);
     const booked = new Map<string, number>();
     for (const l of input.workLogs || []) {
         if (l.Work_Order_Deleted || !l.Work_Order_Item_ID) continue;
@@ -131,7 +139,7 @@ export function remainingWork(input: RemainingInput): RemainingResult {
 
     const orders: RemainingOrder[] = [];
     for (const wo of open) {
-        const items = (wo.items || []).filter(it => !CLOSED.has(it.Status || ''));
+        const items = (wo.items || []).filter(it => !CLOSED.has(it.Status || '') && !(it.Product_ID && skipProducts.has(it.Product_ID)));
         if (!items.length) continue;
         const workerIds = orderWorkers(items);
         let planned = 0, done = 0, left = 0, withoutPlan = 0;

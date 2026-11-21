@@ -1,0 +1,39 @@
+/* RealityModal — plan vs stvarnost (faza 6). --cm-* skala, kao ScheduleReviewModal. */
+
+.rv-loading { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--cm-fs-sm); padding: var(--cm-sp-4); }
+.rv-shell { display: flex; flex-direction: column; gap: var(--cm-sp-3); width: 100%; }
+
+.rv-summary { display: flex; gap: var(--cm-sp-3); }
+.rv-stat {
+    flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    padding: var(--cm-sp-3); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); background: var(--surface);
+}
+.rv-stat.warn { background: var(--warning-bg); border-color: transparent; }
+.rv-num { font-size: var(--cm-fs-stat); font-weight: 700; line-height: 1.1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.rv-stat.warn .rv-num { color: var(--warning); }
+.rv-lbl { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+.rv-line { margin: 0; font-size: var(--cm-fs-sm); color: var(--text-secondary); line-height: 1.5; }
+
+.rv-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cm-sp-2); max-height: 52vh; overflow-y: auto; }
+.rv-row {
+    width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit;
+    display: grid; grid-template-columns: 130px 1fr; gap: 2px var(--cm-sp-3); align-items: baseline;
+    padding: var(--cm-sp-3); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); background: var(--surface);
+}
+.rv-row:hover { border-color: var(--accent); }
+.rv-item.late .rv-row { border-left: 3px solid var(--warning); }
+.rv-status { grid-row: span 3; display: inline-flex; align-items: center; gap: 5px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); }
+.rv-item.s-gotov .rv-status { color: var(--success); }
+.rv-item.s-u-toku .rv-status { color: var(--accent); }
+.rv-item.late .rv-status { color: var(--warning); }
+.rv-title { font-weight: 600; font-size: var(--cm-fs-md); color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-title em { font-style: normal; font-weight: 400; color: var(--text-tertiary); margin-left: 8px; font-size: var(--cm-fs-xs); }
+.rv-dates { font-size: var(--cm-fs-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.rv-verdict { font-size: var(--cm-fs-sm); color: var(--text-secondary); }
+.rv-item.late .rv-verdict { color: var(--cm-warn-text, var(--warning)); }
+
+@media (max-width: 640px) {
+    .rv-summary { flex-wrap: wrap; }
+    .rv-row { grid-template-columns: 1fr; }
+    .rv-status { grid-row: auto; }
+}

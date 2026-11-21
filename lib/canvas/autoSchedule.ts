@@ -75,6 +75,9 @@ export interface ScheduledBlock {
     crew: number;
     startISO: string;
     endISO: string;
+    /** Jedinica ½ dana (optimizator v2): prvi dan od podne / zadnji do podne. */
+    startsPM?: boolean;
+    endsAM?: boolean;
     reasons: ScheduleReason[];
 }
 
@@ -163,6 +166,7 @@ function buildBusyCalendar(
         startISO,
         horizonDays,
         skipWorkOrderIds: scenario.Blocks.map(b => b.linkedWorkOrderId).filter((x): x is string => !!x),
+        skipProductIds: scenario.Blocks.flatMap(b => (b.productRefs || []).map(p => p.id)).filter((x): x is string => !!x),
         calendar: { available: (w, iso) => (isWorkDay(iso, isSat) && !absent.has(`${w}|${iso}`) ? 1 : 0) },
     });
     for (const o of rest.orders) {
@@ -593,6 +597,8 @@ export function toAssignments(result: AutoScheduleResult) {
         crew: s.crew,
         workerRefs: s.workerRefs,
         assignedCrewId: s.crewId,
+        startsPM: !!s.startsPM,
+        endsAM: !!s.endsAM,
     }));
 }
 

@@ -12,12 +12,12 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, LayoutGrid,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, LayoutGrid, Activity,
     Pause, Check, X,
 } from 'lucide-react';
 import type {
@@ -45,8 +45,11 @@ import CompareModal from './CompareModal';
 import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
+import RealityModal from './RealityModal';
+import { getWorkLogsSince } from '@/lib/services';
 import CanvasMenu from './CanvasMenu';
-import { autoSchedule, type AutoScheduleResult } from '@/lib/canvas/autoSchedule';
+import { planHealth, proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
+import { FREEZE_WORK_DAYS } from '@/lib/canvas/opt/freeze';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
 import { detectConflicts } from '@/lib/canvas/conflicts';
@@ -67,8 +70,10 @@ import {
 } from '@/lib/canvas/geometry';
 import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
-    countWorkingDays,
+    countWorkingDays, isWorkDay,
 } from '@/lib/canvas/model';
+import { mergeBlocks, splitBlock } from '@/lib/canvas/quickActions';
+import { v4 as uuidv4 } from 'uuid';
 import { workRuns } from '@/lib/canvas/weekend';
 import {
     parsePlanTitle, fitBlockLabel, fitWords, fitVariants, isFullLabel, LABEL, type BlockLabelFit,
@@ -178,8 +183,10 @@ export default function CanvasTab({
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
+    const [realityOpen, setRealityOpen] = useState(false);
     const [batchOpen, setBatchOpen] = useState(false);
-    const [reviewResult, setReviewResult] = useState<AutoScheduleResult | null>(null);
+    const [reviewResult, setReviewResult] = useState<Proposal | null>(null);
+    const [scheduling, setScheduling] = useState(false);
     /** Radnik čiji je mjesečni kalendar otvoren (klik na ime u sekciji Radnici). */
     const [calendarWorkerId, setCalendarWorkerId] = useState<string | null>(null);
     /** Skupljeni projekti (grupe naloga) — po ključu grupe. */
@@ -617,18 +624,72 @@ export default function CanvasTab({
      * Auto-raspored → prijedlog za pregled. NIŠTA se ne mijenja dok korisnik ne
      * primijeni; izlaz je čist diff (isti obrazac kao lanac).
      */
-    const runSchedule = useCallback(() => {
-        const result = autoSchedule(
-            scenario,
-            { workers, workOrders, attendance, projects, isSaturdayWorking },
-            { startISO: todayISO() }
-        );
-        if (!result.scheduled.length && !result.unscheduled.length) {
-            showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
-            return;
+    // Radni dan ekipe otvorenog naloga (smjene, praznici) — brze akcije u polovinama dana.
+    const drawerBlock = drawerId ? scenario.Blocks.find(b => b.id === drawerId) : undefined;
+    const drawerRefs = drawerBlock?.workerRefs;
+    const drawerIsWork = useCallback((iso: string) => isWorkDay(iso, satCheckerFor(drawerRefs)), [satCheckerFor, drawerRefs]);
+    /** „Ubaci hitno": prioritet se upiše, pa preračun krene nad novim stanjem (efekat ispod). */
+    const [urgentPending, setUrgentPending] = useState(false);
+
+    /** Radni dan ekipe bilo kog bloka (plan vs stvarnost: prognoza kraja). */
+    const isWorkForBlock = useCallback(
+        (b: PlanBlock) => (iso: string) => isWorkDay(iso, satCheckerFor(b.workerRefs)),
+        [satCheckerFor]
+    );
+    const loadRealityLogs = useCallback(
+        (sinceISO: string) => (orgId ? getWorkLogsSince(orgId, sinceISO) : Promise.resolve([])),
+        [orgId]
+    );
+
+    /** Kontekst modela rasporeda: isti za zdravlje, prijedlog i poređenje planova. */
+    const modelCtx = useMemo(
+        () => ({ workers, workOrders, attendance, projects, holidays: holidayDates }),
+        [workers, workOrders, attendance, projects, holidayDates]
+    );
+
+    // Zdravlje plana poslije svake izmjene (faza 4): ista pravila kao prijedlog, bez pretrage.
+    // Odgođena vrijednost — vučenje bloka ostaje glatko, ocjena stigne odmah poslije.
+    const deferredScenario = useDeferredValue(scenario);
+    const health = useMemo(() => {
+        try {
+            return planHealth(deferredScenario, { workers, workOrders, attendance, projects, holidays: holidayDates }, todayISO());
+        } catch (err) {
+            console.error('Ocjena plana nije uspjela', err);
+            return null;
         }
-        setReviewResult(result);
-    }, [scenario, workers, workOrders, attendance, projects, isSaturdayWorking, showToast]);
+    }, [deferredScenario, workers, workOrders, attendance, projects, holidayDates]);
+
+    const runSchedule = useCallback(() => {
+        if (scheduling) return;
+        setScheduling(true);
+        // Optimizator v2 (lib/canvas/opt): 1–2 s računanja u komadima — ekran ostaje živ.
+        window.setTimeout(async () => {
+            try {
+                const result = await proposeScheduleAsync(
+                    scenario,
+                    { workers, workOrders, attendance, projects, holidays: holidayDates },
+                    // Preračun: prva FREEZE_WORK_DAYS (3) radna dana se ne diraju (odluka vlasnika 21.11.2026).
+                    { startISO: todayISO(), todayISO: todayISO(), freezeDays: FREEZE_WORK_DAYS }
+                );
+                if (!result.scheduled.length && !result.unscheduled.length) {
+                    showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
+                    return;
+                }
+                setReviewResult(result);
+            } catch (err) {
+                console.error('Raspored nije izračunat', err);
+                showToast('Raspored nije izračunat — pokušaj ponovo', 'error');
+            } finally {
+                setScheduling(false);
+            }
+        }, 30);
+    }, [scheduling, scenario, workers, workOrders, attendance, projects, holidayDates, showToast]);
+
+    useEffect(() => {
+        if (!urgentPending) return;
+        setUrgentPending(false);
+        runSchedule();
+    }, [urgentPending, runSchedule]);
 
     // ── Pretvorba nalog-bloka → stvarni nalog (pravi flow iz taba Nalozi) ──
     /** Seed za wizard iz plan-bloka: projekt, proizvodi, ekipa, rokovi. */
@@ -1185,9 +1246,9 @@ export default function CanvasTab({
                     title="Batch — unesi više naloga odjednom (proizvodni, montaža, razni)">
                     <ClipboardList size={15} /> <span className="lbl">Batch</span>
                 </button>
-                <button className="cv-btn accent squeeze" onClick={runSchedule}
-                    title="Rasporedi — automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
-                    <Sparkles size={15} /> <span className="lbl">Rasporedi</span>
+                <button className="cv-btn accent squeeze" onClick={runSchedule} disabled={scheduling} aria-busy={scheduling}
+                    title="Rasporedi — predloži najbrži izvodljiv raspored naloga s kandidat-ekipama (ništa se ne mijenja dok ne primijeniš)">
+                    <Sparkles size={15} /> <span className="lbl">{scheduling ? 'Računam…' : 'Rasporedi'}</span>
                 </button>
 
                 {/* ── Još (overflow) ─────────────────────────── */}
@@ -1200,7 +1261,8 @@ export default function CanvasTab({
                     )}
                     items={[
                         { key: 'chain', label: 'Lanac: poredaj od roka unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
-                        { key: 'compare', label: 'Uporedi planove', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
+                        { key: 'compare', label: 'Uporedi planove (šta ako)', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
+                        { key: 'reality', label: 'Plan vs stvarnost', icon: <Activity size={14} />, onClick: () => setRealityOpen(true) },
                         { key: 'templates', label: 'Šabloni lanaca', icon: <Bookmark size={14} />, badge: templates.length, onClick: () => setTemplatesOpen(true) },
                         { key: 'print', label: 'Štampaj plan', icon: <Printer size={14} />, onClick: printPlan },
                         ...OLD_LAYOUTS.map((l, i) => ({
@@ -1234,6 +1296,30 @@ export default function CanvasTab({
             </div>
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}
+
+            {health && !health.feasible && (
+                <div className="cv-health warn" role="status">
+                    <AlertTriangle size={14} />
+                    <span className="cv-health-txt">
+                        <strong>Plan ima {health.violationCount} {health.violationCount === 1 ? 'prekršenu provjeru' : health.violationCount < 5 ? 'prekršene provjere' : 'prekršenih provjera'}</strong>
+                        {health.examples[0] && <> — {health.examples[0]}{health.violationCount > 1 ? ' …' : ''}</>}
+                    </span>
+                    <button className="cv-btn accent sm" onClick={runSchedule} disabled={scheduling}>
+                        <Sparkles size={13} /> {scheduling ? 'Računam…' : 'Preračunaj'}
+                    </button>
+                </div>
+            )}
+            {health && health.feasible && (health.gapDays || 0) > 0 && health.boundISO && (
+                <div className="cv-health" role="status">
+                    <Sparkles size={14} />
+                    <span className="cv-health-txt">
+                        Plan je izvodljiv, a može se završiti do <strong>{health.gapDays} {health.gapDays === 1 ? 'dan' : 'dana'}</strong> ranije (najranije moguće {Number(health.boundISO.slice(8, 10))}.{Number(health.boundISO.slice(5, 7))}.).
+                    </span>
+                    <button className="cv-btn sm" onClick={runSchedule} disabled={scheduling}>
+                        {scheduling ? 'Računam…' : 'Predloži'}
+                    </button>
+                </div>
+            )}
 
             <CanvasTimeSlider
                 fromISO={timeRange.fromISO}
@@ -1467,6 +1553,17 @@ export default function CanvasTab({
                 onDelete={id => void deleteTemplate(id)}
             />
 
+            <RealityModal
+                isOpen={realityOpen}
+                scenario={scenario}
+                workOrders={workOrders}
+                todayISO={todayISO()}
+                isWorkFor={isWorkForBlock}
+                loadLogs={loadRealityLogs}
+                onSelectBlock={jumpToBlock}
+                onClose={() => setRealityOpen(false)}
+            />
+
             <CompareModal
                 isOpen={compareOpen}
                 current={scenario}
@@ -1476,6 +1573,7 @@ export default function CanvasTab({
                 capacityCtx={capacityCtx}
                 fromISO={anchorISO}
                 days={Math.min(90, Math.max(14, Math.ceil(widthPx / dayWidth(zoom))))}
+                modelCtx={modelCtx}
                 onClose={() => setCompareOpen(false)}
             />
 
@@ -1611,6 +1709,25 @@ export default function CanvasTab({
                     onSelectBlock={jumpToBlock}
                     onCreateOrders={() => setOrderModalFor(drawerId)}
                     onPromote={() => setPromoteId(drawerId)}
+                    isWork={drawerIsWork}
+                    onSplit={() => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const parts = b && splitBlock(b, drawerIsWork, uuidv4());
+                        if (parts) dispatch({ type: 'SPLIT_BLOCK', id: drawerId, parts });
+                        else showToast('Nalog je kraći od dana ekipe — nema šta dijeliti', 'info');
+                    }}
+                    onMerge={otherId => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const other = scenario.Blocks.find(x => x.id === otherId);
+                        if (!b || !other) return;
+                        const merged = mergeBlocks(b, other, drawerIsWork);
+                        if (typeof merged === 'string') { showToast(merged, 'info'); return; }
+                        dispatch({ type: 'MERGE_BLOCKS', keepId: b.id, removeId: other.id, merged });
+                    }}
+                    onUrgent={() => {
+                        dispatch({ type: 'UPDATE_BLOCK', id: drawerId, patch: { priority: 'urgent' } });
+                        setUrgentPending(true);
+                    }}
                 />
             )}
         </div>

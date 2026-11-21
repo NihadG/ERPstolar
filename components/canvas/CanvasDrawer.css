@@ -135,3 +135,11 @@
 @media (max-width: 767px) {
     .cv-drawer { --dw-x: var(--cm-sp-3); width: 100%; }
 }
+
+/* ── Brze akcije (faza 5) ─────────────────────────────────────────── */
+.cv-drawer .dw-quick-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.cv-drawer .dw-quick-row.wrap { flex-wrap: wrap; }
+.cv-drawer .dw-quick-lbl { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text-secondary); }
+.cv-drawer .dw-quick-row.wrap .dw-quick-lbl { flex-basis: 100%; }
+.cv-drawer .dw-quick-lbl strong { color: var(--text-primary); }
+.cv-drawer .dw-quick-lbl em { font-style: normal; color: var(--accent); }
