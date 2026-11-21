@@ -19,12 +19,16 @@ import {
     toAssignments, scheduleSummary, type AutoScheduleResult,
 } from '@/lib/canvas/autoSchedule';
 import type { ScheduleAssignment } from '@/lib/canvas/scenarioReducer';
+import type { ProposalQuality } from '@/lib/canvas/opt/propose';
+import type { QualityReport } from '@/lib/canvas/opt/quality';
+import { isoAt } from '@/lib/canvas/opt/instance';
 import './ScheduleReviewModal.css';
 
 interface ScheduleReviewModalProps {
     isOpen: boolean;
     scenario: PlanScenario;
-    result: AutoScheduleResult | null;
+    /** Optimizator v2 dodaje ocjenu prije/poslije; stari raspored je nema. */
+    result: (AutoScheduleResult & { quality?: ProposalQuality }) | null;
     onClose: () => void;
     onApply: (assignments: ScheduleAssignment[]) => void;
 }
@@ -33,6 +37,25 @@ const dm = (iso: string) => {
     const [, m, d] = iso.split('-');
     return `${Number(d)}.${Number(m)}.`;
 };
+
+/** Red poređenja „prije → poslije": brojevi iz ocjene (lib/canvas/opt/quality.ts). */
+function compareRows(q: ProposalQuality) {
+    const b = q.before.evaluation.objective, a = q.after.evaluation.objective;
+    const ok = (v: number) => (v === 0 ? 'sve prolaze' : `prekršeno ${Math.round(v * 10) / 10}`);
+    const day = (_r: QualityReport, d: number) => (d >= 0 ? dm(isoAt(q.startISO, d)) : '—');
+    const rows: { label: string; before: string; after: string; good: boolean; note?: string }[] = [
+        { label: 'Provjere', before: ok(b.violation), after: ok(a.violation), good: a.violation <= b.violation },
+        {
+            label: 'Sve gotovo', before: day(q.before, b.makespan), after: day(q.after, a.makespan), good: a.makespan <= b.makespan,
+            note: q.after.bounds.makespan ? `dokazano najranije ${dm(q.after.bounds.makespan.iso)}` : undefined,
+        },
+    ];
+    if (b.urgentEnd >= 0 || a.urgentEnd >= 0) rows.push({ label: 'Hitno gotovo', before: day(q.before, b.urgentEnd), after: day(q.after, a.urgentEnd), good: a.urgentEnd <= b.urgentEnd });
+    if (b.highEnd >= 0 || a.highEnd >= 0) rows.push({ label: 'Visok prioritet', before: day(q.before, b.highEnd), after: day(q.after, a.highEnd), good: a.highEnd <= b.highEnd });
+    rows.push({ label: 'Kašnjenje preko rokova', before: `${b.tardiness} d`, after: `${a.tardiness} d`, good: a.tardiness <= b.tardiness });
+    rows.push({ label: 'Promjena projekta u nizu ekipa', before: String(b.switches), after: String(a.switches), good: a.switches <= b.switches });
+    return rows;
+}
 
 export default function ScheduleReviewModal({
     isOpen, scenario, result, onClose, onApply,
@@ -50,6 +73,9 @@ export default function ScheduleReviewModal({
     };
 
     const hasScheduled = (result?.scheduled.length || 0) > 0;
+    const quality = result?.quality;
+    const rows = useMemo(() => (quality ? compareRows(quality) : []), [quality]);
+    const proven = quality && quality.after.gapDays === 0 && quality.after.evaluation.objective.violation === 0;
 
     return (
         <Modal
@@ -91,6 +117,28 @@ export default function ScheduleReviewModal({
                     </div>
                 )}
 
+                {quality && (
+                    <div className="sr-compare">
+                        <div className="sr-compare-head">
+                            <span>Plan na platnu</span><span /><span>Prijedlog</span>
+                        </div>
+                        {rows.map(r => (
+                            <div key={r.label} className={`sr-compare-row${r.good ? '' : ' worse'}`}>
+                                <span className="sr-compare-lbl">{r.label}</span>
+                                <span className="sr-compare-old">{r.before}</span>
+                                <ArrowRight size={12} />
+                                <span className="sr-compare-new">{r.after}{r.note && <em> · {r.note}</em>}</span>
+                            </div>
+                        ))}
+                        <p className="sr-compare-note">
+                            {proven
+                                ? 'Prijedlog završava na dokazanoj donjoj granici — brže nije moguće s ovim ekipama i kalendarom.'
+                                : quality.after.lines[0]}
+                            {' '}Isprobano {quality.evals} rasporeda.
+                        </p>
+                    </div>
+                )}
+
                 {!hasScheduled && (
                     <p className="sr-empty">
                         Nema šta rasporediti. Nalozi trebaju kandidat-ekipe i radnik-dane — dodaj ih u batch unosu ili u detaljima naloga.
@@ -116,7 +164,7 @@ export default function ScheduleReviewModal({
                                             <span className="sr-old">{dm(b.startISO)}–{dm(b.endISO)}</span>
                                         )}
                                         {moved && <ArrowRight size={12} />}
-                                        <span className="sr-new">{dm(s.startISO)}–{dm(s.endISO)}</span>
+                                        <span className="sr-new">{dm(s.startISO)}{s.startsPM ? ' (pod.)' : ''}–{dm(s.endISO)}{s.endsAM ? ' (pod.)' : ''}</span>
                                     </div>
                                     <div className="sr-reasons">
                                         {s.reasons.map((r, i) => (
