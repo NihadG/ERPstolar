@@ -17,7 +17,7 @@ import type {
 import { projectColorMap, NO_PROJECT_COLORS, type ProjectColors } from './palette';
 import { crewKeyOf, crewShift, shiftAnchor, shiftSaturdays, type CrewShift, type ShiftLetter } from './crews';
 import { addDays, toISODate } from './model';
-import { buildSaturdayChecker, shiftWorksSaturday, todayISO as todayISOFn, type AttendanceLite } from '../planning';
+import { buildSaturdayChecker, isHolidayFor, shiftWorksSaturday, todayISO as todayISOFn, type AttendanceLite } from '../planning';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
 export type CanvasSection = 'obaveze' | 'plan' | 'ekipe' | 'nalozi' | 'radnici' | 'nabavka';
@@ -146,6 +146,8 @@ export interface CanvasRow {
 }
 
 export interface RowContext {
+    /** Praznici radionice (lib/holidays.ts) — neradni i radnim danom. */
+    holidays?: string[];
     workers: Worker[];
     /** Stvarni nalozi — samo za sjene. */
     workOrders: WorkOrder[];
@@ -285,7 +287,7 @@ function crewCheckerFactory(ctx: RowContext): (ids: string[]) => (d: Date) => bo
     return (ids: string[]) => {
         const key = ids.slice().sort().join('|');
         let chk = cache.get(key);
-        if (!chk) { chk = buildSaturdayChecker(ids, att, ctx.workers); cache.set(key, chk); }
+        if (!chk) { chk = buildSaturdayChecker(ids, att, ctx.workers, ctx.holidays); cache.set(key, chk); }
         return chk;
     };
 }
@@ -294,7 +296,7 @@ function crewCheckerFactory(ctx: RowContext): (ids: string[]) => (d: Date) => bo
 function isCrewWorkday(iso: string, chk: (d: Date) => boolean): boolean {
     const d = new Date(`${iso}T12:00:00`);
     const dow = d.getDay();
-    return dow === 0 ? false : dow === 6 ? chk(d) : true;
+    return dow === 0 || isHolidayFor(chk, d) ? false : dow === 6 ? chk(d) : true;
 }
 
 /** Prvi radni dan ekipe POSLIJE datuma. */

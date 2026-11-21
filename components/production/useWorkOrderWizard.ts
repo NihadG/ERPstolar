@@ -11,6 +11,7 @@
 // nalog kao s laptopa.
 // ════════════════════════════════════════════════════════════════════
 
+import { useHolidays } from '@/components/settings/useHolidays';
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { MONTAZA_STEPS } from '@/lib/types';
@@ -220,11 +221,13 @@ export function useWorkOrderWizard({
         return () => { cancelled = true; };
     }, [organizationId, activeStep, mode]);
 
+    // Praznici radionice (Postavke → Praznici) — rok ih preskače kao nedjelju.
+    const { dates: holidayDates } = useHolidays(organizationId);
     const suggestedDueDate = useMemo(() => {
         if (totalPlannedDays <= 0) return '';
-        const checker = buildSaturdayChecker(assignedWorkerIds, wizardAttendance, workers);
+        const checker = buildSaturdayChecker(assignedWorkerIds, wizardAttendance, workers, holidayDates);
         return workOrderDueDate(startDate || todayISO(), totalPlannedDays, checker);
-    }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate, workers]);
+    }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate, workers, holidayDates]);
 
     // Auto-popuni rok kad uđemo u posljednji korak ("Radnik & rok" / "Dodjela") ako još nije postavljen (ostaje uredljiv).
     useEffect(() => {

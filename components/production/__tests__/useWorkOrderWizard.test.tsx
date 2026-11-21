@@ -7,6 +7,7 @@ const createWorkOrder = jest.fn().mockResolvedValue({ success: true, data: { Wor
 jest.mock('@/lib/services', () => ({
     createWorkOrder: (...args: unknown[]) => createWorkOrder(...args),
     getAllAttendanceByMonth: jest.fn().mockResolvedValue([]),
+    getOrgSettings: jest.fn().mockResolvedValue(null),
 }));
 
 const workers = [

@@ -70,6 +70,7 @@ import { buildProductionSnapshot } from './snapshot/buildSnapshot';
 import { PRODUCT_TYPES, type ProductType } from './classify/taxonomy';
 import type { PlanChainTemplate } from './types';
 import type { StockRules } from './materialGates';
+import type { Holiday } from './holidays';
 import { MATERIAL_TYPES, type MaterialType } from './productProcesses';
 import { computeReadiness, type Readiness } from './insights/readiness';
 
@@ -6504,6 +6505,7 @@ export async function saveOrgSettings(
         productTaxonomy?: ProductType[]; materialTaxonomy?: MaterialType[];
         planTemplates?: PlanChainTemplate[];
         materialStock?: StockRules;
+        holidays?: Holiday[];
     }
 ): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
@@ -6524,6 +6526,8 @@ export async function saveOrgSettings(
         if (data.planTemplates !== undefined) payload.planTemplates = data.planTemplates;
         // Šta se kupuje na veliko (zaliha) — kapije materijala (lib/materialGates).
         if (data.materialStock !== undefined) payload.materialStock = data.materialStock;
+        // Praznici radionice (lib/holidays.ts) — kalendar roka naloga i Platna.
+        if (data.holidays !== undefined) payload.holidays = data.holidays;
         await setDoc(doc(firestore, 'org_settings', organizationId), payload, { merge: true });
 
         return { success: true, message: 'Settings saved' };
@@ -6540,6 +6544,7 @@ export async function getOrgSettings(
     productTaxonomy: ProductType[] | null; materialTaxonomy: MaterialType[] | null;
     planTemplates: PlanChainTemplate[] | null;
     materialStock: StockRules | null;
+    holidays: Holiday[] | null;
 } | null> {
     if (!organizationId) return null;
 
@@ -6558,6 +6563,7 @@ export async function getOrgSettings(
                 materialTaxonomy: (data.materialTaxonomy as MaterialType[]) || null,
                 planTemplates: (data.planTemplates as PlanChainTemplate[]) || null,
                 materialStock: (data.materialStock as StockRules) || null,
+                holidays: (data.holidays as Holiday[]) || null,
             };
         }
         return null;

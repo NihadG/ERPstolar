@@ -7,8 +7,8 @@
 //
 //   npm run platno:ocjena        (zadnji izvoz; prije toga npm run bot:export)
 //
-// Faza 1: kalendar = smjene + šihtarica + fiksni državni praznici; stvarni nalozi još ne
-// zauzimaju radnike u ocjeni (faza 2: preostali rad iz Knjige rada).
+// Kalendar = smjene + šihtarica + praznici (sačuvani u Postavkama, inače zadani bh.); stvarni
+// nalozi zauzimaju radnike samo za PREOSTALI rad (plan − Knjiga rada, lib/canvas/opt/remaining.ts).
 
 import fs from 'fs';
 import path from 'path';
@@ -17,15 +17,13 @@ import { buildWorkerCalendar } from '@/lib/canvas/opt/calendar';
 import { buildInstance, isJobBlock } from '@/lib/canvas/opt/instance';
 import { placementsFromScenario } from '@/lib/canvas/opt/evaluate';
 import { qualityReport } from '@/lib/canvas/opt/quality';
+import { remainingLines, remainingWork } from '@/lib/canvas/opt/remaining';
+import { effectiveHolidays, holidayDates } from '@/lib/holidays';
+import { todayISO } from '@/lib/planning';
 import type { PlanScenario } from '@/lib/types';
 
 const DIR = reviewDir(process.env.BOT_REVIEW);
 const run = DIR && fs.existsSync(path.join(DIR, 'snapshot.json')) ? describe : describe.skip;
-
-/** Fiksni državni praznici FBiH (vjerski i korisnikovi dolaze u fazi 2, iz Postavki). */
-function stateHolidays(years: number[]): string[] {
-    return years.flatMap(y => ['01-01', '01-02', '03-01', '05-01', '05-02', '11-25'].map(md => `${y}-${md}`));
-}
 
 run('ocjena planova s Platna', () => {
     it('platno.md', () => {
@@ -35,17 +33,24 @@ run('ocjena planova s Platna', () => {
         const workers = col('workers');
         const attendance = col('worker_attendance').map(a => ({ Worker_ID: a.Worker_ID, Date: String(a.Date).slice(0, 10), Status: a.Status }));
         const projects = col('projects');
+        const today = todayISO();
+        const holidays = holidayDates(effectiveHolidays(col('org_settings')[0]?.holidays, today));
+        const items = col('work_order_items');
+        const workOrders = col('work_orders').map(wo => ({ ...wo, items: items.filter(i => i.Work_Order_ID === wo.Work_Order_ID) }));
+        const workLogs = col('work_logs');
         const out = ['# Planovi s Platna — ocjena', ''];
         const summary: string[] = [];
         for (const sc of scenarios.sort((a: PlanScenario, b: PlanScenario) => String(b.Modified_Date).localeCompare(String(a.Modified_Date)))) {
             const jobs = sc.Blocks.filter(isJobBlock);
             const startISO = jobs.map((b: { startISO: string }) => b.startISO).sort()[0];
-            const year = Number(startISO.slice(0, 4));
-            const calendar = buildWorkerCalendar({ workers, attendance, holidays: stateHolidays([year, year + 1]) });
-            const inst = buildInstance(sc, { startISO, calendar, projects });
+            const calendar = buildWorkerCalendar({ workers, attendance, holidays });
+            const linked = sc.Blocks.map((b: { linkedWorkOrderId?: string }) => b.linkedWorkOrderId).filter(Boolean) as string[];
+            const rest = remainingWork({ workOrders, workLogs, calendar, startISO: today, skipWorkOrderIds: linked });
+            const inst = buildInstance(sc, { startISO, calendar, projects, fixedLoad: rest.fixedLoad });
             const r = qualityReport(inst, placementsFromScenario(inst, sc.Blocks));
             out.push(`## ${sc.Name} (verzija ${sc.Version}, mijenjan ${String(sc.Modified_Date).slice(0, 16).replace('T', ' ')}, ${jobs.length} naloga)`, '');
             out.push(...r.lines.map(l => (l.startsWith('  ') ? `- ${l.trim()}` : l)), '');
+            if (rest.orders.length) out.push('Stvarni nalozi u toku (preostali rad):', ...remainingLines(rest.orders).map(l => `- ${l}`), '');
             if (r.evaluation.violations.length) {
                 out.push('Prekršene provjere:');
                 r.evaluation.violations.slice(0, 40).forEach(v => out.push(`- ${v.text}`));

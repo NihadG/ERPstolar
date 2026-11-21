@@ -12,6 +12,8 @@
 // Isti ulaz → isti izlaz. Svaki blok nosi objašnjenje zašto je tu — da se može
 // pregledati i ručno korigovati, a ne prihvatati na vjeru.
 //
+// Stvarni nalozi zauzimaju radnike samo za preostali rad (faza 2, 21.11.2026).
+//
 // Ciljevi (redom važnosti, kako je korisnik tražio):
 //   1. prioritet (urgent/high ranije),
 //   2. projekat zbijen u jednom periodu i završen prije prelaska na sljedeći,
@@ -29,6 +31,7 @@ import type {
 } from '../types';
 import { crewSize, crewWorkerRefs } from '../types';
 import { addDays, diffDays, isWorkDay, workingDaysNeeded } from './model';
+import { remainingWork } from './opt/remaining';
 
 // ── Tipovi ──────────────────────────────────────────────────────────
 
@@ -38,6 +41,8 @@ export interface AutoScheduleContext {
     attendance: WorkerAttendance[];
     projects: Project[];
     isSaturdayWorking?: (d: Date) => boolean;
+    /** Knjiga rada za preostali rad stvarnih naloga; bez nje važi Actual_Labor_Days stavki. */
+    workLogs?: { Work_Order_Item_ID?: string; Day_Fraction?: number; Work_Order_Deleted?: boolean }[];
     /** Vrijednost projekta (npr. iz ponude) → gura vrednije ranije. Opcion. */
     projectValue?: Map<string, number>;
 }
@@ -141,28 +146,30 @@ function isFree(busy: BusyMap, workerId: string, dates: string[]): boolean {
 function buildBusyCalendar(
     scenario: PlanScenario,
     ctx: AutoScheduleContext,
-    toScheduleIds: Set<string>
+    toScheduleIds: Set<string>,
+    startISO: string,
+    horizonDays: number
 ): BusyMap {
     const busy: BusyMap = new Map();
     const isSat = ctx.isSaturdayWorking;
 
-    // 1) Stvarni preuzeti nalozi — radnici zauzeti kroz cijeli raspon naloga.
-    for (const wo of ctx.workOrders) {
-        if (wo.Status === 'Završeno' || wo.Status === 'Otkazano') continue;
-        const start = (wo.Started_At || wo.Planned_Start_Date || '').split('T')[0];
-        const end = (wo.Due_Date || wo.Planned_End_Date || start || '').split('T')[0];
-        if (!start || !end || end < start) continue;
-        const days = workingDaysInSpan(start, end, isSat);
-        if (!days.length) continue;
-        const ids = new Set<string>();
-        for (const item of wo.items || []) {
-            (item.Assigned_Workers || []).forEach(w => w.Worker_ID && ids.add(w.Worker_ID));
-            (item.Processes || []).forEach(p => {
-                if (p.Worker_ID) ids.add(p.Worker_ID);
-                (p.Helpers || []).forEach(h => h.Worker_ID && ids.add(h.Worker_ID));
-            });
+    // 1) Stvarni preuzeti nalozi — radnici zauzeti samo za PREOSTALI rad (plan − upisano,
+    //    lib/canvas/opt/remaining.ts), od danas, prvo stariji nalozi. Nalog bez plana dana
+    //    ne zauzima (rok nije mjera posla). Nalog koji scenarij nosi kao blok se preskače.
+    const absent = new Set(ctx.attendance.filter(a => a.Worker_ID && a.Date && ABSENT.has(a.Status)).map(a => `${a.Worker_ID}|${a.Date.split('T')[0]}`));
+    const rest = remainingWork({
+        workOrders: ctx.workOrders,
+        workLogs: ctx.workLogs,
+        startISO,
+        horizonDays,
+        skipWorkOrderIds: scenario.Blocks.map(b => b.linkedWorkOrderId).filter((x): x is string => !!x),
+        calendar: { available: (w, iso) => (isWorkDay(iso, isSat) && !absent.has(`${w}|${iso}`) ? 1 : 0) },
+    });
+    for (const o of rest.orders) {
+        if (!o.untilISO) continue;
+        for (const id of o.workerIds) {
+            markBusy(busy, id, workingDaysInSpan(startISO, o.untilISO, isSat).filter(iso => rest.fixedLoad(id, iso) > 0));
         }
-        for (const id of ids) markBusy(busy, id, days);
     }
 
     // 2) Odsustva iz šihtarice.
@@ -365,7 +372,7 @@ export function autoSchedule(
     const toScheduleIds = new Set(toSchedule.map(b => b.id));
     if (!toSchedule.length) return { scheduled: [], unscheduled: [] };
 
-    const busy = buildBusyCalendar(scenario, ctx, toScheduleIds);
+    const busy = buildBusyCalendar(scenario, ctx, toScheduleIds, globalStart, weights.horizonDays);
     const pScore = projectScores(toSchedule, ctx, globalStart);
     const order = scheduleOrder(toSchedule, scenario, pScore);
 

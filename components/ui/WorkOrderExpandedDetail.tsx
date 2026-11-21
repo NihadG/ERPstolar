@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useHolidays } from '@/components/settings/useHolidays';
 import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer, CalendarCheck, History, Calendar, Package } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
@@ -60,6 +61,7 @@ export default function WorkOrderExpandedDetail({
     const [isLoading, setIsLoading] = useState<string | null>(null);
     const [orderBusy, setOrderBusy] = useState(false);   // akcije na nivou naloga (Završi/Pauza)
     const { organizationId } = useData();
+    const { dates: holidayDates } = useHolidays(organizationId);
 
     // S16: Missing Attendance State
     const [missingAttendance, setMissingAttendance] = useState<{ count: number; details: string[] } | null>(null);
@@ -174,11 +176,11 @@ export default function WorkOrderExpandedDetail({
         const workerIds = Array.from(new Set(
             (workOrder.items || []).flatMap(it => (it.Assigned_Workers || []).map(w => w.Worker_ID))
         ));
-        const suggested = workOrderDueDate(startISO, totalDays, buildSaturdayChecker(workerIds, attLite, workers));
+        const suggested = workOrderDueDate(startISO, totalDays, buildSaturdayChecker(workerIds, attLite, workers, holidayDates));
         const currentDue = workOrder.Due_Date?.split('T')[0] || '';
         if (suggested === currentDue) return null;
         return { suggested, totalDays, startISO };
-    }, [workOrder, attLite, workers]);
+    }, [workOrder, attLite, workers, holidayDates]);
 
     const applySuggestedDue = async () => {
         if (!dueSuggestion) return;
