@@ -19,6 +19,7 @@ import { placementsFromScenario } from '@/lib/canvas/opt/evaluate';
 import { qualityReport } from '@/lib/canvas/opt/quality';
 import { remainingLines, remainingWork } from '@/lib/canvas/opt/remaining';
 import { movableBlockIds, proposeSchedule } from '@/lib/canvas/opt/propose';
+import { planVsReality } from '@/lib/canvas/opt/reality';
 import { effectiveHolidays, holidayDates } from '@/lib/holidays';
 import { todayISO } from '@/lib/planning';
 import type { PlanScenario } from '@/lib/types';
@@ -60,6 +61,9 @@ run('ocjena planova s Platna', () => {
                 out.push(`Prijedlog optimizatora (od ${today > startISO ? today : startISO}, ${p.quality.evals} rasporeda, ${Date.now() - t0} ms):`, ...q.lines.map(l => `- ${l.trim()}`), '');
                 optLine = (`[platno]   → optimizator: ${q.lines[0]}; ${q.evaluation.violations.length ? `neizvodljiv (${q.evaluation.objective.violation})` : 'izvodljiv'}`);
             }
+            // Plan vs stvarnost (faza 6): nalozi s Platna pretvoreni u stvarne naloge.
+            const real = planVsReality({ scenario: sc, workOrders, workLogs, todayISO: today, isWorkFor: () => iso => calendar.available('__radionica__', iso) > 0 });
+            out.push('Plan vs stvarnost:', ...real.lines.map(l => `- ${l}`), ...real.rows.slice(0, 15).map(r => `- ${r.title}: ${r.verdict}`), '');
             if (rest.orders.length) out.push('Stvarni nalozi u toku (preostali rad):', ...remainingLines(rest.orders).map(l => `- ${l}`), '');
             if (r.evaluation.violations.length) {
                 out.push('Prekršene provjere:');

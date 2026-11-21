@@ -167,20 +167,55 @@ export interface PlanHealth {
  * Brza (bez pretrage) — Platno je računa poslije svake izmjene.
  */
 export function planHealth(scenario: PlanScenario, ctx: ProposeContext, todayISO: string): PlanHealth | null {
+    const k = modelKpi(scenario, ctx, todayISO);
+    if (!k) return null;
+    return {
+        feasible: k.feasible,
+        violationCount: k.violationCount,
+        examples: k.examples,
+        endISO: k.endISO,
+        boundISO: k.boundISO,
+        gapDays: k.feasible ? k.gapDays : null,
+    };
+}
+
+/** Mjere plana po modelu (od danas) — za zdravlje plana i „šta ako" poređenje planova. */
+export interface ModelKpi {
+    feasible: boolean;
+    violationCount: number;
+    /** Zbir prekoračenja (dani / radnik-dani) živih provjera. */
+    violation: number;
+    examples: string[];
+    endISO: string | null;
+    /** Dokazano najraniji kraj s ovim poslom, ekipama i kalendarom (ne zavisi od rasporeda). */
+    boundISO: string | null;
+    gapDays: number | null;
+    urgentEndISO: string | null;
+    tardiness: number;
+    switches: number;
+    lateProjects: { name: string; lateDays: number }[];
+}
+
+export function modelKpi(scenario: PlanScenario, ctx: ProposeContext, todayISO: string): ModelKpi | null {
     if (!movableBlockIds(scenario).size && !scenario.Blocks.some(b => (b.workerRefs || []).some(r => r.id))) return null;
     const prep = prepare(scenario, ctx, { startISO: todayISO, todayISO });
     if (!prep.inst.jobs.length) return null;
     // Prošli nalozi se ne ocjenjuju — gotovi su ili ih vodi stvarni nalog.
     const live = new Set(scenario.Blocks.filter(b => b.endISO >= todayISO).map(b => b.id));
     const ev = prep.before.evaluation;
+    const o = ev.objective;
     const violations = ev.violations.filter(v => !v.jobId || live.has(v.jobId)).filter(v => !v.dateISO || v.dateISO >= todayISO);
-    const feasible = violations.length === 0;
     return {
-        feasible,
+        feasible: violations.length === 0,
         violationCount: violations.length,
+        violation: Math.round(violations.reduce((x, v) => x + (v.amount || 0), 0) * 100) / 100,
         examples: violations.slice(0, 3).map(v => v.text),
-        endISO: ev.objective.makespan >= 0 ? ev.makespanISO : null,
+        endISO: o.makespan >= 0 ? ev.makespanISO : null,
         boundISO: prep.before.bounds.makespan?.iso || null,
-        gapDays: feasible ? prep.before.gapDays : null,
+        gapDays: prep.before.gapDays,
+        urgentEndISO: o.urgentEnd >= 0 ? isoAt(todayISO, o.urgentEnd) : null,
+        tardiness: o.tardiness,
+        switches: o.switches,
+        lateProjects: ev.projects.filter(p => p.lateDays > 0).map(p => ({ name: p.name, lateDays: p.lateDays })),
     };
 }
