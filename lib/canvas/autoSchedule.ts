@@ -166,6 +166,7 @@ function buildBusyCalendar(
         startISO,
         horizonDays,
         skipWorkOrderIds: scenario.Blocks.map(b => b.linkedWorkOrderId).filter((x): x is string => !!x),
+        skipProductIds: scenario.Blocks.flatMap(b => (b.productRefs || []).map(p => p.id)).filter((x): x is string => !!x),
         calendar: { available: (w, iso) => (isWorkDay(iso, isSat) && !absent.has(`${w}|${iso}`) ? 1 : 0) },
     });
     for (const o of rest.orders) {

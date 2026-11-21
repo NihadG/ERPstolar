@@ -133,6 +133,12 @@ describe('preostali rad stvarnih naloga', () => {
         expect(rr.orders[0].untilISO).toBe('2026-12-08');
         expect(rr.fixedLoad('amer', '2026-12-05')).toBe(0);
     });
+    it('stavka čiji proizvod plan već nosi kao blok se ne broji (nema duplog rada)', () => {
+        const w = wo('P', '2026-11-01', [item('p1', { Product_ID: 'prod-1', Planned_Labor_Days: 3 }), item('p2', { Product_ID: 'prod-2', Planned_Labor_Days: 1 })]);
+        const rr = remainingWork({ workOrders: [w], calendar, startISO: MON, skipProductIds: ['prod-1'] });
+        expect(rr.orders[0]).toMatchObject({ planned: 1, remaining: 1 });
+    });
+
     it('bez Knjige rada čita Actual_Labor_Days stavke', () => {
         const rr = remainingWork({ workOrders: [wo('G', '2026-11-01', [item('g1', { Planned_Labor_Days: 3, Actual_Labor_Days: 2 })])], calendar, startISO: MON });
         expect(rr.orders[0]).toMatchObject({ booked: 2, remaining: 1 });

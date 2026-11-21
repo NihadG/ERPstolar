@@ -154,6 +154,14 @@ describe('optimizator na stvarnom planu (fixture, 41 nalog)', () => {
         expect(res.evaluation.makespanISO).toBe('2027-01-11');
         expect(res.decoded.unplaced).toEqual([]);
     });
+    it('preračun nije lošiji od izvodljivog plana s platna (plan je jedna od početnih tačaka)', () => {
+        // Prijedlog primijenjen pa ponovo optimizovan: novi cilj ne smije biti lošiji.
+        const applied = res.placements;
+        const again = optimize(inst, applied, movable, { budget: 50 });
+        expect(compareObjectives(again.evaluation.objective, evaluate(inst, applied, applied).objective)).toBeLessThanOrEqual(0);
+        expect(again.evaluation.objective.moved).toBe(0);
+    });
+
     it('pretraga ne pogoršava početnu listu i poštuje budžet', () => {
         expect(res.evals).toBeLessThanOrEqual(600);
         expect(compareObjectives(res.evaluation.objective, res.initialObjective)).toBeLessThanOrEqual(0);

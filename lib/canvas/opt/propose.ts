@@ -95,7 +95,8 @@ type ProposeOptions = {
 function prepare(scenario: PlanScenario, ctx: ProposeContext, opts: ProposeOptions) {
     const calendar = buildWorkerCalendar({ workers: ctx.workers, attendance: ctx.attendance, holidays: ctx.holidays });
     const linked = scenario.Blocks.map(b => b.linkedWorkOrderId).filter((x): x is string => !!x);
-    const rest = remainingWork({ workOrders: ctx.workOrders, workLogs: ctx.workLogs, calendar, startISO: opts.todayISO || opts.startISO, skipWorkOrderIds: linked });
+    const planned = scenario.Blocks.flatMap(b => (b.productRefs || []).map(p => p.id)).filter((x): x is string => !!x);
+    const rest = remainingWork({ workOrders: ctx.workOrders, workLogs: ctx.workLogs, calendar, startISO: opts.todayISO || opts.startISO, skipWorkOrderIds: linked, skipProductIds: planned });
     const inst = buildInstance(scenario, { startISO: opts.startISO, calendar, projects: ctx.projects, fixedLoad: rest.fixedLoad });
     const current = placementsFromScenario(inst, scenario.Blocks);
     const movable = movableBlockIds(scenario);

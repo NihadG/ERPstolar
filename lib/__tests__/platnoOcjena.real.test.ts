@@ -47,7 +47,7 @@ run('ocjena planova s Platna', () => {
             const startISO = jobs.map((b: { startISO: string }) => b.startISO).sort()[0];
             const calendar = buildWorkerCalendar({ workers, attendance, holidays });
             const linked = sc.Blocks.map((b: { linkedWorkOrderId?: string }) => b.linkedWorkOrderId).filter(Boolean) as string[];
-            const rest = remainingWork({ workOrders, workLogs, calendar, startISO: today, skipWorkOrderIds: linked });
+            const rest = remainingWork({ workOrders, workLogs, calendar, startISO: today, skipWorkOrderIds: linked, skipProductIds: sc.Blocks.flatMap((b: { productRefs?: { id?: string }[] }) => (b.productRefs || []).map(p => p.id)).filter(Boolean) as string[] });
             const inst = buildInstance(sc, { startISO, calendar, projects, fixedLoad: rest.fixedLoad });
             const r = qualityReport(inst, placementsFromScenario(inst, sc.Blocks));
             out.push(`## ${sc.Name} (verzija ${sc.Version}, mijenjan ${String(sc.Modified_Date).slice(0, 16).replace('T', ' ')}, ${jobs.length} naloga)`, '');

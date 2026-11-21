@@ -7,7 +7,8 @@
 // par ostaje na projektu → što manje pomjeranja u odnosu na plan na platnu.
 //
 //   1. Početne liste: po prioritetu i projektu, po redu s platna, po najdužem
-//      ostatku lanca (repu). Uzima se najbolja.
+//      ostatku lanca (repu), i sam plan s platna (njegov red i njegove ekipe).
+//      Uzima se najbolja — preračun zato ne može biti lošiji od postojećeg plana.
 //   2. Lokalna pretraga (prvo poboljšanje): pomjeri posao u listi naprijed/nazad,
 //      zamijeni ekipu poslu s više kandidata. Prihvata se samo strogo bolji cilj.
 //   3. Staje kad prolaz ništa ne popravi ili kad se potroši budžet dekodiranja.
@@ -116,6 +117,24 @@ export function* optimizeSteps(inst: Instance, current: Placement[], movableIds:
     let best: Cand | null = null;
     for (const order of initialOrders(inst, decoder.movable, curById)) {
         const c = run(order, new Map());
+        yield evals;
+        if (!best || better(c, best)) best = c;
+    }
+    // Plan s platna kao početna tačka: redom kojim nalozi počinju, s ekipama koje sad imaju.
+    // Dekoder ga složi najranije moguće, pa preračun nikad nije lošiji od postojećeg plana
+    // (osim kad je postojeći plan neizvodljiv — tad ga dekoder popravi).
+    {
+        const forced = new Map<string, string>();
+        for (const j of decoder.movable) {
+            const k = curById.get(j.id)?.crewKey;
+            if (k && j.crews.includes(k)) forced.set(j.id, k);
+        }
+        const order = decoder.movable.slice()
+            .sort((a, b) => (curById.get(a.id)?.startISO || '9999').localeCompare(curById.get(b.id)?.startISO || '9999')
+                || Number(!!curById.get(a.id)?.startsPM) - Number(!!curById.get(b.id)?.startsPM)
+                || a.id.localeCompare(b.id))
+            .map(j => j.id);
+        const c = run(order, forced);
         yield evals;
         if (!best || better(c, best)) best = c;
     }
