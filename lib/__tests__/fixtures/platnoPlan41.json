@@ -1,0 +1,2273 @@
+{
+ "note": "Stvarni plan s Platna 21.11.2026 (41 nalog, 7 parova, subotnje smjene) — imena i id-evi izmišljeni.",
+ "startISO": "2026-11-30",
+ "holidays": [
+  "2027-01-01",
+  "2027-01-02"
+ ],
+ "scenario": {
+  "Name": "Plan 41",
+  "Blocks": [
+   {
+    "id": "b1",
+    "kind": "order",
+    "title": "Poz 3 - Noćni ormarići 550 · Projekat Brdo",
+    "startISO": "2026-12-17",
+    "endISO": "2026-12-17",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b2",
+    "kind": "order",
+    "title": "Poz 7.1 - Umivaonici (apartmani) · Projekat Brdo",
+    "startISO": "2027-01-08",
+    "endISO": "2027-01-11",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 3,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b3",
+    "kind": "order",
+    "title": "Poz 6 - Ogledalo (iste sobe) · Projekat Brdo",
+    "startISO": "2026-12-10",
+    "endISO": "2026-12-15",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 7,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b4",
+    "kind": "order",
+    "title": "Poz 7.2 - Umivaonici 1800 · Projekat Brdo",
+    "startISO": "2027-01-12",
+    "endISO": "2027-01-12",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b5",
+    "kind": "order",
+    "title": "Poz 3.1 - Noćni ormarići 750 · Projekat Brdo",
+    "startISO": "2026-12-18",
+    "endISO": "2026-12-18",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b6",
+    "kind": "order",
+    "title": "Poz 7 - Umivaonici · Projekat Brdo",
+    "startISO": "2027-01-05",
+    "endISO": "2027-01-08",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 7,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b7",
+    "kind": "order",
+    "title": "Poz 4 - Ormar na ulazu · Projekat Brdo",
+    "startISO": "2026-12-14",
+    "endISO": "2026-12-22",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 14,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-5",
+    "workerRefs": [
+     {
+      "id": "w5",
+      "name": "Zlatan Kurt"
+     },
+     {
+      "id": "w6",
+      "name": "Senad Pašić"
+     }
+    ]
+   },
+   {
+    "id": "b8",
+    "kind": "order",
+    "title": "Poz 2 - Kreveti 900 · Projekat Brdo",
+    "startISO": "2026-12-15",
+    "endISO": "2026-12-16",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 3,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b9",
+    "kind": "order",
+    "title": "Poz 5 - Polica za TV · Projekat Brdo",
+    "startISO": "2026-12-03",
+    "endISO": "2026-12-12",
+    "projectRef": {
+     "id": "p1",
+     "name": "Projekat Brdo"
+    },
+    "workerDays": 15,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-5",
+    "workerRefs": [
+     {
+      "id": "w5",
+      "name": "Zlatan Kurt"
+     },
+     {
+      "id": "w6",
+      "name": "Senad Pašić"
+     }
+    ]
+   },
+   {
+    "id": "b10",
+    "kind": "order",
+    "title": "Poz 3.1 - Ostrvo · Projekat Lipa",
+    "startISO": "2027-01-04",
+    "endISO": "2027-01-11",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 10,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b11",
+    "kind": "order",
+    "title": "Poz 5 - Konzola u hodniku · Projekat Lipa",
+    "startISO": "2026-12-24",
+    "endISO": "2027-01-03",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 16,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b12",
+    "kind": "order",
+    "title": "Poz 7.7 - Obloga · Projekat Lipa",
+    "startISO": "2027-01-12",
+    "endISO": "2027-01-13",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b13",
+    "kind": "order",
+    "title": "Poz 6 - Obloge u hodniku · Projekat Lipa",
+    "startISO": "2026-12-07",
+    "endISO": "2026-12-07",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-7",
+    "workerRefs": [
+     {
+      "id": "w11",
+      "name": "Emir Ramić"
+     },
+     {
+      "id": "w12",
+      "name": "Haris Selimović"
+     }
+    ]
+   },
+   {
+    "id": "b14",
+    "kind": "order",
+    "title": "Poz 2 - Zid iza sofe · Projekat Lipa",
+    "startISO": "2027-01-07",
+    "endISO": "2027-01-11",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 6,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b15",
+    "kind": "order",
+    "title": "Poz 3 - Kuhinja · Projekat Lipa",
+    "startISO": "2026-12-12",
+    "endISO": "2026-12-23",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 20,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b16",
+    "kind": "order",
+    "title": "Poz 6.1 - Obloga u prolazu Hodnik - Dnevna soba · Projekat Lipa",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-02",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 6,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-7",
+    "workerRefs": [
+     {
+      "id": "w11",
+      "name": "Emir Ramić"
+     },
+     {
+      "id": "w12",
+      "name": "Haris Selimović"
+     }
+    ]
+   },
+   {
+    "id": "b17",
+    "kind": "order",
+    "title": "Poz 7.5- Vrata toalet spavaća · Projekat Lipa",
+    "startISO": "2026-12-08",
+    "endISO": "2026-12-08",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-7",
+    "workerRefs": [
+     {
+      "id": "w11",
+      "name": "Emir Ramić"
+     },
+     {
+      "id": "w12",
+      "name": "Haris Selimović"
+     }
+    ]
+   },
+   {
+    "id": "b18",
+    "kind": "order",
+    "title": "Poz 4 - Hodnik · Projekat Lipa",
+    "startISO": "2026-12-03",
+    "endISO": "2026-12-04",
+    "projectRef": {
+     "id": "p2",
+     "name": "Projekat Lipa"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "medium",
+    "crewOptions": [
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-7",
+    "workerRefs": [
+     {
+      "id": "w11",
+      "name": "Emir Ramić"
+     },
+     {
+      "id": "w12",
+      "name": "Haris Selimović"
+     }
+    ]
+   },
+   {
+    "id": "b19",
+    "kind": "order",
+    "title": "Poz 1 - Recepcijski pult · Projekat Most",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-08",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 14,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-2",
+    "workerRefs": [
+     {
+      "id": "w7",
+      "name": "Mirza Delić"
+     },
+     {
+      "id": "w8",
+      "name": "Damir Kovač"
+     }
+    ]
+   },
+   {
+    "id": "b20",
+    "kind": "order",
+    "title": "Poz 5 - Obloga sa kosinama · Projekat Most",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-08",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 15,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b21",
+    "kind": "order",
+    "title": "Poz 6 - Velika obloga (desno od vjetrobrana) · Projekat Most",
+    "startISO": "2026-12-28",
+    "endISO": "2027-01-04",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 10,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b22",
+    "kind": "order",
+    "title": "Poz 7 - Recepcija u Fitnesu · Projekat Most",
+    "startISO": "2026-12-09",
+    "endISO": "2026-12-20",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 14,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-2",
+    "workerRefs": [
+     {
+      "id": "w7",
+      "name": "Mirza Delić"
+     },
+     {
+      "id": "w8",
+      "name": "Damir Kovač"
+     }
+    ]
+   },
+   {
+    "id": "b23",
+    "kind": "order",
+    "title": "Poz 4 - Obloge stubova · Projekat Most",
+    "startISO": "2026-12-21",
+    "endISO": "2027-01-11",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 36,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-2",
+      "lead": {
+       "id": "w7",
+       "name": "Mirza Delić"
+      },
+      "members": [
+       {
+        "id": "w8",
+        "name": "Damir Kovač"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-2",
+    "workerRefs": [
+     {
+      "id": "w7",
+      "name": "Mirza Delić"
+     },
+     {
+      "id": "w8",
+      "name": "Damir Kovač"
+     }
+    ]
+   },
+   {
+    "id": "b24",
+    "kind": "order",
+    "title": "Poz 7.1 - Retropult recepcija Fitness · Projekat Most",
+    "startISO": "2026-12-09",
+    "endISO": "2026-12-16",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 14,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-3",
+    "workerRefs": [
+     {
+      "id": "w3",
+      "name": "Haso Mujić"
+     },
+     {
+      "id": "w4",
+      "name": "Tarik Zukić"
+     }
+    ]
+   },
+   {
+    "id": "b25",
+    "kind": "order",
+    "title": "Poz 2 - Retropult komoda · Projekat Most",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-05",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 6,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b26",
+    "kind": "order",
+    "title": "Poz 3 - Retropult City light · Projekat Most",
+    "startISO": "2026-12-06",
+    "endISO": "2026-12-11",
+    "projectRef": {
+     "id": "p3",
+     "name": "Projekat Most"
+    },
+    "workerDays": 6,
+    "crew": 2,
+    "priority": "urgent",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-4",
+    "workerRefs": [
+     {
+      "id": "w9",
+      "name": "Adnan Halilović"
+     },
+     {
+      "id": "w10",
+      "name": "Kenan Softić"
+     }
+    ]
+   },
+   {
+    "id": "b27",
+    "kind": "order",
+    "title": "Poz 8 -Krevet · Projekat Kula",
+    "startISO": "2026-12-02",
+    "endISO": "2026-12-02",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b28",
+    "kind": "order",
+    "title": "Poz 1 - El ormar · Projekat Kula",
+    "startISO": "2026-12-03",
+    "endISO": "2026-12-03",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b29",
+    "kind": "order",
+    "title": "Poz 2 -Ormar · Projekat Kula",
+    "startISO": "2026-12-04",
+    "endISO": "2026-12-04",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b30",
+    "kind": "order",
+    "title": "Poz 12 - Umivaonik · Projekat Kula",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-01",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b31",
+    "kind": "order",
+    "title": "Poz 7 -Minibar · Projekat Kula",
+    "startISO": "2026-12-02",
+    "endISO": "2026-12-02",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-5",
+    "workerRefs": [
+     {
+      "id": "w5",
+      "name": "Zlatan Kurt"
+     },
+     {
+      "id": "w6",
+      "name": "Senad Pašić"
+     }
+    ]
+   },
+   {
+    "id": "b32",
+    "kind": "order",
+    "title": "Poz 11 - Vanjska obloga oko ulaznih vrata · Projekat Kula",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-01",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-6",
+      "lead": {
+       "id": "w13",
+       "name": "Jasmin Omerović"
+      },
+      "members": [
+       {
+        "id": "w14",
+        "name": "Nedžad Husić"
+       }
+      ]
+     },
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-6",
+    "workerRefs": [
+     {
+      "id": "w13",
+      "name": "Jasmin Omerović"
+     },
+     {
+      "id": "w14",
+      "name": "Nedžad Husić"
+     }
+    ]
+   },
+   {
+    "id": "b33",
+    "kind": "order",
+    "title": "Poz 3 -Klupa sa oblogom · Projekat Kula",
+    "startISO": "2026-12-05",
+    "endISO": "2026-12-05",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b34",
+    "kind": "order",
+    "title": "Poz 4 -Obloga bočnog zida · Projekat Kula",
+    "startISO": "2026-12-03",
+    "endISO": "2026-12-03",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 1,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-5",
+    "workerRefs": [
+     {
+      "id": "w5",
+      "name": "Zlatan Kurt"
+     },
+     {
+      "id": "w6",
+      "name": "Senad Pašić"
+     }
+    ]
+   },
+   {
+    "id": "b35",
+    "kind": "order",
+    "title": "Poz 9.1 - Untrašnja obloga oko ulaznih vrata · Projekat Kula",
+    "startISO": "2026-12-08",
+    "endISO": "2026-12-08",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-6",
+      "lead": {
+       "id": "w13",
+       "name": "Jasmin Omerović"
+      },
+      "members": [
+       {
+        "id": "w14",
+        "name": "Nedžad Husić"
+       }
+      ]
+     },
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-6",
+    "workerRefs": [
+     {
+      "id": "w13",
+      "name": "Jasmin Omerović"
+     },
+     {
+      "id": "w14",
+      "name": "Nedžad Husić"
+     }
+    ]
+   },
+   {
+    "id": "b36",
+    "kind": "order",
+    "title": "Poz 9 -Ulazna vrata · Projekat Kula",
+    "startISO": "2026-12-02",
+    "endISO": "2026-12-03",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     },
+     {
+      "id": "par-6",
+      "lead": {
+       "id": "w13",
+       "name": "Jasmin Omerović"
+      },
+      "members": [
+       {
+        "id": "w14",
+        "name": "Nedžad Husić"
+       }
+      ]
+     },
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-6",
+    "workerRefs": [
+     {
+      "id": "w13",
+      "name": "Jasmin Omerović"
+     },
+     {
+      "id": "w14",
+      "name": "Nedžad Husić"
+     }
+    ]
+   },
+   {
+    "id": "b37",
+    "kind": "order",
+    "title": "Poz 6 -Radni sto · Projekat Kula",
+    "startISO": "2026-12-07",
+    "endISO": "2026-12-07",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b38",
+    "kind": "order",
+    "title": "Poz 8.1 -Uzglavlje · Projekat Kula",
+    "startISO": "2026-12-08",
+    "endISO": "2026-12-08",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   },
+   {
+    "id": "b39",
+    "kind": "order",
+    "title": "Poz 10 -WC vrata · Projekat Kula",
+    "startISO": "2026-12-04",
+    "endISO": "2026-12-07",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-6",
+      "lead": {
+       "id": "w13",
+       "name": "Jasmin Omerović"
+      },
+      "members": [
+       {
+        "id": "w14",
+        "name": "Nedžad Husić"
+       }
+      ]
+     },
+     {
+      "id": "par-7",
+      "lead": {
+       "id": "w11",
+       "name": "Emir Ramić"
+      },
+      "members": [
+       {
+        "id": "w12",
+        "name": "Haris Selimović"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-6",
+    "workerRefs": [
+     {
+      "id": "w13",
+      "name": "Jasmin Omerović"
+     },
+     {
+      "id": "w14",
+      "name": "Nedžad Husić"
+     }
+    ]
+   },
+   {
+    "id": "b40",
+    "kind": "order",
+    "title": "Poz 5 -Obloga TV-a sa ogledalima · Projekat Kula",
+    "startISO": "2026-11-30",
+    "endISO": "2026-12-01",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 4,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     },
+     {
+      "id": "par-5",
+      "lead": {
+       "id": "w5",
+       "name": "Zlatan Kurt"
+      },
+      "members": [
+       {
+        "id": "w6",
+        "name": "Senad Pašić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-5",
+    "workerRefs": [
+     {
+      "id": "w5",
+      "name": "Zlatan Kurt"
+     },
+     {
+      "id": "w6",
+      "name": "Senad Pašić"
+     }
+    ]
+   },
+   {
+    "id": "b41",
+    "kind": "order",
+    "title": "Poz 7 - Noćni ormarići · Projekat Kula",
+    "startISO": "2026-12-09",
+    "endISO": "2026-12-09",
+    "projectRef": {
+     "id": "p4",
+     "name": "Projekat Kula"
+    },
+    "workerDays": 2,
+    "crew": 2,
+    "priority": "high",
+    "crewOptions": [
+     {
+      "id": "par-1",
+      "lead": {
+       "id": "w1",
+       "name": "Amer Hodžić"
+      },
+      "members": [
+       {
+        "id": "w2",
+        "name": "Edin Begić"
+       }
+      ]
+     },
+     {
+      "id": "par-3",
+      "lead": {
+       "id": "w3",
+       "name": "Haso Mujić"
+      },
+      "members": [
+       {
+        "id": "w4",
+        "name": "Tarik Zukić"
+       }
+      ]
+     },
+     {
+      "id": "par-4",
+      "lead": {
+       "id": "w9",
+       "name": "Adnan Halilović"
+      },
+      "members": [
+       {
+        "id": "w10",
+        "name": "Kenan Softić"
+       }
+      ]
+     }
+    ],
+    "assignedCrewId": "par-1",
+    "workerRefs": [
+     {
+      "id": "w1",
+      "name": "Amer Hodžić"
+     },
+     {
+      "id": "w2",
+      "name": "Edin Begić"
+     }
+    ]
+   }
+  ],
+  "Links": []
+ },
+ "workers": [
+  {
+   "Worker_ID": "w5",
+   "Name": "Zlatan Kurt",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w2",
+   "Name": "Edin Begić",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w12",
+   "Name": "Haris Selimović",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w8",
+   "Name": "Damir Kovač",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w14",
+   "Name": "Nedžad Husić",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w1",
+   "Name": "Amer Hodžić",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w9",
+   "Name": "Adnan Halilović",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w3",
+   "Name": "Haso Mujić",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w7",
+   "Name": "Mirza Delić",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w10",
+   "Name": "Kenan Softić",
+   "Saturday_Anchor": "2026-11-21"
+  },
+  {
+   "Worker_ID": "w6",
+   "Name": "Senad Pašić",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w13",
+   "Name": "Jasmin Omerović",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w11",
+   "Name": "Emir Ramić",
+   "Saturday_Anchor": "2026-11-28"
+  },
+  {
+   "Worker_ID": "w4",
+   "Name": "Tarik Zukić",
+   "Saturday_Anchor": "2026-11-21"
+  }
+ ],
+ "attendance": []
+}
