@@ -17,7 +17,7 @@ import { createPortal } from 'react-dom';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, LayoutGrid,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, LayoutGrid, Activity,
     Pause, Check, X,
 } from 'lucide-react';
 import type {
@@ -45,6 +45,8 @@ import CompareModal from './CompareModal';
 import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
+import RealityModal from './RealityModal';
+import { getWorkLogsSince } from '@/lib/services';
 import CanvasMenu from './CanvasMenu';
 import { planHealth, proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
 import { FREEZE_WORK_DAYS } from '@/lib/canvas/opt/freeze';
@@ -181,6 +183,7 @@ export default function CanvasTab({
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
+    const [realityOpen, setRealityOpen] = useState(false);
     const [batchOpen, setBatchOpen] = useState(false);
     const [reviewResult, setReviewResult] = useState<Proposal | null>(null);
     const [scheduling, setScheduling] = useState(false);
@@ -627,6 +630,22 @@ export default function CanvasTab({
     const drawerIsWork = useCallback((iso: string) => isWorkDay(iso, satCheckerFor(drawerRefs)), [satCheckerFor, drawerRefs]);
     /** „Ubaci hitno": prioritet se upiše, pa preračun krene nad novim stanjem (efekat ispod). */
     const [urgentPending, setUrgentPending] = useState(false);
+
+    /** Radni dan ekipe bilo kog bloka (plan vs stvarnost: prognoza kraja). */
+    const isWorkForBlock = useCallback(
+        (b: PlanBlock) => (iso: string) => isWorkDay(iso, satCheckerFor(b.workerRefs)),
+        [satCheckerFor]
+    );
+    const loadRealityLogs = useCallback(
+        (sinceISO: string) => (orgId ? getWorkLogsSince(orgId, sinceISO) : Promise.resolve([])),
+        [orgId]
+    );
+
+    /** Kontekst modela rasporeda: isti za zdravlje, prijedlog i poređenje planova. */
+    const modelCtx = useMemo(
+        () => ({ workers, workOrders, attendance, projects, holidays: holidayDates }),
+        [workers, workOrders, attendance, projects, holidayDates]
+    );
 
     // Zdravlje plana poslije svake izmjene (faza 4): ista pravila kao prijedlog, bez pretrage.
     // Odgođena vrijednost — vučenje bloka ostaje glatko, ocjena stigne odmah poslije.
@@ -1242,7 +1261,8 @@ export default function CanvasTab({
                     )}
                     items={[
                         { key: 'chain', label: 'Lanac: poredaj od roka unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
-                        { key: 'compare', label: 'Uporedi planove', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
+                        { key: 'compare', label: 'Uporedi planove (šta ako)', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
+                        { key: 'reality', label: 'Plan vs stvarnost', icon: <Activity size={14} />, onClick: () => setRealityOpen(true) },
                         { key: 'templates', label: 'Šabloni lanaca', icon: <Bookmark size={14} />, badge: templates.length, onClick: () => setTemplatesOpen(true) },
                         { key: 'print', label: 'Štampaj plan', icon: <Printer size={14} />, onClick: printPlan },
                         ...OLD_LAYOUTS.map((l, i) => ({
@@ -1533,6 +1553,17 @@ export default function CanvasTab({
                 onDelete={id => void deleteTemplate(id)}
             />
 
+            <RealityModal
+                isOpen={realityOpen}
+                scenario={scenario}
+                workOrders={workOrders}
+                todayISO={todayISO()}
+                isWorkFor={isWorkForBlock}
+                loadLogs={loadRealityLogs}
+                onSelectBlock={jumpToBlock}
+                onClose={() => setRealityOpen(false)}
+            />
+
             <CompareModal
                 isOpen={compareOpen}
                 current={scenario}
@@ -1542,6 +1573,7 @@ export default function CanvasTab({
                 capacityCtx={capacityCtx}
                 fromISO={anchorISO}
                 days={Math.min(90, Math.max(14, Math.ceil(widthPx / dayWidth(zoom))))}
+                modelCtx={modelCtx}
                 onClose={() => setCompareOpen(false)}
             />
 

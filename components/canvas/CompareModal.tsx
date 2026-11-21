@@ -16,7 +16,9 @@ import { GitCompareArrows, Loader2, ArrowRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { PlanScenario } from '@/lib/types';
 import { getScenario } from '@/lib/services';
-import { computeScenarioKpi, compareScenarios } from '@/lib/canvas/compare';
+import { computeScenarioKpi, compareScenarios, compareModel } from '@/lib/canvas/compare';
+import { modelKpi, type ProposeContext } from '@/lib/canvas/opt/propose';
+import { todayISO } from '@/lib/planning';
 import type { ConflictContext } from '@/lib/canvas/conflicts';
 import type { CapacityContext } from '@/lib/canvas/capacity';
 
@@ -31,11 +33,13 @@ interface CompareModalProps {
     capacityCtx: CapacityContext;
     fromISO: string;
     days: number;
+    /** Kalendar i stvarni nalozi za mjere po modelu (faza 6). */
+    modelCtx?: ProposeContext;
     onClose: () => void;
 }
 
 export default function CompareModal({
-    isOpen, current, scenarios, organizationId, conflictCtx, capacityCtx, fromISO, days, onClose,
+    isOpen, current, scenarios, organizationId, conflictCtx, capacityCtx, fromISO, days, modelCtx, onClose,
 }: CompareModalProps) {
     const others = useMemo(
         () => scenarios.filter(s => s.Scenario_ID !== current.Scenario_ID),
@@ -63,11 +67,16 @@ export default function CompareModal({
     const rows = useMemo(() => {
         if (!other) return null;
         const opts = { fromISO, days };
-        return compareScenarios(
-            computeScenarioKpi(current, conflictCtx, capacityCtx, opts),
-            computeScenarioKpi(other, conflictCtx, capacityCtx, opts),
-        );
-    }, [current, other, conflictCtx, capacityCtx, fromISO, days]);
+        const today = todayISO();
+        const model = modelCtx ? compareModel(modelKpi(current, modelCtx, today), modelKpi(other, modelCtx, today)) : [];
+        return [
+            ...model,
+            ...compareScenarios(
+                computeScenarioKpi(current, conflictCtx, capacityCtx, opts),
+                computeScenarioKpi(other, conflictCtx, capacityCtx, opts),
+            ),
+        ];
+    }, [current, other, conflictCtx, capacityCtx, fromISO, days, modelCtx]);
 
     return (
         <Modal
