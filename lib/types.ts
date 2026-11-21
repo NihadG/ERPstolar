@@ -2177,16 +2177,16 @@ export interface PlanScenario {
         anchorISO: string;        // lijeva ivica vidljivog raspona
         groupBy: PlanGroupBy;
         /**
-         * Raspored redova:
-         *  - `unified-project`  → jedan red po projektu; nalog je okosnica, a narudžbe/
-         *                          transport/rokovi se crtaju ugniježđeno u istom redu.
-         *  - `unified-global`   → sve na jednom redu.
-         *  - `detailed`         → klasične sekcije po vrsti (Obaveze/Nalozi/Nabavka).
-         * Radnici su uvijek zasebna sekcija (kapacitet je ortogonalna osa).
+         * Prikaz platna (samo pogled — blokovi se ne mijenjaju):
+         *  - `unified-project`  → „Projekti": projekat → jedan red po ekipi koja na njemu radi.
+         *  - `crews`            → „Ekipe": parovi po subotnjoj smjeni, preko svih projekata.
+         *  - `rows`             → „Nalozi": jedan red po nalogu, grupisano po projektu.
+         *  - `unified-global`   → stari prikaz: sve na jednom redu.
+         *  - `detailed`         → stari prikaz: sekcije po vrsti (Obaveze/Nalozi/Nabavka).
          */
         layout?: PlanLayout;
     };
 }
 
-/** Kako se slažu redovi platna — objedinjeno ili razdvojeno po vrsti. */
-export type PlanLayout = 'rows' | 'unified-project' | 'unified-global' | 'detailed';
+/** Kako se slažu redovi platna. */
+export type PlanLayout = 'rows' | 'unified-project' | 'crews' | 'unified-global' | 'detailed';

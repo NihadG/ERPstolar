@@ -14,6 +14,43 @@
 
 import { addDays } from './model';
 
+/** Uzastopni dani trake iste vrste — radni (puna traka) ili neradni (tanka linija). */
+export interface WorkRun {
+    fromISO: string;
+    toISO: string;
+    working: boolean;
+}
+
+/**
+ * Traka naloga razložena na RADNE i NERADNE komade. Platno crta radne dane kao
+ * pune komade, a neradne (nedjelja, subota kad ekipa ne radi) kao tanku liniju
+ * koja ih spaja — „pauza", ne greška. Ranije je neradni dan bio crveno
+ * zatamnjenje preko trake i izgledao kao upozorenje.
+ *
+ * Ako u rasponu nema nijednog radnog dana (npr. blok ručno stavljen na
+ * nedjelju), cijela traka se vraća kao radna — blok mora ostati vidljiv.
+ */
+export function workRuns(
+    startISO: string,
+    endISO: string,
+    isSaturdayWorking?: (d: Date) => boolean
+): WorkRun[] {
+    if (endISO < startISO) return [{ fromISO: startISO, toISO: startISO, working: true }];
+    const runs: WorkRun[] = [];
+    let cur = startISO;
+    for (let i = 0; i <= 400 && cur <= endISO; i++) {
+        const d = new Date(`${cur}T12:00:00`);
+        const dow = d.getDay();
+        const working = dow === 0 ? false : dow === 6 ? (isSaturdayWorking ? isSaturdayWorking(d) : true) : true;
+        const last = runs[runs.length - 1];
+        if (last && last.working === working) last.toISO = cur;
+        else runs.push({ fromISO: cur, toISO: cur, working });
+        cur = addDays(cur, 1);
+    }
+    if (!runs.some(r => r.working)) return [{ fromISO: startISO, toISO: endISO, working: true }];
+    return runs;
+}
+
 export interface WeekendMark {
     iso: string;
     kind: 'sat' | 'sun';

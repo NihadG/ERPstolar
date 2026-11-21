@@ -2,17 +2,20 @@
 // PLATNO — BOJA PROJEKTA
 //
 // Na platnu boja kodira PROJEKT (ne vrstu bloka) — inače je 20 naloga jedna
-// plava masa i projekti se ne razlikuju.
+// plava masa i projekti se ne razlikuju. U prikazu „Ekipe" red je par radnika,
+// pa je boja JEDINI znak čiji je nalog — dva projekta s istom bojom tamo su
+// nerazlučiva.
 //
 // Svaka nijansa ima TRI vrijednosti, jer traka nije puna zasićena boja nego
-// MEKA TINTA s tamnim tekstom i tankom obojenom kapicom lijevo (smireniji,
-// komercijalniji izgled — kao Motion/Asana/Linear):
+// MEKA TINTA s tamnim tekstom:
 //   • ink — zasićena boja: kapica, tačka grupe, akcent, montaža (puna ispuna)
-//   • bar — vrlo svijetla tinta: ispuna trake naloga
-//   • txt — tamni tekst na toj tinti (kontrast ≥ 7:1)
+//   • bar — svijetla tinta (14 % inka na bijelom): ispuna trake naloga
+//   • txt — tamni tekst na toj tinti (kontrast ≥ 6:1)
 //
-// Boje su MUTED (ne sirovo zasićene) i biraju se deterministički iz ID-a
-// projekta — stabilno kroz sesije, bez ičega u bazi.
+// Šest nijansi je razmaknuto po krugu boja (~28°, 85°, 175°, 220°, 270°, 335°).
+// Ranije su indigo i violet bili gotovo ista boja, a sky je bio između teala i
+// indiga — na svijetloj tinti se nisu razlikovali. Plava je namjerno „čista"
+// plava (220°), ne indigo, da se na tinti ne stapa s ljubičastom.
 // ════════════════════════════════════════════════════════════════════
 
 export interface ProjectColors {
@@ -24,14 +27,14 @@ export interface ProjectColors {
     txt: string;
 }
 
-/** Šest usklađenih, prigušenih nijansi. */
+/** Šest usklađenih, prigušenih nijansi, razmaknutih po krugu boja. */
 export const PROJECT_COLORS: ProjectColors[] = [
-    { ink: '#4f46e5', bar: '#ebeafc', txt: '#3730a3' },  // indigo
-    { ink: '#0d9488', bar: '#d9f1ec', txt: '#0f5f57' },  // teal
-    { ink: '#be185d', bar: '#fbe3ee', txt: '#8f1247' },  // rose
-    { ink: '#b45309', bar: '#fbecd4', txt: '#83400b' },  // amber
-    { ink: '#4338ca', bar: '#e7e6fb', txt: '#312a97' },  // violet
-    { ink: '#0369a1', bar: '#dcecf8', txt: '#075283' },  // sky
+    { ink: '#2563eb', bar: '#e0e9fc', txt: '#1e40af' },  // plava
+    { ink: '#0f766e', bar: '#ddeceb', txt: '#115e59' },  // teal
+    { ink: '#be185d', bar: '#f6dfe8', txt: '#9d174d' },  // rose
+    { ink: '#b45309', bar: '#f5e7dd', txt: '#7c2d12' },  // amber
+    { ink: '#4d7c0f', bar: '#e6eddd', txt: '#365314' },  // maslinasta
+    { ink: '#9333ea', bar: '#f0e2fc', txt: '#6b21a8' },  // ljubičasta
 ];
 
 /** Nijansa za blok bez projekta — neutralna, da ne glumi projekt. */
@@ -63,4 +66,28 @@ export function projectColors(key: string | undefined | null): ProjectColors {
 /** Samo zasićena boja (ink) — za mjesta koja traže jedan hex (npr. kalendar radnika). */
 export function projectHue(key: string | undefined | null): string {
     return projectColors(key).ink;
+}
+
+/**
+ * Boje za projekte JEDNOG plana — dva projekta nikad ne dijele boju dok ih je
+ * najviše šest. Polazi od iste hash-nijanse kao `projectColors`; kad je zauzeta,
+ * uzima sljedeću slobodnu. Ključevi se obrađuju sortirano, pa je dodjela
+ * deterministička (ista za isti skup projekata, bez ičega u bazi).
+ *
+ * Primjer iz stvarnog plana: „Hotel Kladanj" i „Park Residence" su imali isti
+ * hash-indeks, pa su na platnu bili iste boje.
+ */
+export function projectColorMap(keys: Iterable<string | undefined | null>): Map<string, ProjectColors> {
+    const out = new Map<string, ProjectColors>();
+    const taken = new Set<number>();
+    const unique = Array.from(new Set(Array.from(keys).filter((k): k is string => !!k))).sort();
+    for (const k of unique) {
+        let i = hash(k) % PROJECT_COLORS.length;
+        if (taken.size < PROJECT_COLORS.length) {
+            while (taken.has(i)) i = (i + 1) % PROJECT_COLORS.length;
+        }
+        taken.add(i);
+        out.set(k, PROJECT_COLORS[i]);
+    }
+    return out;
 }

@@ -16,6 +16,8 @@ import { dailyCapacity, capacitySummary, type CapacityContext } from '@/lib/canv
 import './CanvasDock.css';
 
 type DockTab = 'problemi' | 'naruci' | 'kapacitet';
+/** Ključ u localStorage: korisnik je ostavio dok otvoren ('1') ili sklopljen ('0'). */
+const DOCK_OPEN_KEY = 'platno.dock.open';
 
 interface CanvasDockProps {
     scenario: PlanScenario;
@@ -37,7 +39,24 @@ const dm = (iso: string) => {
 export default function CanvasDock({
     scenario, conflictCtx, capacityCtx, fromISO, days, onJumpToBlock, onMarkSent, onFix,
 }: CanvasDockProps) {
-    const [open, setOpen] = useState(true);
+    // Na ekranu nižem od 1000 px (laptop, 1080p na 125 %) dok počinje sklopljen —
+    // otvoren bi platnu uzeo trećinu visine; tabovi s brojevima ostaju vidljivi.
+    // Korisnikov izbor (otvori/sklopi) pamti se u ovom pregledniku.
+    const [open, setOpenState] = useState(() => {
+        if (typeof window === 'undefined') return true;
+        try {
+            const saved = window.localStorage.getItem(DOCK_OPEN_KEY);
+            if (saved === '1' || saved === '0') return saved === '1';
+        } catch { /* privatni prozor — zanemari */ }
+        return window.innerHeight >= 1000;
+    });
+    const setOpen = (next: boolean | ((v: boolean) => boolean)) => {
+        setOpenState(prev => {
+            const v = typeof next === 'function' ? next(prev) : next;
+            try { window.localStorage.setItem(DOCK_OPEN_KEY, v ? '1' : '0'); } catch { /* bez pamćenja */ }
+            return v;
+        });
+    };
     const [tab, setTab] = useState<DockTab>('problemi');
 
     const conflicts = useMemo(() => detectConflicts(scenario, conflictCtx), [scenario, conflictCtx]);

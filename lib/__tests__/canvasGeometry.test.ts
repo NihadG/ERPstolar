@@ -332,3 +332,45 @@ describe('model — veze i ciklusi', () => {
         expect(MAX_BLOCKS_PER_SCENARIO).toBe(500);
     });
 });
+
+// ════════════════════════════════════════════════════════════════════
+import { headerWidthFor, HEADER_WIDTH_COMPACT } from '../canvas/geometry';
+
+describe('red ekipe: dan predaje nije preklapanje', () => {
+    const r = (s: string, e: string) => ({ startISO: s, endISO: e });
+
+    test('bez handoff-a nalog koji počinje dan kad prethodni završava ide u drugu traku', () => {
+        const { laneCount } = packLanes([r('2026-08-03', '2026-08-05'), r('2026-08-05', '2026-08-07')], x => x, vp());
+        expect(laneCount).toBe(2);
+    });
+
+    test('s handoff-om ostaje u istoj traci, a dan se dijeli napola', () => {
+        const { placed, laneCount } = packLanes(
+            [r('2026-08-03', '2026-08-05'), r('2026-08-05', '2026-08-07')], x => x, vp(), { handoff: true });
+        expect(laneCount).toBe(1);
+        expect(placed[0].trimEnd).toBe(true);
+        expect(placed[1].trimStart).toBe(true);
+        expect(placed[0].trimStart).toBeFalsy();
+    });
+
+    test('stvarno preklapanje (više od jednog dana) ostaje druga traka i uz handoff', () => {
+        const { laneCount } = packLanes(
+            [r('2026-08-03', '2026-08-07'), r('2026-08-05', '2026-08-10')], x => x, vp(), { handoff: true });
+        expect(laneCount).toBe(2);
+    });
+});
+
+describe('lijeva kolona prema širini mreže', () => {
+    test('laptop (uska mreža) dobija užu kolonu, veliki ekran punu', () => {
+        expect(headerWidthFor(958)).toBe(HEADER_WIDTH_COMPACT);
+        expect(headerWidthFor(1422)).toBe(HEADER_WIDTH);
+        expect(HEADER_WIDTH_COMPACT).toBeLessThan(HEADER_WIDTH);
+    });
+
+    test('zaglavlje nosi dan u sedmici i dan u mjesecu', () => {
+        const t = headerTicks(vp(), '2026-08-03')[0];
+        expect(t.dow).toBe(1);
+        expect(t.day).toBe(3);
+        expect(monthBands(vp())[0]).toMatchObject({ month: 7, year: 2026 });
+    });
+});

@@ -43,3 +43,27 @@ describe('weekendMarksInSpan', () => {
         expect(weekendMarksInSpan('2026-06-22', '2026-06-20')).toEqual([]);
     });
 });
+
+// ════════════════════════════════════════════════════════════════════
+import { workRuns } from '../canvas/weekend';
+
+// 2026-12-03 čet … 2026-12-08 uto (5.12. sub, 6.12. ned)
+describe('workRuns — traka u radnim komadima', () => {
+    test('vikend bez rada dijeli traku na dva radna komada s pauzom između', () => {
+        expect(workRuns('2026-12-03', '2026-12-08', () => false)).toEqual([
+            { fromISO: '2026-12-03', toISO: '2026-12-04', working: true },
+            { fromISO: '2026-12-05', toISO: '2026-12-06', working: false },
+            { fromISO: '2026-12-07', toISO: '2026-12-08', working: true },
+        ]);
+    });
+
+    test('radna subota ostaje u radnom komadu, pauza je samo nedjelja', () => {
+        expect(workRuns('2026-12-03', '2026-12-08', () => true).map(r => [r.fromISO, r.working])).toEqual([
+            ['2026-12-03', true], ['2026-12-06', false], ['2026-12-07', true],
+        ]);
+    });
+
+    test('blok samo na neradnom danu ostaje vidljiv kao radni', () => {
+        expect(workRuns('2026-12-06', '2026-12-06')).toEqual([{ fromISO: '2026-12-06', toISO: '2026-12-06', working: true }]);
+    });
+});

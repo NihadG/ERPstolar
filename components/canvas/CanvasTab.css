@@ -7,11 +7,39 @@
    ══════════════════════════════════════════════════════════════════ */
 
 .cv-root {
+    /* Lokalni tonovi platna — jači od globalnog --text-secondary (#86868b ima
+       kontrast 3.6:1 i u zaglavlju datuma je bio presitan i preblijed). */
+    --cv-t1: #1d1d1f;           /* primarni tekst */
+    --cv-t2: #48484d;           /* brojevi dana, meta */
+    --cv-t3: #6e6e73;           /* slova dana, pomoćni tekst (4.9:1) */
+    --cv-line: #ececf0;         /* mreža dana */
+    --cv-line-week: #d9d9df;    /* granica sedmice (ponedjeljak) */
+    --cv-off: #f1f1f4;          /* neradni dan — ista siva svugdje */
     display: flex;
     flex-direction: column;
     height: calc(100dvh - 48px);
     min-height: 480px;
     gap: 10px;
+    /* Širina PLATNA (ne prozora) bira raspored trake — isto radi s raširenim
+       i skupljenim menijem aplikacije. */
+    container: cv-root / inline-size;
+}
+
+/* ── Prilagodba širini ────────────────────────────────────────────
+   ≥ 1420 px  jedan red, sve s tekstom (veliki ekran)
+   1260–1419  jedan red, Batch i Rasporedi samo ikonom
+   < 1260     dva NAMJERNA reda (laptop): gore plan i radnje, dolje
+              prikaz / zum / datum — ne nasumičan prelom. */
+.cv-break { display: none; }
+@container cv-root (max-width: 1419px) {
+    .cv-btn.squeeze { width: 34px; padding: 0; gap: 0; }
+    .cv-btn.squeeze .lbl { display: none; }
+}
+@container cv-root (max-width: 1259px) {
+    .cv-bar .cv-view { order: 10; }
+    .cv-bar .cv-break { display: block; order: 9; flex-basis: 100%; height: 0; }
+    .cv-bar .cv-view-div { display: none; }
+    .cv-root .cv-bar .cv-name { flex: 1 1 auto; max-width: 340px; }
 }
 
 .cv-center {
@@ -301,15 +329,16 @@
 }
 .cv-seg button {
     height: 26px;
-    padding: 0 11px;
+    padding: 0 10px;
     border: none;
     background: transparent;
     border-radius: 6px;
-    font-size: var(--cm-fs-xs);
+    font-size: 13px;
     font-weight: 500;
     font-family: inherit;
-    color: var(--text-secondary);
+    color: var(--cv-t3);
     cursor: pointer;
+    white-space: nowrap;
 }
 .cv-seg button:hover:not(.on) { color: var(--text-primary); }
 .cv-seg button.on {
@@ -457,12 +486,49 @@
     border-radius: 3px;
 }
 
+/* ── Legenda (prikaz Ekipe) ───────────────────────────────────────
+   Red je par radnika, pa boja trake jedina kaže čiji je nalog. Klik na
+   projekat ga istakne (ostali se priguše). */
+.cv-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0 4px;
+    margin: -2px 0;
+    flex-shrink: 0;
+}
+.cv-legend-lbl { font-size: 12px; color: var(--cv-t3); margin-right: 4px; }
+.cv-legend button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 28px;
+    padding: 0 11px 0 9px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--cm-r-pill);
+    background: var(--background);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--cv-t1);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.cv-legend button:hover,
+.cv-legend button.on { border-color: var(--border); background: var(--surface); }
+.cv-legend button.on { box-shadow: inset 0 0 0 1px var(--border); }
+.cv-legend i { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+
 /* ── Mreža ────────────────────────────────────────────────────── */
 .cv-grid {
     flex: 1 1 auto;
     min-height: 0;
     position: relative;
-    overflow: auto;
+    /* Osa uvijek tačno staje u širinu (widthPx iz ResizeObservera) — vodoravni
+       skrol bi samo pokazao prazninu. */
+    overflow-x: hidden;
+    overflow-y: auto;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--background);
@@ -470,6 +536,10 @@
     box-shadow: 0 1px 3px var(--shadow), 0 8px 24px -16px var(--shadow-md);
 }
 
+/* ── Zaglavlje: mjesec (26) + dan (36) ────────────────────────────
+   Puno ime mjeseca, slovo dana iznad broja, ponedjeljak jači (početak
+   sedmice), nedjelja siva kolona, danas plavi krug. Ranije je bilo 11 px
+   sivo na bijelom i vikend se jedva razlikovao. */
 .cv-head {
     display: flex;
     position: sticky;
@@ -477,7 +547,6 @@
     z-index: 6;
     background: var(--background);
     border-bottom: 1px solid var(--border);
-    box-shadow: 0 1px 0 var(--border-light);
 }
 
 .cv-head-corner {
@@ -487,113 +556,121 @@
     left: 0;
     z-index: 2;
     display: flex;
-    align-items: flex-end;
-    padding: 0 14px 8px;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 1px;
+    padding: 0 16px 10px;
     background: var(--background);
     border-right: 1px solid var(--border);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-tertiary);
 }
+.cv-head-corner b { font-size: 14px; font-weight: 600; color: var(--cv-t1); line-height: 1.25; }
+.cv-head-corner span { font-size: 12px; color: var(--cv-t3); line-height: 1.3; white-space: nowrap; overflow: hidden; }
 
-.cv-head-dates { position: relative; flex: 1 1 auto; }
+.cv-head-dates { position: relative; flex: 1 1 auto; overflow: hidden; }
 
 .cv-band {
     position: absolute;
-    top: 6px;
-    height: 16px;
+    top: 0;
+    height: 26px;
     display: flex;
-    align-items: center;
-    padding-left: 8px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    border-left: 1px solid var(--border-light);
+    align-items: flex-end;
+    padding: 0 0 2px 8px;
+    border-left: 1px solid var(--cv-line-week);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cv-t1);
     white-space: nowrap;
     overflow: hidden;
 }
+.cv-band:first-child { border-left: 0; }
+.cv-band em { font-style: normal; font-weight: 500; color: var(--cv-t3); margin-left: 5px; }
 
-.cv-tick {
+.cv-day {
     position: absolute;
-    top: 28px;
-    bottom: 6px;
+    top: 26px;
+    height: 36px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 11.5px;
-    color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
 }
-.cv-tick.major { color: var(--text-secondary); font-weight: 600; }
-.cv-tick.nonwork { color: var(--text-tertiary); opacity: .45; }
-.cv-tick.today {
-    color: #fff;
-    font-weight: 700;
+.cv-day i { font-style: normal; font-size: 10.5px; font-weight: 500; color: var(--cv-t3); line-height: 13px; }
+.cv-day b {
+    font-size: 13px; font-weight: 500; color: var(--cv-t2); line-height: 20px;
+    min-width: 22px; height: 20px; padding: 0 3px; text-align: center; border-radius: 10px;
 }
-/* Danas — puni krug oko broja, ne razvučen pravougaonik. */
-.cv-tick.today::before {
-    content: "";
+.cv-day.mon { border-left: 1px solid var(--cv-line-week); }
+.cv-day.mon b { color: var(--cv-t1); font-weight: 600; }
+.cv-day.sun { background: var(--cv-off); }
+.cv-day.sun i, .cv-day.sun b { color: var(--text-tertiary); }
+.cv-day.today i { color: var(--accent); font-weight: 600; }
+.cv-day.today b { background: var(--accent); color: #fff; font-weight: 600; }
+
+/* Mjesečni zum: jedna oznaka po sedmici. */
+.cv-week {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--accent);
-    z-index: -1;
-    box-shadow: 0 2px 6px rgba(10, 94, 208, .35);
+    top: 26px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding-left: 7px;
+    border-left: 1px solid var(--cv-line-week);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cv-t2);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
+.cv-week.today { color: var(--accent); font-weight: 600; }
 
 /* ── Redovi ───────────────────────────────────────────────────── */
 .cv-body { position: relative; }
 
+/* Naslov sekcije — samo u starim prikazima (detaljno, jedan red). */
 .cv-section-head {
     position: sticky;
     left: 0;
     z-index: 3;
-    padding: 8px 14px;
-    background: var(--surface-active);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    font-size: var(--cm-fs-micro);
-    font-weight: 750;
-    text-transform: uppercase;
-    letter-spacing: .07em;
-    color: var(--text-secondary);
+    padding: 8px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cv-t2);
     width: max-content;
     min-width: 100%;
 }
 
 .cv-row {
     display: flex;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--cv-line);
     position: relative;
 }
-.cv-row:hover { background: color-mix(in srgb, var(--accent) 3%, transparent); }
-.cv-row.synthetic .cv-row-label { font-style: italic; color: var(--text-secondary); }
+.cv-row.synthetic .cv-row-label { font-style: italic; color: var(--cv-t3); }
 
 .cv-row-head {
     width: var(--cv-header-w);
     min-width: var(--cv-header-w);
     position: sticky;
     left: 0;
-    z-index: 2;
+    z-index: 3;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 2px;
-    padding: 0 12px;
+    gap: 1px;
+    padding: 0 14px;
     background: var(--background);
     border-right: 1px solid var(--border);
+    overflow: hidden;
 }
-.cv-row:hover .cv-row-head { background: color-mix(in srgb, var(--accent) 3%, var(--background)); }
+/* Red ispod naslova grupe je uvučen — vidi se kojoj grupi pripada. */
+.cv-row-head.indent { padding-left: 34px; }
+.cv-row:hover .cv-row-head { background: #fafafc; }
 
-/* Red radnika je dugme (otvara njegov kalendar) — mora izgledati kao ostala
-   zaglavlja redova, jer to i jeste, a ne kontrola u traci. */
+/* Red radnika (stari prikazi) je dugme — otvara njegov kalendar. */
 button.cv-row-head {
     font-family: inherit;
     color: inherit;
@@ -603,332 +680,299 @@ button.cv-row-head {
     border-bottom: 0;
     cursor: pointer;
 }
-/* PAŽNJA na specifičnost: `.cv-row:hover .cv-row-head` gore je (0,3,0) i tuče
-   goli `button.cv-row-head:hover` (0,2,1). Pošto hover nad dugmetom ujedno znači
-   hover nad redom, bez izjednačene težine bi direktan hover bio nevidljiv i
-   jedina naznaka klika ostao bi kursor. Zato oba pravila idu na (0,3,1), a
-   redoslijed odlučuje — direktan hover je zadnji i pobjeđuje. */
-.cv-row:hover button.cv-row-head { background: color-mix(in srgb, var(--accent) 3%, var(--background)); }
 .cv-row button.cv-row-head:hover { background: var(--surface-hover); }
 button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .cv-row-label {
     font-size: 13px;
     font-weight: 500;
+    color: var(--cv-t1);
+    line-height: 1.35;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+.cv-row-sub {
+    font-size: 12px;
+    color: var(--cv-t3);
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* Ekipa: svako ime je dugme (kalendar radnika). */
+.cv-crew-names { display: flex; align-items: baseline; min-width: 0; }
+.cv-name-btn {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 3px;
     white-space: nowrap;
 }
-.cv-row-sub { font-size: 11px; color: #5a6472; }
+.cv-name-btn:hover:not(:disabled) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.cv-name-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cv-name-btn:disabled { cursor: default; }
+.cv-plus { color: var(--cv-t3); margin: 0 4px; font-weight: 400; }
+/* Ekipa s dva naloga u isto vrijeme — jedina crvena oznaka u koloni. */
+.cv-warn { color: #c4291c; font-weight: 500; }
+
+/* Red naloga (prikaz Nalozi): šifra + naziv, klik otvara detalje. */
+.cv-order-head { cursor: pointer; }
+.cv-order-head:hover { background: var(--surface) !important; }
+.cv-order-label { display: flex; align-items: center; gap: 6px; }
+.cv-order-label .cv-code { color: var(--cv-txt); }
 
 .cv-row-lane {
     position: relative;
     flex: 1 1 auto;
-    /* Mreža dana — čisto vizuelna, geometrija je u JS-u */
-    /* Širina dana dolazi iz JS-a (geometry.ts) — ranije je bila zakucana na 22px, pa
-       su na „Dan"/„Mjesec" zumu linije mreže lagale o tome gdje počinje koji dan. */
-    background-image: linear-gradient(to right, color-mix(in srgb, var(--border-light) 60%, transparent) 1px, transparent 1px);
-    background-size: var(--cv-day-w, 22px) 100%;
+    /* Mreža: tanka linija po danu + jača po sedmici (ponedjeljak). Širina dana i
+       pomak prvog ponedjeljka dolaze iz JS-a (geometry.ts). */
+    background-image:
+        linear-gradient(to right, var(--cv-line-week) 1px, transparent 1px),
+        linear-gradient(to right, var(--cv-line) 1px, transparent 1px);
+    background-size: calc(var(--cv-day-w, 26px) * 7) 100%, var(--cv-day-w, 26px) 100%;
+    background-position: var(--cv-week-off, 0) 0, 0 0;
     cursor: crosshair;
     touch-action: pan-y;
+    /* Zadnji vidljivi dan (siva subota) viri preko desne ivice — odsijeci ga
+       vodoravno; `clip` ne pravi skrol i ne reže prsten izabrane trake gore/dolje. */
+    overflow-x: clip;
+}
+/* Mjesečni zum: dan je 11 px — samo sedmične linije, inače je mreža šum. */
+.cv-body.z-mjesec .cv-row-lane {
+    background-image: linear-gradient(to right, var(--cv-line-week) 1px, transparent 1px);
+    background-size: calc(var(--cv-day-w, 11px) * 7) 100%;
+    background-position: var(--cv-week-off, 0) 0;
 }
 
-/* ── Neradni dani ─────────────────────────────────────────────── */
-/* Tonirana kolona kroz cijelo platno. Ranije je neradni dan blijedio samo u
-   zaglavlju, pa se u mreži nije vidjelo gdje sedmica prestaje — traka koja
-   „preskače nedjelju" izgledala je kao da radi kroz vikend. */
+/* ── Neradni dani ─────────────────────────────────────────────────
+   Ista siva svugdje: nedjelja kroz cijelo platno, subota samo u redu ekipe
+   koja tu subotu ne radi (njena smjena). */
 .cv-nonwork-layer {
     position: absolute;
     top: 0;
     bottom: 0;
     right: 0;
     z-index: 0;
-    pointer-events: none;
-}
-.cv-nonwork {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: color-mix(in srgb, var(--surface) 70%, transparent);
-}
-
-/* ── Blokovi ───────────────────────────────────────────────────────
-   Traka naloga je MEKA TINTA u boji projekta (--cv-bar) s TAMNIM tekstom
-   (--cv-txt) i tankom zasićenom kapicom lijevo (--cv-ink). Smireno i čitljivo
-   i kad ih je dvadeset. Blokovi bez tih varijabli (narudžba/rok) padaju na
-   staru semantičku boju (--cv-block-color) s bijelim tekstom. */
-.cv-block {
-    position: absolute;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    border-radius: 7px;
-    background: var(--cv-bar, var(--cv-block-color, var(--accent)));
-    color: var(--cv-txt, #fff);
-    font-size: 12px;
-    font-weight: 560;
-    letter-spacing: -.006em;
-    cursor: grab;
-    user-select: none;
     overflow: hidden;
-    z-index: 2;
-    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, .08));
-    transition: box-shadow .14s ease, transform .14s ease;
-}
-/* Zasićena kapica lijevo — nosilac boje projekta na mekoj tinti. */
-.cv-block::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 3px;
-    background: var(--cv-ink, transparent);
-    z-index: 1;
     pointer-events: none;
 }
-.cv-block:hover {
-    box-shadow: 0 4px 12px -3px rgba(20, 28, 44, .28);
-    transform: translateY(-1px);
-    z-index: 5;
-}
+.cv-nonwork { position: absolute; top: 0; bottom: 0; background: var(--cv-off); }
+.cv-off { position: absolute; top: 0; bottom: 0; background: var(--cv-off); pointer-events: none; z-index: 0; }
 
-/* Nacrt — nije još stvarni nalog: obris u boji projekta, bez pune tinte. */
-.cv-block.is-draft {
-    background: var(--background);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--cv-ink) 55%, transparent);
-}
-.cv-block.is-draft::before { width: 3px; background: var(--cv-ink); opacity: .55; }
-
-/* Montaža (teren) — puni ink i bijeli tekst: obaveza prema klijentu, ne radionica. */
-.cv-block.k-montaza {
-    background: var(--cv-ink, #5856d6);
-    color: #fff;
-}
-.cv-block.k-montaza::before { display: none; }
-.cv-block.k-montaza.is-draft {
-    background: var(--background);
-    color: var(--cv-txt);
-    box-shadow: inset 0 0 0 1.5px var(--cv-ink);
-}
-.cv-block.k-montaza.is-draft::before { display: block; }
-
-/* ── Jedan nalog = jedan red ──────────────────────────────────────
-   Ime naloga stoji u lijevoj FIKSNOJ koloni (uvijek čitljivo), pa traka
-   nosi samo vrijeme. Time nestaje problem „naziv ne stane u traku". */
-
-/* Naslovni red projekta — skuplja/širi naloge. Čita se kao sekcija: tačka u
-   boji projekta, naziv, broj naloga u pilu, i raspon desno. Cijeli red ima
-   fiksnu visinu i JEDNU liniju — bez preklapanja. */
+/* ── Naslov grupe (projekat / smjena) ─────────────────────────────
+   Lijevo: kvačica, tačka projekta ili slovo smjene, naziv + jedan red
+   sažetka (broj naloga · raspon · „hitno"). Desno: tanka traka raspona
+   projekta, ili sive subote smjene. */
 .cv-grouprow {
     display: flex;
     position: relative;
-    height: 40px;
+    height: 48px;
     background: var(--surface);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--cv-line);
 }
-.cv-grouprow:first-child { border-top: 0; }
-.cv-grouprow:hover { background: var(--surface-hover); }
+.cv-grouprow + .cv-grouprow,
+.cv-row + .cv-grouprow { border-top: 1px solid var(--border-light); }
 .cv-group-head {
+    width: var(--cv-header-w);
+    min-width: var(--cv-header-w);
     position: sticky;
     left: 0;
-    z-index: 8;
+    z-index: 4;
     display: flex;
     align-items: center;
-    gap: 9px;
-    width: 100%;
-    min-width: 100%;
+    gap: 8px;
+    padding: 0 14px 0 12px;
     border: 0;
-    background: transparent;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
     font-family: inherit;
     cursor: pointer;
     text-align: left;
-    padding: 0 16px;
 }
+.cv-group-head:hover { background: var(--surface-hover); }
 .cv-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.cv-group-caret { color: var(--text-tertiary); flex-shrink: 0; transition: transform .16s ease; }
-.cv-grouprow:hover .cv-group-caret { color: var(--text-secondary); }
+.cv-group-caret { color: var(--cv-t3); flex-shrink: 0; transition: transform .16s ease; }
 .cv-grouprow.collapsed .cv-group-caret { transform: rotate(-90deg); }
-.cv-group-dot {
-    width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
+.cv-group-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.cv-shift-tag {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--cv-t1);
 }
+.cv-shift-tag.soft { color: var(--cv-t3); border-style: dashed; }
+.cv-group-text { display: flex; flex-direction: column; min-width: 0; }
 .cv-group-name {
-    font-size: 13.5px; font-weight: 680; letter-spacing: -.012em; color: var(--text-primary);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    font-size: 14px; font-weight: 600; color: var(--cv-t1); line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.cv-group-ct {
-    flex-shrink: 0;
-    font-size: 11px; font-weight: 700; color: #4b5563;
-    font-variant-numeric: tabular-nums;
-    padding: 1px 8px; border-radius: var(--cm-r-pill);
-    background: var(--background); border: 1px solid var(--border);
+.cv-group-meta {
+    font-size: 12px; color: var(--cv-t3); line-height: 1.35;
+    white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums;
 }
-.cv-group-draft {
-    flex-shrink: 0;
-    font-size: 10.5px; font-weight: 650; color: #83400b;
-    padding: 1px 7px; border-radius: var(--cm-r-pill); background: var(--warning-bg);
-}
-.cv-group-rng {
-    margin-left: auto; flex-shrink: 0;
-    font-size: 11.5px; color: #5a6472; font-weight: 500; font-variant-numeric: tabular-nums;
-    padding-left: 12px;
-}
-.cv-group-lane { z-index: 0; }
+.cv-urgent { color: #c4291c; font-weight: 600; }
+.cv-group-lane { background: none; cursor: default; }
 
-/* Ovojnica grupe — potez u boji projekta koji pokazuje raspon kad je skupljena. */
+/* Raspon projekta — tanak potez u boji projekta. */
 .cv-envelope {
     position: absolute;
     top: 50%;
-    transform: translateY(-50%);
     height: 6px;
+    margin-top: -3px;
     border-radius: 3px;
-    opacity: .5;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3);
+    opacity: .38;
     pointer-events: none;
 }
 
-/* Red naloga — lijeva kolona je klik-meta koja otvara detalje. Kapica u boji
-   projekta je zaseban element (ne ::before), poravnat s ostatkom. */
-.cv-order-head {
-    cursor: pointer;
-    gap: 10px;
-    flex-direction: row;
-    align-items: center;
+/* ── Blok ─────────────────────────────────────────────────────────
+   Traka su RADNI KOMADI (.cv-run.on) spojeni tankom isprekidanom linijom
+   (.cv-run.off) preko dana kad se ne radi. Natpis (.cv-lbl) živi u jednom
+   radnom komadu: značka šifre + naziv skraćen na granici riječi. Boja =
+   projekat kao MEKA TINTA (--cv-bar) s tamnim tekstom (--cv-txt). */
+.cv-block {
+    position: absolute;
+    height: 28px;
+    z-index: 2;
+    color: var(--cv-txt, #fff);
+    font-size: 12px;
+    cursor: grab;
+    user-select: none;
+    border-radius: 6px;
+    transition: transform .14s ease, opacity .14s ease;
 }
-.cv-order-cap {
-    width: 3px; height: 22px; border-radius: var(--cm-r-pill);
-    background: var(--cv-row-hue, transparent); flex-shrink: 0;
-}
-.cv-order-meta { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; flex: 1 1 auto; }
-.cv-order-head:hover { background: var(--surface); }
-.cv-order-head .cv-row-label { font-weight: 560; color: var(--text-primary); }
-.cv-order-head .cv-row-sub { color: #5a6472; }
-.cv-block.dragging { cursor: grabbing; opacity: .92; z-index: 6; box-shadow: 0 10px 24px -6px rgba(20, 28, 44, .35); }
-.cv-block.selected {
-    z-index: 5;
-    box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--cv-ink, var(--accent)),
-        0 4px 12px -3px rgba(20, 28, 44, .25);
-}
-.cv-block.locked { cursor: default; }
+.cv-block:hover { z-index: 5; transform: translateY(-1px); }
+.cv-block:hover .cv-run.on { box-shadow: 0 4px 12px -4px rgba(20, 28, 44, .35); }
 
-/* Odsječen blok dobija ravnu ivicu — vidi se da se nastavlja izvan prozora */
-.cv-block.clip-start { border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.cv-block.clip-end { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-
-.cv-block-label {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 0 9px 0 11px;   /* lijevo veći razmak — čisti projektnu kapicu */
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    position: relative;      /* iznad vikend-oznaka (z-index) — tekst ostaje čitljiv */
-    z-index: 3;
+.cv-run { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.cv-run.on {
+    background: var(--cv-bar, var(--cv-block-color, var(--accent)));
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cv-ink, #000) 22%, transparent);
+}
+.cv-run.on.sq-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.cv-run.on.sq-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* Neradni dani unutar trake: isprekidana linija u boji projekta — „pauza". */
+.cv-run.off {
+    top: 50%;
+    bottom: auto;
+    height: 2px;
+    margin-top: -1px;
+    background-image: repeating-linear-gradient(90deg,
+        color-mix(in srgb, var(--cv-ink, #8e8e93) 55%, transparent) 0 3px, transparent 3px 6px);
 }
 
-/* ── Vikend na traci naloga ────────────────────────────────────────
-   Oznaka se crta SAMO kad se NE radi (crveno): subota koju dodijeljena ekipa
-   preskače i svaka nedjelja. Radna subota se podrazumijeva → bez oznake. Suptilna
-   tinta + tanka crtica na dnu = tiha „zastavica" koja se nazire i preko projektne
-   boje i preko punog inka montaže, a ne guši naziv (ispod je, z-index). Prati
-   per-nalog subotnju rotaciju. */
-.cv-wk {
+/* Montaža (teren) — puni ink i bijeli tekst: obaveza prema klijentu, ne radionica. */
+.cv-block.k-montaza { color: #fff; }
+.cv-block.k-montaza .cv-run.on { background: var(--cv-ink, #5856d6); box-shadow: none; }
+.cv-block.k-montaza .cv-code { background: rgba(255, 255, 255, .22); }
+
+/* Ostale vrste — semantička boja vrste, bijeli tekst (rok crven, narudžba žuta). */
+.cv-block:not(.work) .cv-run.on { box-shadow: none; }
+.cv-block.k-order { --cv-block-color: var(--accent); }
+.cv-block.k-montaza { --cv-block-color: #5856d6; }
+.cv-block.k-transport { --cv-block-color: #8e8e93; }
+.cv-block.k-purchase { --cv-block-color: var(--warning); }
+.cv-block.k-note { --cv-block-color: #a2845e; }
+.cv-block.k-milestone { --cv-block-color: var(--error); }
+.cv-block.k-milestone .cv-run.on { border-radius: 4px; }
+
+/* Natpis */
+.cv-lbl {
     position: absolute;
     top: 0;
     bottom: 0;
-    z-index: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 7px;
+    white-space: nowrap;
+    overflow: hidden;
+    z-index: 2;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: -.005em;
     pointer-events: none;
 }
-.cv-wk.off {         /* subota bez rada + nedjelja */
-    background: color-mix(in srgb, #dc2626 9%, transparent);
-    box-shadow: inset 0 -2px 0 color-mix(in srgb, #dc2626 42%, transparent);
+.cv-lbl.center { justify-content: center; padding: 0; gap: 4px; }
+.cv-code {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--cv-ink, currentColor) 16%, transparent);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
-/* Montaža ima bijeli tekst na punom inku — tu suptilna sjena pomaže čitljivosti. */
-.cv-block.k-montaza:not(.is-draft) .cv-block-label { text-shadow: 0 1px 1px rgba(0, 0, 0, .22); }
+.cv-code.bare { background: none; padding: 0; }
+.cv-nm { overflow: hidden; }
+.cv-sfx { color: color-mix(in srgb, var(--cv-txt, currentColor) 62%, transparent); font-weight: 400; }
+.cv-lock { flex-shrink: 0; opacity: .8; }
 
-/* Projekt uz naziv (npr. na narudžbi: „Frischeis · Emir Granov") — prigušen. */
-.cv-block-project {
-    opacity: .75;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
+/* Izbor / veza / povlačenje */
+.cv-block.selected .cv-run.on {
+    box-shadow: 0 0 0 2px var(--background), 0 0 0 3.5px var(--cv-ink, var(--accent));
 }
+.cv-block.dragging { cursor: grabbing; opacity: .92; z-index: 6; }
+.cv-block.dragging .cv-run.on { box-shadow: 0 10px 24px -6px rgba(20, 28, 44, .35); }
+.cv-block.locked { cursor: default; }
+/* Projekat istaknut iz legende — ostali blokovi se priguše. */
+.cv-block.dim { opacity: .22; }
 
 .cv-handle {
     position: absolute;
     top: 0;
     bottom: 0;
     cursor: ew-resize;
-    z-index: 2;
+    z-index: 3;
+    border-radius: 6px;
 }
 .cv-handle.left { left: 0; }
 .cv-handle.right { right: 0; }
-.cv-block:hover .cv-handle { background: rgba(255, 255, 255, .25); }
+.cv-block:hover .cv-handle { background: color-mix(in srgb, var(--cv-ink, #000) 12%, transparent); }
 
-/* Boja po vrsti — značenje, ne ukras */
-.cv-block.k-order { --cv-block-color: var(--accent); }
-.cv-block.k-montaza { --cv-block-color: #5856d6; }
-.cv-block.k-transport { --cv-block-color: #8e8e93; }
-.cv-block.k-purchase { --cv-block-color: var(--warning); }
-.cv-block.k-note { --cv-block-color: #a2845e; }
-.cv-block.k-milestone {
-    --cv-block-color: var(--error);
-    border-radius: 4px;
+/* ── Sekundarni sloj (narudžba/transport/rok) — uži, ispod naloga ── */
+.cv-block.compact { height: 18px; margin-top: 8px; font-size: 11px; }
+.cv-block.compact .cv-run.on { border-radius: 5px; }
+.cv-block.compact .cv-lbl { padding: 0 6px; gap: 3px; font-size: 11px; }
+.cv-block.compact .cv-code { height: 14px; font-size: 10.5px; }
+/* Narudžba: dijagonalna šrafura (materijal koji „putuje" do radionice). */
+.cv-block.k-purchase .cv-run.on {
+    background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .30) 0 5px, transparent 5px 10px);
 }
 
-/* ── Objedinjeni red: sekundarni sloj (narudžba/transport/rok) ──────
-   Nalog je puna traka (okosnica), a logistika ispod je uža i prigušena —
-   da se u JEDNOM redu razazna „ovo je nalog, a unutar intervala stiže narudžba". */
-.cv-block.compact {
-    height: 18px;
-    margin-top: 8px;              /* centrirano u slotu iznad primarne trake */
-    border-radius: 5px;
-    font-size: 11px;
-    box-shadow: none;
-    opacity: .95;
+/* ── Živi status pretvorenog bloka ────────────────────────────────
+   Samo blok koji je postao stvarni nalog/narudžba: kapica u boji projekta
+   lijevo + oznaka statusa ispred šifre. Bez procenata i bez oznaka kašnjenja. */
+.cv-block.s-pending   { --cv-status: #0a84ff; }   /* Na čekanju / Nacrt narudžbe */
+.cv-block.s-active    { --cv-status: #12aebc; }   /* U toku / Poslano */
+.cv-block.s-paused    { --cv-status: #ff9f0a; }   /* Pauza */
+.cv-block.s-done      { --cv-status: var(--success); }
+.cv-block.s-cancelled { --cv-status: var(--error); }
+.cv-block.real .cv-run.on.first::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--cv-ink, var(--cv-status));
+    border-radius: 6px 0 0 6px;
 }
-.cv-block.compact .cv-block-label { padding: 0 6px; gap: 3px; }
-
-/* Narudžba: dijagonalna šrafura preko boje (materijal koji „putuje" do radionice). */
-.cv-block.compact.k-purchase {
-    background-image: repeating-linear-gradient(135deg,
-        rgba(255, 255, 255, .30) 0 5px,
-        transparent 5px 10px);
-}
-.cv-block.compact.k-transport { opacity: .85; }
-.cv-block.compact.k-note { opacity: .8; }
-
-/* Oznaka na nalogu: u njegovom intervalu stiže narudžba materijala. */
-.cv-supply-dot {
-    display: inline-flex;
-    align-items: center;
-    margin-left: 4px;
-    padding: 1px 2px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, .28);
-    flex-shrink: 0;
-}
-.cv-supply-dot svg { display: block; }
-
-/* ── Živi status pretvorenog bloka ──────────────────────────────
-   Boja vrste ostaje ispuna. Status je NOVI, nezavisan kanal: obojena „kapica"
-   uz lijevu ivicu (::before) + mala ikona/tačka u nazivu. Nacrt (nepretvoren
-   blok) nema statusnu klasu → izgleda kao i prije. Bez procenata i bez oznaka
-   kašnjenja — samo u kojem je stanju stvarni nalog/narudžba. */
-.cv-block.s-pending { --cv-status: #0a84ff; }   /* Na čekanju / Nacrt narudžbe */
-.cv-block.s-active  { --cv-status: #12aebc; }   /* U toku / Poslano */
-.cv-block.s-paused  { --cv-status: #ff9f0a; }   /* Pauza */
-.cv-block.s-done    { --cv-status: var(--success); }  /* Završeno / Primljeno */
-.cv-block.s-cancel  { --cv-status: var(--error); }    /* Otkazano */
-
-/* Kapica lijevo je uvijek boja PROJEKTA (--cv-ink), pa status NE crta svoju
-   kapicu — status nosi mala obojena tačka/ikona u nazivu. */
-
-/* Ikona statusa u nazivu (Pauza / Završeno / Otkazano) — u semantičkoj boji. */
 .cv-status-ico { flex-shrink: 0; color: var(--cv-status, currentColor); }
-/* Tačka statusa (Na čekanju / U toku) — semantička boja s mekim prstenom. */
 .cv-status-dot {
     width: 7px; height: 7px; border-radius: 50%;
     background: var(--cv-status, currentColor); flex-shrink: 0;
@@ -936,15 +980,33 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
 }
 .cv-status-dot.live { animation: cv-pulse 1.6s ease-in-out infinite; }
 @keyframes cv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-
-/* Završeno / Otkazano — prigušeno; otkazano i precrtano. */
 .cv-block.s-done { opacity: .62; }
-.cv-block.s-cancel { opacity: .5; }
-.cv-block.s-cancel .cv-block-label { text-decoration: line-through; }
-
+.cv-block.s-cancelled { opacity: .5; }
+.cv-block.s-cancelled .cv-nm { text-decoration: line-through; }
 @media (prefers-reduced-motion: reduce) {
     .cv-status-dot.live { animation: none; }
 }
+
+/* ── Kartica na hover ─────────────────────────────────────────────
+   Puni naziv, projekat, datumi, radni dani, radnik-dani, ekipa. Zamjena za
+   sistemski tooltip, koji se pojavljivao sa zakašnjenjem i bez forme. */
+.cv-tip {
+    position: fixed;
+    z-index: 2000;
+    max-width: 328px;
+    padding: 9px 12px 10px;
+    border-radius: 10px;
+    background: #1d1d1f;
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.45;
+    box-shadow: 0 10px 30px -8px rgba(0, 0, 0, .45);
+    pointer-events: none;
+}
+.cv-tip.above { transform: translateY(-100%); }
+.cv-tip b { display: block; font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.cv-tip span { display: block; color: rgba(255, 255, 255, .72); font-variant-numeric: tabular-nums; }
+.cv-tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
 
 /* ── Sjene stvarnog posla ─────────────────────────────────────── */
 .cv-shadow {
@@ -965,7 +1027,7 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
         var(--surface) 0 6px,
         var(--surface-hover) 6px 12px
     );
-    color: var(--text-secondary);
+    color: var(--cv-t2);
     cursor: default;
     pointer-events: auto;
 }
@@ -985,7 +1047,7 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
 /* ── Crtanje novog bloka ──────────────────────────────────────── */
 .cv-draw {
     position: absolute;
-    height: 34px;
+    height: 28px;
     border: 2px dashed var(--accent);
     border-radius: 7px;
     background: var(--accent-light);
@@ -998,10 +1060,10 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
     top: 0;
     bottom: 0;
     width: 2px;
+    margin-left: -1px;
     background: var(--accent);
     pointer-events: none;
-    z-index: 3;
-    box-shadow: 0 0 0 .5px rgba(10, 94, 208, .15), 0 0 8px rgba(10, 94, 208, .25);
+    z-index: 4;
 }
 
 .cv-empty {
@@ -1229,7 +1291,8 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
 .cv-status-note.s-active  { --cv-status: #12aebc; }
 .cv-status-note.s-paused  { --cv-status: #ff9f0a; }
 .cv-status-note.s-done    { --cv-status: var(--success); }
-.cv-status-note.s-cancel  { --cv-status: var(--error); }
+.cv-status-note.s-cancel,
+.cv-status-note.s-cancelled { --cv-status: var(--error); }
 .cv-status-note-dot {
     width: 9px; height: 9px; border-radius: 50%;
     background: var(--cv-status, var(--text-tertiary)); flex-shrink: 0;

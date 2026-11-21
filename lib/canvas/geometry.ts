@@ -37,10 +37,21 @@ export const ROW_PADDING = 7;
 /** Minimalna visina reda i kad je prazan. */
 export const MIN_ROW_HEIGHT = LANE_HEIGHT + ROW_PADDING * 2;
 
-/** Širina lijeve kolone s nazivima redova. */
-export const HEADER_WIDTH = 220;
-/** Visina zaglavlja s datumima. */
-export const TIMELINE_HEADER_HEIGHT = 52;
+/**
+ * Širina lijeve kolone s nazivima redova. Na laptopu (uska mreža) kolona je
+ * uža, da vremenska osa zadrži bar ~4 sedmice u vidu — vidi `headerWidthFor`.
+ */
+export const HEADER_WIDTH = 264;
+export const HEADER_WIDTH_COMPACT = 216;
+/** Ispod ove širine mreže (px) lijeva kolona prelazi na kompaktnu. */
+export const COMPACT_GRID_WIDTH = 1100;
+/** Visina zaglavlja s datumima: red mjeseca (26) + red dana (36). */
+export const TIMELINE_HEADER_HEIGHT = 62;
+
+/** Širina lijeve kolone za datu širinu cijele mreže. */
+export function headerWidthFor(gridWidth: number): number {
+    return gridWidth > 0 && gridWidth < COMPACT_GRID_WIDTH ? HEADER_WIDTH_COMPACT : HEADER_WIDTH;
+}
 
 /** Ispod ove širine blok prikazuje samo boju, bez teksta (inače je nečitljiv). */
 export const MIN_LABEL_WIDTH = 44;
@@ -144,6 +155,10 @@ export interface LanePlaced<T> {
     item: T;
     lane: number;
     rect: BlockRect;
+    /** Dan predaje: prethodnik u istoj traci završava ovaj dan → traka počinje od pola dana. */
+    trimStart?: boolean;
+    /** Dan predaje: sljedbenik u istoj traci počinje ovaj dan → traka se završava na pola dana. */
+    trimEnd?: boolean;
 }
 
 /**
@@ -156,7 +171,8 @@ export interface LanePlaced<T> {
 export function packLanes<T>(
     items: T[],
     getRange: (item: T) => { startISO: string; endISO: string },
-    vp: Viewport
+    vp: Viewport,
+    opts: { handoff?: boolean } = {}
 ): { placed: LanePlaced<T>[]; laneCount: number } {
     const withRect = items
         .map(item => {
@@ -169,17 +185,29 @@ export function packLanes<T>(
             || a.range.endISO.localeCompare(b.range.endISO));
 
     const laneEndISO: string[] = [];
+    const laneLast: LanePlaced<T>[] = [];
     const placed: LanePlaced<T>[] = [];
 
+    // `handoff` (red EKIPE, koja radi jedno po jedno): nalog koji počinje isti dan
+    // kad prethodni završava NIJE preklapanje — auto-raspored tu pakuje pola dana.
+    // Ostaje u istoj traci, a taj dan se dijeli napola (trimEnd / trimStart).
+    const free = (end: string, start: string) => (opts.handoff ? end <= start : end < start);
     for (const { item, range, rect } of withRect) {
-        let lane = laneEndISO.findIndex(end => end < range.startISO);
+        let lane = laneEndISO.findIndex(end => free(end, range.startISO));
+        const prevEnd = lane === -1 ? undefined : laneEndISO[lane];
         if (lane === -1) {
             lane = laneEndISO.length;
             laneEndISO.push(range.endISO);
         } else {
             laneEndISO[lane] = range.endISO;
         }
-        placed.push({ item, lane, rect });
+        const rec: LanePlaced<T> = { item, lane, rect };
+        if (opts.handoff && prevEnd === range.startISO && laneLast[lane]) {
+            laneLast[lane].trimEnd = true;
+            rec.trimStart = true;
+        }
+        laneLast[lane] = rec;
+        placed.push(rec);
     }
 
     return { placed, laneCount: Math.max(1, laneEndISO.length) };
@@ -207,6 +235,9 @@ export interface HeaderTick {
     major: boolean;
     isToday: boolean;
     isNonWorking: boolean;   // nedjelja
+    /** Dan u sedmici (0 = nedjelja) i dan u mjesecu — zaglavlje ih crta u dva reda. */
+    dow: number;
+    day: number;
 }
 
 const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'avg', 'sep', 'okt', 'nov', 'dec'];
@@ -235,18 +266,21 @@ export function headerTicks(vp: Viewport, todayISOValue: string): HeaderTick[] {
                 iso, left: i * w, width: w * 7,
                 label: `${d.getDate()}. ${MONTHS_SHORT[d.getMonth()]}`,
                 major: d.getDate() <= 7, isToday, isNonWorking: false,
+                dow, day: d.getDate(),
             });
         } else if (vp.zoom === 'sedmica') {
             out.push({
                 iso, left: i * w, width: w,
                 label: String(d.getDate()),
                 major: dow === 1, isToday, isNonWorking,
+                dow, day: d.getDate(),
             });
         } else {
             out.push({
                 iso, left: i * w, width: w,
                 label: `${DOW_SHORT[dow]} ${d.getDate()}`,
                 major: dow === 1, isToday, isNonWorking,
+                dow, day: d.getDate(),
             });
         }
     }
@@ -271,10 +305,19 @@ export function nonWorkingBands(vp: Viewport): { iso: string; left: number; widt
 }
 
 /** Mjeseci u vidljivom rasponu — gornji red zaglavlja. */
-export function monthBands(vp: Viewport): { label: string; left: number; width: number }[] {
+export interface MonthBand {
+    label: string;
+    left: number;
+    width: number;
+    /** 0–11 i godina — zaglavlje piše puno ime mjeseca kad ima mjesta. */
+    month: number;
+    year: number;
+}
+
+export function monthBands(vp: Viewport): MonthBand[] {
     const w = dayWidth(vp.zoom);
     const dates = visibleDates(vp);
-    const bands: { label: string; left: number; width: number }[] = [];
+    const bands: MonthBand[] = [];
 
     let startIdx = 0;
     for (let i = 0; i <= dates.length; i++) {
@@ -286,6 +329,8 @@ export function monthBands(vp: Viewport): { label: string; left: number; width: 
                 label: `${MONTHS_SHORT[prev.getMonth()]} ${prev.getFullYear()}`,
                 left: startIdx * w,
                 width: (i - startIdx) * w,
+                month: prev.getMonth(),
+                year: prev.getFullYear(),
             });
             startIdx = i;
         }
