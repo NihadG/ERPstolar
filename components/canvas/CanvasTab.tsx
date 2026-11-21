@@ -68,8 +68,10 @@ import {
 } from '@/lib/canvas/geometry';
 import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
-    countWorkingDays,
+    countWorkingDays, isWorkDay,
 } from '@/lib/canvas/model';
+import { mergeBlocks, splitBlock } from '@/lib/canvas/quickActions';
+import { v4 as uuidv4 } from 'uuid';
 import { workRuns } from '@/lib/canvas/weekend';
 import {
     parsePlanTitle, fitBlockLabel, fitWords, fitVariants, isFullLabel, LABEL, type BlockLabelFit,
@@ -619,6 +621,13 @@ export default function CanvasTab({
      * Auto-raspored → prijedlog za pregled. NIŠTA se ne mijenja dok korisnik ne
      * primijeni; izlaz je čist diff (isti obrazac kao lanac).
      */
+    // Radni dan ekipe otvorenog naloga (smjene, praznici) — brze akcije u polovinama dana.
+    const drawerBlock = drawerId ? scenario.Blocks.find(b => b.id === drawerId) : undefined;
+    const drawerRefs = drawerBlock?.workerRefs;
+    const drawerIsWork = useCallback((iso: string) => isWorkDay(iso, satCheckerFor(drawerRefs)), [satCheckerFor, drawerRefs]);
+    /** „Ubaci hitno": prioritet se upiše, pa preračun krene nad novim stanjem (efekat ispod). */
+    const [urgentPending, setUrgentPending] = useState(false);
+
     // Zdravlje plana poslije svake izmjene (faza 4): ista pravila kao prijedlog, bez pretrage.
     // Odgođena vrijednost — vučenje bloka ostaje glatko, ocjena stigne odmah poslije.
     const deferredScenario = useDeferredValue(scenario);
@@ -656,6 +665,12 @@ export default function CanvasTab({
             }
         }, 30);
     }, [scheduling, scenario, workers, workOrders, attendance, projects, holidayDates, showToast]);
+
+    useEffect(() => {
+        if (!urgentPending) return;
+        setUrgentPending(false);
+        runSchedule();
+    }, [urgentPending, runSchedule]);
 
     // ── Pretvorba nalog-bloka → stvarni nalog (pravi flow iz taba Nalozi) ──
     /** Seed za wizard iz plan-bloka: projekt, proizvodi, ekipa, rokovi. */
@@ -1662,6 +1677,25 @@ export default function CanvasTab({
                     onSelectBlock={jumpToBlock}
                     onCreateOrders={() => setOrderModalFor(drawerId)}
                     onPromote={() => setPromoteId(drawerId)}
+                    isWork={drawerIsWork}
+                    onSplit={() => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const parts = b && splitBlock(b, drawerIsWork, uuidv4());
+                        if (parts) dispatch({ type: 'SPLIT_BLOCK', id: drawerId, parts });
+                        else showToast('Nalog je kraći od dana ekipe — nema šta dijeliti', 'info');
+                    }}
+                    onMerge={otherId => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const other = scenario.Blocks.find(x => x.id === otherId);
+                        if (!b || !other) return;
+                        const merged = mergeBlocks(b, other, drawerIsWork);
+                        if (typeof merged === 'string') { showToast(merged, 'info'); return; }
+                        dispatch({ type: 'MERGE_BLOCKS', keepId: b.id, removeId: other.id, merged });
+                    }}
+                    onUrgent={() => {
+                        dispatch({ type: 'UPDATE_BLOCK', id: drawerId, patch: { priority: 'urgent' } });
+                        setUrgentPending(true);
+                    }}
                 />
             )}
         </div>

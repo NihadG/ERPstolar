@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     X, Trash2, Lock, Unlock, Users, FolderKanban, Truck, Link2, Plus, Check,
-    Package, ShoppingCart, Info, Sparkles,
+    Package, ShoppingCart, Info, Sparkles, Minus, Scissors, Merge, Zap,
 } from 'lucide-react';
 import type {
     PlanBlock, PlanLink, PlanLinkKind, Project, Worker, Supplier, TaskPriority,
@@ -24,6 +24,7 @@ import {
 import { suggestLeadDays, type SupplierLeadTime } from '@/lib/canvas/leadTime';
 import type { BlockStatusInfo } from '@/lib/canvas/status';
 import CrewPicker from './CrewPicker';
+import { adjustHalfDay, crewSizeOf, swapCrewPatch, type IsWork } from '@/lib/canvas/quickActions';
 import './CanvasDrawer.css';
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
@@ -48,6 +49,12 @@ interface CanvasDrawerProps {
     onCreateOrders: () => void;
     /** Pretvori blok u stvarni nalog/narudžbu (otvara PromoteBlockModal). */
     onPromote: () => void;
+    /** Radni dan ekipe bloka (smjene, praznici) — za brze akcije u polovinama dana. */
+    isWork: IsWork;
+    /** Brze akcije (faza 5): podijeli na dva, spoji s drugim nalogom, ubaci hitno (+ preračun). */
+    onSplit: () => void;
+    onMerge: (otherId: string) => void;
+    onUrgent: () => void;
 }
 
 const dm = (iso: string) => {
@@ -68,6 +75,7 @@ function inferLinkKind(from: PlanBlock, to: PlanBlock): PlanLinkKind {
 export default function CanvasDrawer({
     block, status, allBlocks, links, projects, workers, suppliers, leadTimes,
     onClose, onChange, onDelete, onAddLink, onDeleteLink, onSelectBlock, onCreateOrders, onPromote,
+    isWork, onSplit, onMerge, onUrgent,
 }: CanvasDrawerProps) {
     const [crewPickerOpen, setCrewPickerOpen] = useState(false);
 
@@ -127,9 +135,16 @@ export default function CanvasDrawer({
         [block?.kind, block?.supplierRef?.name, leadTimes]
     );
 
+    const mergeCandidates = useMemo(() => {
+        if (!block) return [];
+        return allBlocks
+            .filter(b => b.id !== block.id && b.kind === block.kind && (b.projectRef?.id || '') === (block.projectRef?.id || ''))
+            .sort((a, b) => a.startISO.localeCompare(b.startISO));
+    }, [block, allBlocks]);
+
     if (!block) return null;
 
-    const isWork = block.kind === 'order' || block.kind === 'montaza';
+    const isWorkBlock = block.kind === 'order' || block.kind === 'montaza';
     const isPurchase = block.kind === 'purchase';
     const promoted = !!(block.linkedWorkOrderId || block.linkedOrderId);
     const liveStatus = status && status.status !== 'draft' ? status : null;
@@ -159,7 +174,7 @@ export default function CanvasDrawer({
         // Ekipa prati broj ljudi — inače korisnik doda trećeg čovjeka a trajanje
         // ostane isto, što je gotovo uvijek pogrešno.
         const patch: Partial<PlanBlock> = { workerRefs: next };
-        if (isWork && block.workerDays) {
+        if (isWorkBlock && block.workerDays) {
             const c = Math.max(1, next.length);
             patch.crew = c;
             patch.endISO = endFromWork(block.startISO, block.workerDays, c);
@@ -179,7 +194,7 @@ export default function CanvasDrawer({
                 <p className="cv-kind-help"><Info size={12} /> {BLOCK_HELP[block.kind]}</p>
 
                 {/* ── Pretvori plan u stvarnost / živi status ──── */}
-                {(isWork || isPurchase) && (
+                {(isWorkBlock || isPurchase) && (
                     promoted ? (
                         <div className={`cv-status-note s-${liveStatus?.status || 'pending'}`}>
                             <span className="cv-status-note-dot" />
@@ -281,7 +296,7 @@ export default function CanvasDrawer({
                 )}
 
                 {/* ── Proizvodi naloga ─────────────────────────── */}
-                {isWork && (block.productRefs?.length || 0) > 0 && (
+                {isWorkBlock && (block.productRefs?.length || 0) > 0 && (
                     <section className="dw-sec">
                         <h4 className="dw-sec-h"><Package size={12} /> Proizvodi ({block.productRefs!.length})</h4>
                         <ul className="cv-products">
@@ -300,7 +315,7 @@ export default function CanvasDrawer({
                 )}
 
                 {/* ── Rad ──────────────────────────────────────── */}
-                {isWork && (
+                {isWorkBlock && (
                     <section className="dw-sec">
                         <h4 className="dw-sec-h"><Users size={12} /> Obim posla</h4>
                         <div className="cv-field-row">
@@ -353,7 +368,7 @@ export default function CanvasDrawer({
                     </select>
                 </label>
 
-                {isWork && (
+                {isWorkBlock && (
                     <div className="cv-field">
                         <span><Users size={12} /> Radnici (ručna dodjela)</span>
                         <div className="cv-chips">
@@ -370,8 +385,67 @@ export default function CanvasDrawer({
                 )}
                 </section>
 
+                {/* ── Brze akcije (faza 5) ─────────────────────── */}
+                {isWorkBlock && (() => {
+                    const size = crewSizeOf(block);
+                    const days = Math.round(((block.workerDays || size) / size) * 2) / 2;
+                    const daysTxt = `${String(days).replace('.', ',')} ${days === 1 ? 'dan' : 'dana'}`;
+                    const currentKey = (block.workerRefs || []).map(r => r.id).filter(Boolean).sort().join('+');
+                    const otherCrews = (block.crewOptions || []).filter(c => crewWorkerRefs(c).map(r => r.id).filter(Boolean).sort().join('+') !== currentKey);
+                    const minus = adjustHalfDay(block, -0.5, isWork);
+                    return (
+                        <section className="dw-sec">
+                            <h4 className="dw-sec-h"><Zap size={12} /> Brze akcije</h4>
+                            <div className="dw-quick-row">
+                                <span className="dw-quick-lbl">
+                                    Trajanje <strong>{daysTxt}</strong> · ekipa {size}
+                                    {block.startsPM && <em> · od podne</em>}{block.endsAM && <em> · do podne</em>}
+                                </span>
+                                <button className="cv-btn sm" disabled={!minus} title="Kraće za pola dana (radnik-dani − ½ × ekipa)"
+                                    onClick={() => minus && onChange(minus)}><Minus size={12} /> ½</button>
+                                <button className="cv-btn sm" title="Duže za pola dana"
+                                    onClick={() => { const p = adjustHalfDay(block, 0.5, isWork); if (p) onChange(p); }}><Plus size={12} /> ½</button>
+                            </div>
+                            {otherCrews.length > 0 && (
+                                <div className="dw-quick-row wrap">
+                                    <span className="dw-quick-lbl">Zamijeni par</span>
+                                    {otherCrews.map(c => (
+                                        <button key={c.id} className="cv-chip" title={crewWorkerRefs(c).map(r => r.name).join(' + ')}
+                                            onClick={() => onChange(swapCrewPatch(block, c, isWork))}>
+                                            <Users size={11} /> {crewLabel(c)}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="dw-quick-row wrap">
+                                <button className="cv-btn sm" onClick={onSplit} disabled={(block.workerDays || 0) < size}
+                                    title="Dva naloga po pola posla — drugi dio može dobiti drugi par">
+                                    <Scissors size={12} /> Podijeli na dva
+                                </button>
+                                {block.priority !== 'urgent' && (
+                                    <button className="cv-btn sm accent" onClick={onUrgent}
+                                        title="Prioritet hitno i odmah prijedlog rasporeda (zamrznuta 3 radna dana se ne diraju)">
+                                        <Zap size={12} /> Ubaci hitno
+                                    </button>
+                                )}
+                            </div>
+                            {mergeCandidates.length > 0 && (
+                                <label className="cv-field">
+                                    <span><Merge size={12} /> Spoji s nalogom istog projekta</span>
+                                    <select value="" onChange={e => { if (e.target.value) onMerge(e.target.value); }}>
+                                        <option value="">— izaberi —</option>
+                                        {mergeCandidates.map(b => (
+                                            <option key={b.id} value={b.id}>{b.title} · {dm(b.startISO)}–{dm(b.endISO)}{b.workerDays ? ` · ${b.workerDays} rd` : ''}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                            )}
+                        </section>
+                    );
+                })()}
+
                 {/* ── Auto-raspored ────────────────────────────── */}
-                {isWork && (
+                {isWorkBlock && (
                     <section className="dw-sec">
                         <h4 className="dw-sec-h"><Sparkles size={12} /> Auto-raspored</h4>
                         <label className="cv-field">

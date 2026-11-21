@@ -54,6 +54,10 @@ export type ScenarioAction =
     | { type: 'SET_DATES'; id: string; startISO?: string; endISO?: string }
     | { type: 'DUPLICATE_BLOCKS'; ids: string[] }
     | { type: 'DELETE_BLOCKS'; ids: string[] }
+    /** Brza akcija: blok se zamijeni s dva dijela (lib/canvas/quickActions.ts splitBlock). */
+    | { type: 'SPLIT_BLOCK'; id: string; parts: [PlanBlock, PlanBlock] }
+    /** Brza akcija: `removeId` se utapa u `merged` (id = keepId); veze prelaze na spojeni. */
+    | { type: 'MERGE_BLOCKS'; keepId: string; removeId: string; merged: PlanBlock }
     | { type: 'ADD_LINK'; from: string; to: string; kind: PlanLinkKind; lagDays?: number }
     | { type: 'DELETE_LINK'; id: string }
     | { type: 'APPLY_DATE_DIFF'; changes: { id: string; startISO: string; endISO: string }[] }
@@ -199,6 +203,47 @@ export function scenarioReducer(state: ScenarioState, action: ScenarioAction): S
             return {
                 ...commit(state, { ...state.scenario, Blocks: [...state.scenario.Blocks, ...copies] }),
                 selectedIds: copies.map(c => c.id),
+            };
+        }
+
+        case 'SPLIT_BLOCK': {
+            const [a, b] = action.parts;
+            const i = state.scenario.Blocks.findIndex(x => x.id === action.id);
+            if (i < 0 || a.id !== action.id || state.scenario.Blocks.some(x => x.id === b.id)) return state;
+            if (state.scenario.Blocks.length >= MAX_BLOCKS_PER_SCENARIO) {
+                return { ...state, notice: `Dosegnuta granica od ${MAX_BLOCKS_PER_SCENARIO} blokova — podijeli scenarij na dva.` };
+            }
+            const blocks = state.scenario.Blocks.slice();
+            const old = blocks[i];
+            blocks.splice(i, 1, normalizeBlock(a), normalizeBlock(b));
+            // Ono što je čekalo cijeli nalog sad čeka oba dijela; ulazne veze vrijede za oba.
+            const extra = state.scenario.Links
+                .filter(l => l.from === old.id || l.to === old.id)
+                .map(l => (l.from === old.id ? newLink(b.id, l.to, l.kind, l.lagDays) : newLink(l.from, b.id, l.kind, l.lagDays)));
+            return {
+                ...commit(state, { ...state.scenario, Blocks: blocks, Links: [...state.scenario.Links, ...extra] },
+                    `Podijeljeno: ${a.title} i ${b.title} — Ctrl+Z vraća.`),
+                selectedIds: [a.id, b.id],
+            };
+        }
+
+        case 'MERGE_BLOCKS': {
+            const { keepId, removeId, merged } = action;
+            if (keepId === removeId || merged.id !== keepId) return state;
+            const has = (id: string) => state.scenario.Blocks.some(b => b.id === id);
+            if (!has(keepId) || !has(removeId)) return state;
+            const seen = new Set<string>();
+            const links = state.scenario.Links
+                .map(l => ({ ...l, from: l.from === removeId ? keepId : l.from, to: l.to === removeId ? keepId : l.to }))
+                .filter(l => l.from !== l.to)
+                .filter(l => { const k = `${l.from}>${l.to}`; if (seen.has(k)) return false; seen.add(k); return true; });
+            return {
+                ...commit(state, {
+                    ...state.scenario,
+                    Blocks: state.scenario.Blocks.filter(b => b.id !== removeId).map(b => (b.id === keepId ? normalizeBlock(merged) : b)),
+                    Links: links,
+                }, `Spojeno u „${merged.title}" — Ctrl+Z vraća.`),
+                selectedIds: [keepId],
             };
         }
 
