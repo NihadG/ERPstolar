@@ -1314,3 +1314,19 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
     .cv-field-row { grid-template-columns: 1fr; }
     .cv-name { flex-basis: 100%; order: -1; }
 }
+
+/* ── Zdravlje plana (faza 4): sudar poslije izmjene → Preračunaj ─────── */
+.cv-health {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 8px 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-light);
+    font-size: var(--cm-fs-xs);
+    flex-shrink: 0;
+}
+.cv-health > svg { color: var(--accent); flex-shrink: 0; }
+.cv-health.warn { background: var(--warning-bg); }
+.cv-health.warn > svg { color: var(--warning); }
+.cv-health-txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.cv-health-txt strong { color: var(--text-primary); }
+.cv-health .cv-btn { flex-shrink: 0; }

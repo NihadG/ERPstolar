@@ -12,7 +12,7 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
@@ -46,7 +46,8 @@ import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
 import CanvasMenu from './CanvasMenu';
-import { proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
+import { planHealth, proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
+import { FREEZE_WORK_DAYS } from '@/lib/canvas/opt/freeze';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
 import { detectConflicts } from '@/lib/canvas/conflicts';
@@ -67,8 +68,10 @@ import {
 } from '@/lib/canvas/geometry';
 import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
-    countWorkingDays,
+    countWorkingDays, isWorkDay,
 } from '@/lib/canvas/model';
+import { mergeBlocks, splitBlock } from '@/lib/canvas/quickActions';
+import { v4 as uuidv4 } from 'uuid';
 import { workRuns } from '@/lib/canvas/weekend';
 import {
     parsePlanTitle, fitBlockLabel, fitWords, fitVariants, isFullLabel, LABEL, type BlockLabelFit,
@@ -618,6 +621,25 @@ export default function CanvasTab({
      * Auto-raspored → prijedlog za pregled. NIŠTA se ne mijenja dok korisnik ne
      * primijeni; izlaz je čist diff (isti obrazac kao lanac).
      */
+    // Radni dan ekipe otvorenog naloga (smjene, praznici) — brze akcije u polovinama dana.
+    const drawerBlock = drawerId ? scenario.Blocks.find(b => b.id === drawerId) : undefined;
+    const drawerRefs = drawerBlock?.workerRefs;
+    const drawerIsWork = useCallback((iso: string) => isWorkDay(iso, satCheckerFor(drawerRefs)), [satCheckerFor, drawerRefs]);
+    /** „Ubaci hitno": prioritet se upiše, pa preračun krene nad novim stanjem (efekat ispod). */
+    const [urgentPending, setUrgentPending] = useState(false);
+
+    // Zdravlje plana poslije svake izmjene (faza 4): ista pravila kao prijedlog, bez pretrage.
+    // Odgođena vrijednost — vučenje bloka ostaje glatko, ocjena stigne odmah poslije.
+    const deferredScenario = useDeferredValue(scenario);
+    const health = useMemo(() => {
+        try {
+            return planHealth(deferredScenario, { workers, workOrders, attendance, projects, holidays: holidayDates }, todayISO());
+        } catch (err) {
+            console.error('Ocjena plana nije uspjela', err);
+            return null;
+        }
+    }, [deferredScenario, workers, workOrders, attendance, projects, holidayDates]);
+
     const runSchedule = useCallback(() => {
         if (scheduling) return;
         setScheduling(true);
@@ -627,7 +649,8 @@ export default function CanvasTab({
                 const result = await proposeScheduleAsync(
                     scenario,
                     { workers, workOrders, attendance, projects, holidays: holidayDates },
-                    { startISO: todayISO() }
+                    // Preračun: prva FREEZE_WORK_DAYS (3) radna dana se ne diraju (odluka vlasnika 21.11.2026).
+                    { startISO: todayISO(), todayISO: todayISO(), freezeDays: FREEZE_WORK_DAYS }
                 );
                 if (!result.scheduled.length && !result.unscheduled.length) {
                     showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
@@ -642,6 +665,12 @@ export default function CanvasTab({
             }
         }, 30);
     }, [scheduling, scenario, workers, workOrders, attendance, projects, holidayDates, showToast]);
+
+    useEffect(() => {
+        if (!urgentPending) return;
+        setUrgentPending(false);
+        runSchedule();
+    }, [urgentPending, runSchedule]);
 
     // ── Pretvorba nalog-bloka → stvarni nalog (pravi flow iz taba Nalozi) ──
     /** Seed za wizard iz plan-bloka: projekt, proizvodi, ekipa, rokovi. */
@@ -1248,6 +1277,30 @@ export default function CanvasTab({
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}
 
+            {health && !health.feasible && (
+                <div className="cv-health warn" role="status">
+                    <AlertTriangle size={14} />
+                    <span className="cv-health-txt">
+                        <strong>Plan ima {health.violationCount} {health.violationCount === 1 ? 'prekršenu provjeru' : health.violationCount < 5 ? 'prekršene provjere' : 'prekršenih provjera'}</strong>
+                        {health.examples[0] && <> — {health.examples[0]}{health.violationCount > 1 ? ' …' : ''}</>}
+                    </span>
+                    <button className="cv-btn accent sm" onClick={runSchedule} disabled={scheduling}>
+                        <Sparkles size={13} /> {scheduling ? 'Računam…' : 'Preračunaj'}
+                    </button>
+                </div>
+            )}
+            {health && health.feasible && (health.gapDays || 0) > 0 && health.boundISO && (
+                <div className="cv-health" role="status">
+                    <Sparkles size={14} />
+                    <span className="cv-health-txt">
+                        Plan je izvodljiv, a može se završiti do <strong>{health.gapDays} {health.gapDays === 1 ? 'dan' : 'dana'}</strong> ranije (najranije moguće {Number(health.boundISO.slice(8, 10))}.{Number(health.boundISO.slice(5, 7))}.).
+                    </span>
+                    <button className="cv-btn sm" onClick={runSchedule} disabled={scheduling}>
+                        {scheduling ? 'Računam…' : 'Predloži'}
+                    </button>
+                </div>
+            )}
+
             <CanvasTimeSlider
                 fromISO={timeRange.fromISO}
                 toISO={timeRange.toISO}
@@ -1624,6 +1677,25 @@ export default function CanvasTab({
                     onSelectBlock={jumpToBlock}
                     onCreateOrders={() => setOrderModalFor(drawerId)}
                     onPromote={() => setPromoteId(drawerId)}
+                    isWork={drawerIsWork}
+                    onSplit={() => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const parts = b && splitBlock(b, drawerIsWork, uuidv4());
+                        if (parts) dispatch({ type: 'SPLIT_BLOCK', id: drawerId, parts });
+                        else showToast('Nalog je kraći od dana ekipe — nema šta dijeliti', 'info');
+                    }}
+                    onMerge={otherId => {
+                        const b = scenario.Blocks.find(x => x.id === drawerId);
+                        const other = scenario.Blocks.find(x => x.id === otherId);
+                        if (!b || !other) return;
+                        const merged = mergeBlocks(b, other, drawerIsWork);
+                        if (typeof merged === 'string') { showToast(merged, 'info'); return; }
+                        dispatch({ type: 'MERGE_BLOCKS', keepId: b.id, removeId: other.id, merged });
+                    }}
+                    onUrgent={() => {
+                        dispatch({ type: 'UPDATE_BLOCK', id: drawerId, patch: { priority: 'urgent' } });
+                        setUrgentPending(true);
+                    }}
                 />
             )}
         </div>
