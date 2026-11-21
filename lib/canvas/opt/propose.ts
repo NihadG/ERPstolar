@@ -20,6 +20,7 @@ import { qualityReport, type QualityReport } from './quality';
 import { remainingWork, type RemainingLog } from './remaining';
 import { optimize, optimizeAsync, type JobSlack, type OptimizeResult } from './optimize';
 import type { Binding } from './sgs';
+import { freezeEndISO, frozenBlockIds } from './freeze';
 
 export interface ProposeContext {
     workers: Worker[];
@@ -36,6 +37,9 @@ export interface ProposalQuality {
     before: QualityReport;
     after: QualityReport;
     evals: number;
+    /** Zamrznuto (prva radna dana od danas): zadnji zamrznut dan i nalozi koji se ne diraju. */
+    freezeEndISO?: string;
+    frozen: string[];
 }
 
 export type Proposal = AutoScheduleResult & { quality: ProposalQuality };
@@ -80,7 +84,13 @@ function reasonsFor(inst: Instance, jobId: string, crewKey: string, binding: Bin
  * @param opts.startISO prvi dan rasporeda; `todayISO` (zadano = startISO) je dan od kojeg se slaže
  *        preostali rad stvarnih naloga — kad plan kreće kasnije, posao do tada je već odrađen.
  */
-type ProposeOptions = { startISO: string; todayISO?: string; budget?: number };
+type ProposeOptions = {
+    startISO: string;
+    todayISO?: string;
+    budget?: number;
+    /** Radnih dana od danas koji se ne diraju (odluka vlasnika: 3). 0/izostavljeno = bez zamrzavanja. */
+    freezeDays?: number;
+};
 
 function prepare(scenario: PlanScenario, ctx: ProposeContext, opts: ProposeOptions) {
     const calendar = buildWorkerCalendar({ workers: ctx.workers, attendance: ctx.attendance, holidays: ctx.holidays });
@@ -89,8 +99,14 @@ function prepare(scenario: PlanScenario, ctx: ProposeContext, opts: ProposeOptio
     const inst = buildInstance(scenario, { startISO: opts.startISO, calendar, projects: ctx.projects, fixedLoad: rest.fixedLoad });
     const current = placementsFromScenario(inst, scenario.Blocks);
     const movable = movableBlockIds(scenario);
+    let freezeEnd: string | undefined;
+    const frozen: string[] = [];
+    if (opts.freezeDays) {
+        freezeEnd = freezeEndISO(opts.todayISO || opts.startISO, ctx.holidays, opts.freezeDays);
+        for (const id of frozenBlockIds(scenario, freezeEnd)) if (movable.delete(id)) frozen.push(id);
+    }
     const before = qualityReport(inst, current);
-    return { inst, current, movable, before };
+    return { inst, current, movable, before, freezeEnd, frozen };
 }
 
 function finish(scenario: PlanScenario, opts: ProposeOptions, prep: ReturnType<typeof prepare>, res: OptimizeResult): Proposal {
@@ -120,7 +136,7 @@ function finish(scenario: PlanScenario, opts: ProposeOptions, prep: ReturnType<t
     }
     scheduled.sort((a, b) => a.startISO.localeCompare(b.startISO) || a.endISO.localeCompare(b.endISO) || a.blockId.localeCompare(b.blockId));
     const unscheduled = res.decoded.unplaced.filter(u => movable.has(u.jobId)).map(u => ({ blockId: u.jobId, reason: u.reason }));
-    return { scheduled, unscheduled, quality: { startISO: opts.startISO, before, after, evals: res.evals } };
+    return { scheduled, unscheduled, quality: { startISO: opts.startISO, before, after, evals: res.evals, freezeEndISO: prep.freezeEnd, frozen: prep.frozen } };
 }
 
 export function proposeSchedule(scenario: PlanScenario, ctx: ProposeContext, opts: ProposeOptions): Proposal {
@@ -133,4 +149,38 @@ export async function proposeScheduleAsync(scenario: PlanScenario, ctx: ProposeC
     const prep = prepare(scenario, ctx, opts);
     const res = await optimizeAsync(prep.inst, prep.current, prep.movable, { budget: opts.budget, onProgress: opts.onProgress });
     return finish(scenario, opts, prep, res);
+}
+
+export interface PlanHealth {
+    feasible: boolean;
+    violationCount: number;
+    /** Do tri primjera prekršaja, za traku na Platnu. */
+    examples: string[];
+    endISO: string | null;
+    boundISO: string | null;
+    /** Kalendarskih dana iznad dokazane granice (samo kad je plan izvodljiv). */
+    gapDays: number | null;
+}
+
+/**
+ * Ocjena plana kakav je na platnu, od danas, istim pravilima kao prijedlog.
+ * Brza (bez pretrage) — Platno je računa poslije svake izmjene.
+ */
+export function planHealth(scenario: PlanScenario, ctx: ProposeContext, todayISO: string): PlanHealth | null {
+    if (!movableBlockIds(scenario).size && !scenario.Blocks.some(b => (b.workerRefs || []).some(r => r.id))) return null;
+    const prep = prepare(scenario, ctx, { startISO: todayISO, todayISO });
+    if (!prep.inst.jobs.length) return null;
+    // Prošli nalozi se ne ocjenjuju — gotovi su ili ih vodi stvarni nalog.
+    const live = new Set(scenario.Blocks.filter(b => b.endISO >= todayISO).map(b => b.id));
+    const ev = prep.before.evaluation;
+    const violations = ev.violations.filter(v => !v.jobId || live.has(v.jobId)).filter(v => !v.dateISO || v.dateISO >= todayISO);
+    const feasible = violations.length === 0;
+    return {
+        feasible,
+        violationCount: violations.length,
+        examples: violations.slice(0, 3).map(v => v.text),
+        endISO: ev.objective.makespan >= 0 ? ev.makespanISO : null,
+        boundISO: prep.before.bounds.makespan?.iso || null,
+        gapDays: feasible ? prep.before.gapDays : null,
+    };
 }

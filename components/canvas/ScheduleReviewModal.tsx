@@ -11,7 +11,7 @@
 
 import { useMemo } from 'react';
 import {
-    CalendarClock, ArrowRight, Users, AlertTriangle, Sparkles, Check, Info,
+    CalendarClock, ArrowRight, Users, AlertTriangle, Sparkles, Check, Info, Lock,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { PlanScenario } from '@/lib/types';
@@ -136,6 +136,11 @@ export default function ScheduleReviewModal({
                                 : quality.after.lines[0]}
                             {' '}Isprobano {quality.evals} rasporeda.
                         </p>
+                        {quality.frozen.length > 0 && quality.freezeEndISO && (
+                            <p className="sr-compare-note">
+                                <Lock size={11} /> Zamrznuto do {dm(quality.freezeEndISO)}: {quality.frozen.length} {quality.frozen.length === 1 ? 'nalog se ne mijenja' : 'naloga se ne mijenja'} (već raspoređeni, počinju u prva 3 radna dana).
+                            </p>
+                        )}
                     </div>
                 )}
 

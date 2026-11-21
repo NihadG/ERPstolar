@@ -12,7 +12,7 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
@@ -46,7 +46,8 @@ import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
 import CanvasMenu from './CanvasMenu';
-import { proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
+import { planHealth, proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
+import { FREEZE_WORK_DAYS } from '@/lib/canvas/opt/freeze';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
 import { detectConflicts } from '@/lib/canvas/conflicts';
@@ -618,6 +619,18 @@ export default function CanvasTab({
      * Auto-raspored → prijedlog za pregled. NIŠTA se ne mijenja dok korisnik ne
      * primijeni; izlaz je čist diff (isti obrazac kao lanac).
      */
+    // Zdravlje plana poslije svake izmjene (faza 4): ista pravila kao prijedlog, bez pretrage.
+    // Odgođena vrijednost — vučenje bloka ostaje glatko, ocjena stigne odmah poslije.
+    const deferredScenario = useDeferredValue(scenario);
+    const health = useMemo(() => {
+        try {
+            return planHealth(deferredScenario, { workers, workOrders, attendance, projects, holidays: holidayDates }, todayISO());
+        } catch (err) {
+            console.error('Ocjena plana nije uspjela', err);
+            return null;
+        }
+    }, [deferredScenario, workers, workOrders, attendance, projects, holidayDates]);
+
     const runSchedule = useCallback(() => {
         if (scheduling) return;
         setScheduling(true);
@@ -627,7 +640,8 @@ export default function CanvasTab({
                 const result = await proposeScheduleAsync(
                     scenario,
                     { workers, workOrders, attendance, projects, holidays: holidayDates },
-                    { startISO: todayISO() }
+                    // Preračun: prva FREEZE_WORK_DAYS (3) radna dana se ne diraju (odluka vlasnika 21.11.2026).
+                    { startISO: todayISO(), todayISO: todayISO(), freezeDays: FREEZE_WORK_DAYS }
                 );
                 if (!result.scheduled.length && !result.unscheduled.length) {
                     showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
@@ -1247,6 +1261,30 @@ export default function CanvasTab({
             </div>
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}
+
+            {health && !health.feasible && (
+                <div className="cv-health warn" role="status">
+                    <AlertTriangle size={14} />
+                    <span className="cv-health-txt">
+                        <strong>Plan ima {health.violationCount} {health.violationCount === 1 ? 'prekršenu provjeru' : health.violationCount < 5 ? 'prekršene provjere' : 'prekršenih provjera'}</strong>
+                        {health.examples[0] && <> — {health.examples[0]}{health.violationCount > 1 ? ' …' : ''}</>}
+                    </span>
+                    <button className="cv-btn accent sm" onClick={runSchedule} disabled={scheduling}>
+                        <Sparkles size={13} /> {scheduling ? 'Računam…' : 'Preračunaj'}
+                    </button>
+                </div>
+            )}
+            {health && health.feasible && (health.gapDays || 0) > 0 && health.boundISO && (
+                <div className="cv-health" role="status">
+                    <Sparkles size={14} />
+                    <span className="cv-health-txt">
+                        Plan je izvodljiv, a može se završiti do <strong>{health.gapDays} {health.gapDays === 1 ? 'dan' : 'dana'}</strong> ranije (najranije moguće {Number(health.boundISO.slice(8, 10))}.{Number(health.boundISO.slice(5, 7))}.).
+                    </span>
+                    <button className="cv-btn sm" onClick={runSchedule} disabled={scheduling}>
+                        {scheduling ? 'Računam…' : 'Predloži'}
+                    </button>
+                </div>
+            )}
 
             <CanvasTimeSlider
                 fromISO={timeRange.fromISO}
