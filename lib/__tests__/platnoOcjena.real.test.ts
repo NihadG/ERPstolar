@@ -18,6 +18,7 @@ import { buildInstance, isJobBlock } from '@/lib/canvas/opt/instance';
 import { placementsFromScenario } from '@/lib/canvas/opt/evaluate';
 import { qualityReport } from '@/lib/canvas/opt/quality';
 import { remainingLines, remainingWork } from '@/lib/canvas/opt/remaining';
+import { movableBlockIds, proposeSchedule } from '@/lib/canvas/opt/propose';
 import { effectiveHolidays, holidayDates } from '@/lib/holidays';
 import { todayISO } from '@/lib/planning';
 import type { PlanScenario } from '@/lib/types';
@@ -50,6 +51,15 @@ run('ocjena planova s Platna', () => {
             const r = qualityReport(inst, placementsFromScenario(inst, sc.Blocks));
             out.push(`## ${sc.Name} (verzija ${sc.Version}, mijenjan ${String(sc.Modified_Date).slice(0, 16).replace('T', ' ')}, ${jobs.length} naloga)`, '');
             out.push(...r.lines.map(l => (l.startsWith('  ') ? `- ${l.trim()}` : l)), '');
+            // Prijedlog optimizatora v2 od danas (isto što daje „Rasporedi" na Platnu).
+            let optLine = '[platno]   → optimizator: nema naloga s kandidat-ekipama (nema šta rasporediti)';
+            if (movableBlockIds(sc).size) {
+                const t0 = Date.now();
+                const p = proposeSchedule(sc, { workers, workOrders, attendance: attendance as never, projects, holidays, workLogs }, { startISO: today > startISO ? today : startISO, todayISO: today });
+                const q = p.quality.after;
+                out.push(`Prijedlog optimizatora (od ${today > startISO ? today : startISO}, ${p.quality.evals} rasporeda, ${Date.now() - t0} ms):`, ...q.lines.map(l => `- ${l.trim()}`), '');
+                optLine = (`[platno]   → optimizator: ${q.lines[0]}; ${q.evaluation.violations.length ? `neizvodljiv (${q.evaluation.objective.violation})` : 'izvodljiv'}`);
+            }
             if (rest.orders.length) out.push('Stvarni nalozi u toku (preostali rad):', ...remainingLines(rest.orders).map(l => `- ${l}`), '');
             if (r.evaluation.violations.length) {
                 out.push('Prekršene provjere:');
@@ -58,6 +68,7 @@ run('ocjena planova s Platna', () => {
                 out.push('');
             }
             summary.push(`[platno] ${sc.Name}: ${r.lines[0]}; ${r.evaluation.violations.length ? `neizvodljiv (${r.evaluation.objective.violation})` : 'izvodljiv'}`);
+            summary.push(optLine);
         }
         const file = path.join(DIR, 'platno.md');
         fs.writeFileSync(file, out.join('\n'));

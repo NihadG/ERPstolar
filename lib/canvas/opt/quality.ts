@@ -21,6 +21,8 @@ export interface QualityReport {
     lines: string[];
 }
 
+/** „1 dan", „21 dan", „3 dana" (bosanski: 1 i …1 osim 11 → dan). */
+const daysWord = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'dan' : 'dana'}`;
 const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.${iso.slice(0, 4)}`;
 const VIOLATION_LABEL: Record<string, string> = {
     unassigned: 'bez ekipe', 'crew-not-allowed': 'ekipa van kandidata', 'too-short': 'raspon kraći od posla',
@@ -39,8 +41,8 @@ export function qualityReport(inst: Instance, placements: Placement[], baseline?
     const feasible = o.violation === 0;
     const verdict = gapDays === null ? ''
         : gapDays < 0 ? 'završava prije dokazane granice — moguće samo kršenjem provjera'
-            : !feasible ? `${gapDays} dana iznad granice, ali plan nije izvodljiv`
-                : gapDays === 0 ? 'plan je dokazano najbrži' : `${gapDays} dana iznad granice`;
+            : !feasible ? `${daysWord(gapDays)} iznad granice, ali plan nije izvodljiv`
+                : gapDays === 0 ? 'plan je dokazano najbrži' : `${daysWord(gapDays)} iznad granice`;
 
     const lines: string[] = [];
     lines.push(`Kraj plana: ${dm(evaluation.makespanISO)}${bounds.makespan ? ` · najranije moguće ${dm(bounds.makespan.iso)} (${verdict})` : ''}`);
@@ -49,7 +51,7 @@ export function qualityReport(inst: Instance, placements: Placement[], baseline?
     if (o.highEnd >= 0) lines.push(`Visok prioritet gotov: ${dm(isoOf(inst, o.highEnd))}${bounds.high ? ` · najranije ${dm(bounds.high.iso)}` : ''}`);
     lines.push(`Kašnjenje preko rokova: ${o.tardiness} dana · promjena projekta u nizu ekipa: ${o.switches}`);
     for (const p of evaluation.projects.filter(x => x.lateDays > 0)) {
-        lines.push(`  ${p.name.trim()}: rok ${dm(p.dueISO!)}, plan ${dm(p.endISO)} — ${p.lateDays} dana kasni`);
+        lines.push(`  ${p.name.trim()}: rok ${dm(p.dueISO!)}, plan ${dm(p.endISO)} — ${daysWord(p.lateDays)} kasni`);
     }
     const byKind = new Map<string, number>();
     evaluation.violations.forEach(v => byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1));

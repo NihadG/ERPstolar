@@ -46,7 +46,7 @@ import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
 import CanvasMenu from './CanvasMenu';
-import { autoSchedule, type AutoScheduleResult } from '@/lib/canvas/autoSchedule';
+import { proposeScheduleAsync, type Proposal } from '@/lib/canvas/opt/propose';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
 import { detectConflicts } from '@/lib/canvas/conflicts';
@@ -179,7 +179,8 @@ export default function CanvasTab({
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
     const [batchOpen, setBatchOpen] = useState(false);
-    const [reviewResult, setReviewResult] = useState<AutoScheduleResult | null>(null);
+    const [reviewResult, setReviewResult] = useState<Proposal | null>(null);
+    const [scheduling, setScheduling] = useState(false);
     /** Radnik čiji je mjesečni kalendar otvoren (klik na ime u sekciji Radnici). */
     const [calendarWorkerId, setCalendarWorkerId] = useState<string | null>(null);
     /** Skupljeni projekti (grupe naloga) — po ključu grupe. */
@@ -618,17 +619,29 @@ export default function CanvasTab({
      * primijeni; izlaz je čist diff (isti obrazac kao lanac).
      */
     const runSchedule = useCallback(() => {
-        const result = autoSchedule(
-            scenario,
-            { workers, workOrders, attendance, projects, isSaturdayWorking },
-            { startISO: todayISO() }
-        );
-        if (!result.scheduled.length && !result.unscheduled.length) {
-            showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
-            return;
-        }
-        setReviewResult(result);
-    }, [scenario, workers, workOrders, attendance, projects, isSaturdayWorking, showToast]);
+        if (scheduling) return;
+        setScheduling(true);
+        // Optimizator v2 (lib/canvas/opt): 1–2 s računanja u komadima — ekran ostaje živ.
+        window.setTimeout(async () => {
+            try {
+                const result = await proposeScheduleAsync(
+                    scenario,
+                    { workers, workOrders, attendance, projects, holidays: holidayDates },
+                    { startISO: todayISO() }
+                );
+                if (!result.scheduled.length && !result.unscheduled.length) {
+                    showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
+                    return;
+                }
+                setReviewResult(result);
+            } catch (err) {
+                console.error('Raspored nije izračunat', err);
+                showToast('Raspored nije izračunat — pokušaj ponovo', 'error');
+            } finally {
+                setScheduling(false);
+            }
+        }, 30);
+    }, [scheduling, scenario, workers, workOrders, attendance, projects, holidayDates, showToast]);
 
     // ── Pretvorba nalog-bloka → stvarni nalog (pravi flow iz taba Nalozi) ──
     /** Seed za wizard iz plan-bloka: projekt, proizvodi, ekipa, rokovi. */
@@ -1185,9 +1198,9 @@ export default function CanvasTab({
                     title="Batch — unesi više naloga odjednom (proizvodni, montaža, razni)">
                     <ClipboardList size={15} /> <span className="lbl">Batch</span>
                 </button>
-                <button className="cv-btn accent squeeze" onClick={runSchedule}
-                    title="Rasporedi — automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
-                    <Sparkles size={15} /> <span className="lbl">Rasporedi</span>
+                <button className="cv-btn accent squeeze" onClick={runSchedule} disabled={scheduling} aria-busy={scheduling}
+                    title="Rasporedi — predloži najbrži izvodljiv raspored naloga s kandidat-ekipama (ništa se ne mijenja dok ne primijeniš)">
+                    <Sparkles size={15} /> <span className="lbl">{scheduling ? 'Računam…' : 'Rasporedi'}</span>
                 </button>
 
                 {/* ── Još (overflow) ─────────────────────────── */}

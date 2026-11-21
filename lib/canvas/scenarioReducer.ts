@@ -39,6 +39,9 @@ export interface ScheduleAssignment {
     crew: number;
     workerRefs: PlanRef[];
     assignedCrewId?: string;
+    /** Polovine dana; false/izostavljeno briše oznaku s bloka. */
+    startsPM?: boolean;
+    endsAM?: boolean;
 }
 
 export type ScenarioAction =
@@ -268,14 +271,20 @@ export function scenarioReducer(state: ScenarioState, action: ScenarioAction): S
                     const a = byId.get(b.id);
                     // Zaključan blok se NE dira — ni datum ni ekipa (dogovoren termin).
                     if (!a || b.locked) return b;
-                    return normalizeBlock({
+                    const next: PlanBlock = {
                         ...b,
                         startISO: a.startISO,
                         endISO: a.endISO,
                         crew: a.crew,
                         workerRefs: a.workerRefs,
                         assignedCrewId: a.assignedCrewId,
-                    });
+                    };
+                    // Bez undefined polja (Firestore ih ne prima): oznaka postoji samo kad važi.
+                    delete next.startsPM;
+                    delete next.endsAM;
+                    if (a.startsPM) next.startsPM = true;
+                    if (a.endsAM) next.endsAM = true;
+                    return normalizeBlock(next);
                 }),
             }, `Raspoređeno ${action.assignments.length} naloga — Ctrl+Z vraća.`);
         }

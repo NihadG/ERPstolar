@@ -75,6 +75,9 @@ export interface ScheduledBlock {
     crew: number;
     startISO: string;
     endISO: string;
+    /** Jedinica ½ dana (optimizator v2): prvi dan od podne / zadnji do podne. */
+    startsPM?: boolean;
+    endsAM?: boolean;
     reasons: ScheduleReason[];
 }
 
@@ -593,6 +596,8 @@ export function toAssignments(result: AutoScheduleResult) {
         crew: s.crew,
         workerRefs: s.workerRefs,
         assignedCrewId: s.crewId,
+        startsPM: !!s.startsPM,
+        endsAM: !!s.endsAM,
     }));
 }
 

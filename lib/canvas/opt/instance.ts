@@ -72,8 +72,21 @@ export interface BuildOptions {
 // ── Dani kao brojevi (UTC podne — imuno na ljetno vrijeme) ──────────
 
 const DAY = 86_400_000;
-export const dayIndex = (startISO: string, iso: string) => Math.round((Date.parse(`${iso}T12:00:00Z`) - Date.parse(`${startISO}T12:00:00Z`)) / DAY);
-export const isoAt = (startISO: string, n: number) => new Date(Date.parse(`${startISO}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+// Optimizator ih zove stotine hiljada puta — dan kao broj se pamti.
+const epochDay = new Map<string, number>();
+const dayOf = (iso: string) => {
+    let v = epochDay.get(iso);
+    if (v === undefined) { v = Math.floor(Date.parse(`${iso}T12:00:00Z`) / DAY); if (epochDay.size < 50_000) epochDay.set(iso, v); }
+    return v;
+};
+const isoOfDay = new Map<number, string>();
+export const dayIndex = (startISO: string, iso: string) => dayOf(iso) - dayOf(startISO);
+export const isoAt = (startISO: string, n: number) => {
+    const e = dayOf(startISO) + n;
+    let v = isoOfDay.get(e);
+    if (v === undefined) { v = new Date(e * DAY + DAY / 2).toISOString().slice(0, 10); if (isoOfDay.size < 50_000) isoOfDay.set(e, v); }
+    return v;
+};
 
 export const crewKeyOf = (workerIds: string[]) => Array.from(new Set(workerIds)).sort().join('+');
 
@@ -151,8 +164,20 @@ export function buildInstance(scenario: PlanScenario, opts: BuildOptions): Insta
         jobs,
         crews,
         precedence,
-        calendar: opts.calendar,
-        fixedLoad: opts.fixedLoad || (() => 0),
+        calendar: { available: memo2(opts.calendar.available.bind(opts.calendar)) },
+        fixedLoad: opts.fixedLoad ? memo2(opts.fixedLoad) : () => 0,
+    };
+}
+
+/** Kalendar se pita hiljade puta po ocjeni (optimizator: hiljade ocjena) — pamti odgovore. */
+function memo2(fn: (w: string, iso: string) => number): (w: string, iso: string) => number {
+    const m = new Map<string, Map<string, number>>();   // ugniježđeno: bez novih stringova po pozivu
+    return (w, iso) => {
+        let byDay = m.get(w);
+        if (!byDay) { byDay = new Map(); m.set(w, byDay); }
+        let v = byDay.get(iso);
+        if (v === undefined) { v = fn(w, iso); byDay.set(iso, v); }
+        return v;
     };
 }
 
